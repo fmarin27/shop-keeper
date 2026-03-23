@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('appBridge', {
   setOverlayBounds: (bounds: { width: number; height: number; x: number | null; y: number | null }) =>
     ipcRenderer.invoke('settings:setOverlayBounds', bounds),
   switchToNormalWindow: () => ipcRenderer.invoke('window:switchToNormal'),
+  checkForUpdates: () => ipcRenderer.invoke('updater:checkNow'),
 });

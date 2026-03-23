@@ -11,11 +11,32 @@ import {
 } from 'firebase/firestore';
 import { db } from './config';
 import { uploadJobAudioNote } from './storage';
-import type { CreateJobInput, Job, JobNote, JobStatus } from '../../types/app';
+import type {
+  AppMode,
+  CreateJobInput,
+  Job,
+  JobNote,
+  JobPartRequest,
+  JobStatus,
+  UpdateJobDetailsInput,
+} from '../../types/app';
 
 const jobsCollection = collection(db, 'jobs');
 
 type FirestoreJobInput = Omit<Job, 'id'>;
+
+function toFirestorePartRequest(part: JobPartRequest) {
+  return {
+    id: part.id,
+    name: part.name,
+    quantity: part.quantity,
+    requestedBy: part.requestedBy,
+    status: part.status,
+    note: part.note ?? '',
+    createdAt: part.createdAt,
+    ...(part.receivedAt ? { receivedAt: part.receivedAt } : {}),
+  };
+}
 
 export function subscribeToJobs(callback: (jobs: Job[]) => void) {
   const q = query(jobsCollection, orderBy('createdAt', 'desc'));
@@ -32,12 +53,16 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
+            paintCode: data.paintCode ?? '',
             amount: data.amount ?? 0,
             amountStatus: data.amountStatus ?? 'notFinal',
             status: data.status ?? 'notStarted',
             done: data.done ?? false,
             promiseDate: data.promiseDate ?? '',
             partsWaiting: data.partsWaiting ?? false,
+            partsRequests: Array.isArray(data.partsRequests)
+              ? (data.partsRequests as JobPartRequest[])
+              : [],
             textNotes: (data.textNotes ?? []) as JobNote[],
             sortOrder:
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
@@ -81,6 +106,9 @@ export async function seedJob(job: FirestoreJobInput) {
 
 export async function createJob(input: CreateJobInput) {
   const initialNote = input.initialNote?.trim() ?? '';
+  const initialPartName = input.initialPartName?.trim() ?? '';
+  const initialPartQuantity = input.initialPartQuantity?.trim() ?? '';
+  const initialPartNote = input.initialPartNote?.trim() ?? '';
 
   const notes: JobNote[] = initialNote
     ? [
@@ -94,16 +122,35 @@ export async function createJob(input: CreateJobInput) {
       ]
     : [];
 
+  const partsRequests: JobPartRequest[] =
+    initialPartName && initialPartQuantity
+      ? [
+          {
+            id: `part-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name: initialPartName,
+            quantity: initialPartQuantity,
+            requestedBy: 'manager',
+            status: input.initialPartStatus ?? 'requested',
+            note: initialPartNote,
+            createdAt: new Date().toISOString(),
+          },
+        ]
+      : [];
+
   await addDoc(jobsCollection, {
     vehicle: input.vehicle.trim(),
     roNumber: input.roNumber.trim(),
     customerName: input.customerName.trim(),
+    paintCode: input.paintCode.trim(),
     amount: Number.isFinite(input.amount) ? input.amount : 0,
     amountStatus: input.amountStatus,
     status: input.status,
     done: false,
     promiseDate: input.promiseDate,
-    partsWaiting: input.partsWaiting,
+    partsWaiting:
+      input.partsWaiting ||
+      partsRequests.some((part) => part.status !== 'received'),
+    partsRequests: partsRequests.map(toFirestorePartRequest),
     textNotes: notes,
     sortOrder: Date.now() * -1,
     createdAt: serverTimestamp(),
@@ -155,9 +202,68 @@ export async function reorderActiveJobs(
   await batch.commit();
 }
 
+export async function setActiveJobPriority(
+  activeJobs: Job[],
+  jobId: string,
+  position: 'top' | 'bottom',
+) {
+  if (activeJobs.length < 2) return;
+
+  const normalizedJobs = [...activeJobs]
+    .sort((a, b) => {
+      const aOrder =
+        typeof a.sortOrder === 'number' ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+      const bOrder =
+        typeof b.sortOrder === 'number' ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return 0;
+    })
+    .map((job, index) => ({
+      ...job,
+      sortOrder: index + 1,
+    }));
+
+  const currentIndex = normalizedJobs.findIndex((job) => job.id === jobId);
+  if (currentIndex === -1) return;
+
+  const reordered = [...normalizedJobs];
+  const [movedJob] = reordered.splice(currentIndex, 1);
+
+  if (position === 'top') {
+    reordered.unshift(movedJob);
+  } else {
+    reordered.push(movedJob);
+  }
+
+  const batch = writeBatch(db);
+
+  reordered.forEach((job, index) => {
+    batch.update(doc(db, 'jobs', job.id), {
+      sortOrder: index + 1,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  await batch.commit();
+}
+
 export async function updateJobStatus(jobId: string, status: JobStatus) {
   await updateDoc(doc(db, 'jobs', jobId), {
     status,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateJobDetails(
+  jobId: string,
+  input: UpdateJobDetailsInput,
+) {
+  await updateDoc(doc(db, 'jobs', jobId), {
+    paintCode: input.paintCode.trim(),
+    amount: input.amount,
+    amountStatus: input.amountStatus,
+    promiseDate: input.promiseDate,
     updatedAt: serverTimestamp(),
   });
 }
@@ -230,6 +336,101 @@ export async function markJobNotesRead(job: Job) {
 
   await updateDoc(doc(db, 'jobs', job.id), {
     textNotes: nextNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function requestPartForJob(
+  job: Job,
+  input: {
+    name: string;
+    quantity: string;
+    note?: string;
+    requestedBy: AppMode;
+    status?: Exclude<JobPartRequest['status'], 'received'>;
+  },
+) {
+  const name = input.name.trim();
+  const quantity = input.quantity.trim();
+  const note = input.note?.trim() ?? '';
+
+  if (!name || !quantity) return;
+
+  const nextPartsRequests: JobPartRequest[] = [
+    {
+      id: `part-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      quantity,
+      requestedBy: input.requestedBy,
+      status: input.status ?? 'requested',
+      note,
+      createdAt: new Date().toISOString(),
+    },
+    ...(job.partsRequests ?? []),
+  ];
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsWaiting: true,
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function clearLegacyPartsWaiting(jobId: string) {
+  await updateDoc(doc(db, 'jobs', jobId), {
+    partsWaiting: false,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function markJobPartReceived(job: Job, partId: string) {
+  await updateJobPartStatus(job, partId, 'received');
+}
+
+export async function updateJobPartStatus(
+  job: Job,
+  partId: string,
+  status: JobPartRequest['status'],
+) {
+  const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
+    part.id === partId
+      ? {
+          ...part,
+          status,
+          ...(status === 'received'
+            ? { receivedAt: new Date().toISOString() }
+            : {}),
+        }
+      : part,
+  );
+
+  const stillWaiting = nextPartsRequests.some((part) => part.status !== 'received');
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsWaiting: stillWaiting,
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function saveJobPartNote(
+  job: Job,
+  partId: string,
+  note: string,
+) {
+  const trimmed = note.trim();
+
+  const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
+    part.id === partId
+      ? {
+          ...part,
+          note: trimmed,
+        }
+      : part,
+  );
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
   });
 }

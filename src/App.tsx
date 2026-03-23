@@ -3,35 +3,27 @@ import OverlayView from './components/OverlayView';
 import ManagerPage from './pages/ManagerPage';
 import ModeChooserPage from './pages/ModeChooserPage';
 import TechPage from './pages/TechPage';
-import type { AppMode, DisplayMode, LocalAppSettings, MainTab } from './types/app';
-
-declare global {
-  interface Window {
-    shopFloorApi?: {
-      getSettings: () => Promise<LocalAppSettings>;
-      setAppMode: (mode: AppMode) => Promise<LocalAppSettings>;
-      setDisplayMode: (mode: DisplayMode) => Promise<LocalAppSettings>;
-      setOverlayBounds: (bounds: {
-        overlayWidth: number;
-        overlayHeight: number;
-        overlayX: number;
-        overlayY: number;
-      }) => Promise<LocalAppSettings>;
-    };
-  }
-}
+import type {
+  AppMode,
+  DisplayMode,
+  MainTab,
+  OverlayFocusTarget,
+} from './types/app';
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [displayMode, setDisplayMode] = useState<DisplayMode>('normal');
   const [selectedTab, setSelectedTab] = useState<MainTab>('jobs');
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [overlayFocusTarget, setOverlayFocusTarget] =
+    useState<OverlayFocusTarget | null>(null);
 
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        if (window.shopFloorApi?.getSettings) {
-          const settings = await window.shopFloorApi.getSettings();
+        if (window.appBridge?.getSettings) {
+          const settings = await window.appBridge.getSettings();
           setAppMode(settings.appMode ?? null);
           setDisplayMode(settings.displayMode ?? 'normal');
         }
@@ -47,8 +39,8 @@ function App() {
 
   const handleModeSelect = async (mode: AppMode) => {
     try {
-      if (window.shopFloorApi?.setAppMode) {
-        const settings = await window.shopFloorApi.setAppMode(mode);
+      if (window.appBridge?.setAppMode) {
+        const settings = await window.appBridge.setAppMode(mode);
         setAppMode(settings.appMode ?? mode);
       } else {
         setAppMode(mode);
@@ -61,8 +53,8 @@ function App() {
 
   const handleDisplayModeChange = async (mode: DisplayMode) => {
     try {
-      if (window.shopFloorApi?.setDisplayMode) {
-        const settings = await window.shopFloorApi.setDisplayMode(mode);
+      if (window.appBridge?.setDisplayMode) {
+        const settings = await window.appBridge.setDisplayMode(mode);
         setDisplayMode(settings.displayMode ?? mode);
       } else {
         setDisplayMode(mode);
@@ -76,6 +68,57 @@ function App() {
   const handleSwitchMode = async () => {
     const nextMode: AppMode = appMode === 'manager' ? 'tech' : 'manager';
     await handleModeSelect(nextMode);
+  };
+
+  const handleCheckForUpdates = async () => {
+    if (!window.appBridge?.checkForUpdates) {
+      setUpdateStatus('Update checks are unavailable in this build.');
+      return;
+    }
+
+    setUpdateStatus('Checking for updates...');
+
+    try {
+      const result = await window.appBridge.checkForUpdates();
+
+      if (!result.ok) {
+        setUpdateStatus(result.message ?? 'Update check failed.');
+        return;
+      }
+
+      if (result.updateInfo?.version) {
+        setUpdateStatus(`Latest published version: ${result.updateInfo.version}`);
+        return;
+      }
+
+      setUpdateStatus('No update is currently available.');
+    } catch (error) {
+      console.error('Failed to check for updates:', error);
+      setUpdateStatus('Update check failed.');
+    }
+  };
+
+  const openJobsView = async (jobId?: string) => {
+    setOverlayFocusTarget(jobId ? { tab: 'jobs', itemId: jobId } : null);
+    setSelectedTab('jobs');
+    await handleDisplayModeChange('normal');
+  };
+
+  const openMaterialsMessagesView = async (
+    itemType?: 'material' | 'message',
+    itemId?: string,
+  ) => {
+    setOverlayFocusTarget(
+      itemType && itemId
+        ? {
+            tab: 'materialsMessages',
+            itemType,
+            itemId,
+          }
+        : null,
+    );
+    setSelectedTab('materialsMessages');
+    await handleDisplayModeChange('normal');
   };
 
   if (isLoading) {
@@ -104,6 +147,11 @@ function App() {
       <OverlayView
         appMode={appMode}
         onExpand={() => handleDisplayModeChange('normal')}
+        onOpenJobs={() => openJobsView()}
+        onOpenMaterialsMessages={() => openMaterialsMessagesView()}
+        onOpenJob={(jobId) => openJobsView(jobId)}
+        onOpenMaterial={(itemId) => openMaterialsMessagesView('material', itemId)}
+        onOpenMessage={(itemId) => openMaterialsMessagesView('message', itemId)}
         onClose={() => window.close()}
       />
     );
@@ -115,6 +163,19 @@ function App() {
     displayMode,
     onDisplayModeChange: handleDisplayModeChange,
     onSwitchMode: handleSwitchMode,
+    onCheckForUpdates: handleCheckForUpdates,
+    updateStatus,
+    onOpenAttentionJob: (jobId: string) => {
+      void openJobsView(jobId);
+    },
+    onOpenAttentionMaterial: (itemId: string) => {
+      void openMaterialsMessagesView('material', itemId);
+    },
+    onOpenAttentionMessage: (itemId: string) => {
+      void openMaterialsMessagesView('message', itemId);
+    },
+    overlayFocusTarget,
+    onOverlayFocusHandled: () => setOverlayFocusTarget(null),
   };
 
   if (appMode === 'manager') {

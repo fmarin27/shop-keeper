@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './config';
 import { uploadGeneralMessageAudio } from './storage';
-import type { GeneralMessage } from '../../features/messages/mockMessages';
+import type { GeneralMessage } from '../../features/messages/types';
 
 const messagesCollection = collection(db, 'generalMessages');
 

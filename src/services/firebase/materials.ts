@@ -9,7 +9,10 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './config';
-import type { MaterialRequest, MaterialStatus } from '../../features/messages/mockMessages';
+import type {
+  MaterialRequest,
+  MaterialStatus,
+} from '../../features/messages/types';
 
 const materialsCollection = collection(db, 'materials');
 

@@ -2,36 +2,54 @@ import React, { useEffect, useMemo, useState } from 'react';
 import ActiveJobsSection from './ActiveJobsSection';
 import CompletedJobsSection from './CompletedJobsSection';
 import type {
+  AppMode,
   AmountStatus,
   CreateJobInput,
   Job,
+  JobPartStatus,
   JobStatus,
+  UpdateJobDetailsInput,
 } from '../../types/app';
 import {
   addAudioNoteToJob,
+  clearLegacyPartsWaiting,
+  markJobPartReceived,
   addTextNoteToJob,
   createJob,
   markJobDone,
   markJobNotesRead,
+  requestPartForJob,
+  saveJobPartNote,
+  setActiveJobPriority,
   subscribeToJobs,
   undoJobDone,
+  updateJobPartStatus,
+  updateJobDetails,
   updateJobStatus,
 } from '../../services/firebase/jobs';
 
 type JobsTabProps = {
   showAddJob?: boolean;
   compact?: boolean;
+  appMode: AppMode;
+  focusedJobId?: string | null;
+  onFocusedJobHandled?: () => void;
 };
 
 type AddJobFormState = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  paintCode: string;
   amount: string;
   amountStatus: AmountStatus;
   status: JobStatus;
   promiseDate: string;
   partsWaiting: boolean;
+  initialPartName: string;
+  initialPartQuantity: string;
+  initialPartNote: string;
+  initialPartStatus: Exclude<JobPartStatus, 'received'>;
   initialNote: string;
 };
 
@@ -39,15 +57,26 @@ const initialFormState: AddJobFormState = {
   vehicle: '',
   roNumber: '',
   customerName: '',
+  paintCode: '',
   amount: '',
   amountStatus: 'notFinal',
   status: 'notStarted',
   promiseDate: '',
   partsWaiting: false,
+  initialPartName: '',
+  initialPartQuantity: '',
+  initialPartNote: '',
+  initialPartStatus: 'requested',
   initialNote: '',
 };
 
-function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
+function JobsTab({
+  showAddJob = false,
+  compact = false,
+  appMode,
+  focusedJobId = null,
+  onFocusedJobHandled,
+}: JobsTabProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -111,6 +140,69 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
     await markJobNotesRead(job);
   };
 
+  const handleRequestPart = async (
+    jobId: string,
+    input: { name: string; quantity: string; note?: string },
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await requestPartForJob(job, {
+      ...input,
+      requestedBy: appMode,
+    });
+  };
+
+  const handleSetPartOrdered = async (jobId: string, partId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await updateJobPartStatus(job, partId, 'ordered');
+  };
+
+  const handleMarkPartReceived = async (jobId: string, partId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await markJobPartReceived(job, partId);
+  };
+
+  const handleSavePartNote = async (
+    jobId: string,
+    partId: string,
+    note: string,
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await saveJobPartNote(job, partId, note);
+  };
+
+  const handleSetPartReorderNeeded = async (jobId: string, partId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await updateJobPartStatus(job, partId, 'reorderNeeded');
+  };
+
+  const handleClearLegacyPartsWaiting = async (jobId: string) => {
+    await clearLegacyPartsWaiting(jobId);
+  };
+
+  const handleSetPriority = async (
+    jobId: string,
+    position: 'top' | 'bottom',
+  ) => {
+    await setActiveJobPriority(activeJobs, jobId, position);
+  };
+
+  const handleUpdateJobDetails = async (
+    jobId: string,
+    input: UpdateJobDetailsInput,
+  ) => {
+    await updateJobDetails(jobId, input);
+  };
+
   const openAddJobModal = () => {
     setAddJobForm(initialFormState);
     setAddJobError(null);
@@ -165,11 +257,16 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
       vehicle,
       roNumber,
       customerName,
+      paintCode: addJobForm.paintCode.trim(),
       amount: parsedAmount,
       amountStatus: addJobForm.amountStatus,
       status: addJobForm.status,
       promiseDate: addJobForm.promiseDate,
       partsWaiting: addJobForm.partsWaiting,
+      initialPartName: addJobForm.initialPartName,
+      initialPartQuantity: addJobForm.initialPartQuantity,
+      initialPartNote: addJobForm.initialPartNote,
+      initialPartStatus: addJobForm.initialPartStatus,
       initialNote: addJobForm.initialNote,
     };
 
@@ -251,11 +348,22 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
         <ActiveJobsSection
           jobs={visibleActiveJobs}
           compact={compact}
+          appMode={appMode}
+          focusedJobId={focusedJobId}
+          onFocusedJobHandled={onFocusedJobHandled}
           onChangeStatus={handleChangeStatus}
           onMarkDone={handleMarkDone}
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
           onMarkNotesRead={handleMarkNotesRead}
+          onRequestPart={handleRequestPart}
+          onSetPartOrdered={handleSetPartOrdered}
+          onSetPartReorderNeeded={handleSetPartReorderNeeded}
+          onMarkPartReceived={handleMarkPartReceived}
+          onSavePartNote={handleSavePartNote}
+          onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
+          onSetPriority={handleSetPriority}
+          onUpdateJobDetails={handleUpdateJobDetails}
         />
 
         {!compact ? (
@@ -287,12 +395,15 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
             onClick={(event) => event.stopPropagation()}
             style={{
               width: 'min(860px, 100%)',
+              maxHeight: 'calc(100vh - 40px)',
               borderRadius: 24,
               background:
                 'linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))',
               border: '1px solid rgba(148,163,184,0.18)',
               boxShadow: '0 30px 80px rgba(0,0,0,0.45)',
               overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
             <div
@@ -353,6 +464,8 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
                 padding: 24,
                 display: 'grid',
                 gap: 18,
+                overflowY: 'auto',
+                minHeight: 0,
               }}
             >
               <div
@@ -384,6 +497,13 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
                   value={addJobForm.customerName}
                   onChange={(value) => updateForm('customerName', value)}
                   placeholder="John Smith"
+                />
+
+                <Field
+                  label="Paint Code"
+                  value={addJobForm.paintCode}
+                  onChange={(value) => updateForm('paintCode', value)}
+                  placeholder="NH-731P"
                 />
 
                 <Field
@@ -429,6 +549,46 @@ function JobsTab({ showAddJob = false, compact = false }: JobsTabProps) {
                   checked={addJobForm.partsWaiting}
                   onChange={(checked) => updateForm('partsWaiting', checked)}
                 />
+
+                {showAddJob ? (
+                  <>
+                    <Field
+                      label="Initial Part"
+                      value={addJobForm.initialPartName}
+                      onChange={(value) => updateForm('initialPartName', value)}
+                      placeholder="Front bumper bracket"
+                    />
+
+                    <Field
+                      label="Initial Part Qty"
+                      value={addJobForm.initialPartQuantity}
+                      onChange={(value) => updateForm('initialPartQuantity', value)}
+                      placeholder="1"
+                    />
+
+                    <SelectField
+                      label="Initial Part Status"
+                      value={addJobForm.initialPartStatus}
+                      onChange={(value) =>
+                        updateForm(
+                          'initialPartStatus',
+                          value as Exclude<JobPartStatus, 'received'>,
+                        )
+                      }
+                      options={[
+                        { value: 'requested', label: 'Requested' },
+                        { value: 'ordered', label: 'Ordered' },
+                      ]}
+                    />
+
+                    <TextAreaField
+                      label="Initial Part Note"
+                      value={addJobForm.initialPartNote}
+                      onChange={(value) => updateForm('initialPartNote', value)}
+                      placeholder="Optional note about the part..."
+                    />
+                  </>
+                ) : null}
               </div>
 
               <TextAreaField

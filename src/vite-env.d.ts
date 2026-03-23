@@ -3,6 +3,14 @@
 import type { AppMode, DisplayMode, LocalAppSettings } from './types/app';
 
 declare global {
+  type UpdateCheckResult = {
+    ok: boolean;
+    message?: string;
+    updateInfo?: {
+      version: string;
+    } | null;
+  };
+
   interface Window {
     appBridge: {
       getSettings: () => Promise<LocalAppSettings>;
@@ -15,6 +23,7 @@ declare global {
         y: number | null;
       }) => Promise<LocalAppSettings>;
       switchToNormalWindow: () => Promise<void>;
+      checkForUpdates: () => Promise<UpdateCheckResult>;
     };
   }
 }

@@ -1,40 +1,134 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Job, JobNote, JobStatus } from '../../types/app';
+import type {
+  AppMode,
+  AmountStatus,
+  Job,
+  JobNote,
+  JobPartRequest,
+  JobStatus,
+  UpdateJobDetailsInput,
+} from '../../types/app';
 import { reorderActiveJobs } from '../../services/firebase/jobs';
 
 type ActiveJobsSectionProps = {
   jobs: Job[];
   compact?: boolean;
+  appMode: AppMode;
+  focusedJobId?: string | null;
+  onFocusedJobHandled?: () => void;
   onChangeStatus: (jobId: string) => void;
   onMarkDone: (jobId: string) => void;
   onAddTextNote: (jobId: string, text: string) => void;
   onAddAudioNote: (jobId: string, file: Blob) => Promise<void> | void;
   onMarkNotesRead: (jobId: string) => void;
+  onRequestPart: (
+    jobId: string,
+    input: {
+      name: string;
+      quantity: string;
+      note?: string;
+      status?: Exclude<JobPartRequest['status'], 'received'>;
+    },
+  ) => void;
+  onSetPartOrdered: (jobId: string, partId: string) => void;
+  onSetPartReorderNeeded: (jobId: string, partId: string) => void;
+  onMarkPartReceived: (jobId: string, partId: string) => void;
+  onSavePartNote: (jobId: string, partId: string, note: string) => void;
+  onClearLegacyPartsWaiting: (jobId: string) => void;
+  onSetPriority: (jobId: string, position: 'top' | 'bottom') => void;
+  onUpdateJobDetails: (
+    jobId: string,
+    input: UpdateJobDetailsInput,
+  ) => Promise<void> | void;
 };
 
 function ActiveJobsSection({
   jobs,
   compact = false,
+  appMode,
+  focusedJobId = null,
+  onFocusedJobHandled,
   onChangeStatus,
   onMarkDone,
   onAddTextNote,
   onAddAudioNote,
   onMarkNotesRead,
+  onRequestPart,
+  onSetPartOrdered,
+  onSetPartReorderNeeded,
+  onMarkPartReceived,
+  onSavePartNote,
+  onClearLegacyPartsWaiting,
+  onSetPriority,
+  onUpdateJobDetails,
 }: ActiveJobsSectionProps) {
   const [openJobIds, setOpenJobIds] = useState<string[]>([]);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [partDrafts, setPartDrafts] = useState<
+    Record<string, { name: string; quantity: string; note: string }>
+  >({});
+  const [partNoteDrafts, setPartNoteDrafts] = useState<Record<string, string>>({});
+  const [jobDetailDrafts, setJobDetailDrafts] = useState<
+    Record<
+      string,
+      {
+        paintCode: string;
+        amount: string;
+        amountStatus: AmountStatus;
+        promiseDate: string;
+      }
+    >
+  >({});
+  const [savingPartNoteId, setSavingPartNoteId] = useState<string | null>(null);
+  const [savingJobDetailsId, setSavingJobDetailsId] = useState<string | null>(null);
   const [recordingJobId, setRecordingJobId] = useState<string | null>(null);
   const [savingAudioJobId, setSavingAudioJobId] = useState<string | null>(null);
   const [reorderingJobId, setReorderingJobId] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const focusedJobRef = useRef<HTMLDivElement | null>(null);
+  const focusTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     openJobIds.forEach((jobId) => {
       onMarkNotesRead(jobId);
     });
   }, [openJobIds, onMarkNotesRead]);
+
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current !== null) {
+        window.clearTimeout(focusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!focusedJobId) return;
+
+    setOpenJobIds((current) =>
+      current.includes(focusedJobId) ? current : [...current, focusedJobId],
+    );
+
+    const target = jobs.find((job) => job.id === focusedJobId);
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      focusedJobRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+
+    if (focusTimeoutRef.current !== null) {
+      window.clearTimeout(focusTimeoutRef.current);
+    }
+
+    focusTimeoutRef.current = window.setTimeout(() => {
+      onFocusedJobHandled?.();
+    }, 1200);
+  }, [focusedJobId, jobs, onFocusedJobHandled]);
 
   const toggleJob = (jobId: string) => {
     setOpenJobIds((current) =>
@@ -109,6 +203,33 @@ function ActiveJobsSection({
     }
   };
 
+  const handleSaveJobDetails = async (job: Job) => {
+    const draft = jobDetailDrafts[job.id] ?? {
+      paintCode: job.paintCode,
+      amount: String(job.amount),
+      amountStatus: job.amountStatus,
+      promiseDate: job.promiseDate,
+    };
+
+    const parsedAmount = Number(draft.amount);
+    if (Number.isNaN(parsedAmount) || parsedAmount < 0) {
+      alert('Amount must be a valid number.');
+      return;
+    }
+
+    try {
+      setSavingJobDetailsId(job.id);
+      await onUpdateJobDetails(job.id, {
+        paintCode: draft.paintCode,
+        amount: parsedAmount,
+        amountStatus: draft.amountStatus,
+        promiseDate: draft.promiseDate,
+      });
+    } finally {
+      setSavingJobDetailsId(null);
+    }
+  };
+
   return (
     <section
       style={{
@@ -140,14 +261,27 @@ function ActiveJobsSection({
           const isReorderingThisJob = reorderingJobId === job.id;
           const isFirst = index === 0;
           const isLast = index === jobs.length - 1;
+          const isFocused = focusedJobId === job.id;
+          const hasPartsWaiting = getHasPartsWaiting(job);
+          const detailDraft = jobDetailDrafts[job.id] ?? {
+            paintCode: job.paintCode,
+            amount: String(job.amount),
+            amountStatus: job.amountStatus,
+            promiseDate: job.promiseDate,
+          };
+          const isSavingDetailsThisJob = savingJobDetailsId === job.id;
 
           return (
             <div
               key={job.id}
+              ref={isFocused ? focusedJobRef : null}
               style={{
                 borderRadius: compact ? 16 : 20,
                 background: 'rgba(2,6,23,0.62)',
-                border: '1px solid rgba(148,163,184,0.14)',
+                border: isFocused
+                  ? '1px solid rgba(96,165,250,0.42)'
+                  : '1px solid rgba(148,163,184,0.14)',
+                boxShadow: isFocused ? '0 0 28px rgba(96,165,250,0.18)' : 'none',
                 overflow: 'hidden',
               }}
             >
@@ -176,13 +310,47 @@ function ActiveJobsSection({
                   <div>
                     <div
                       style={{
-                        fontSize: compact ? 16 : 20,
-                        fontWeight: 800,
-                        color: '#f8fafc',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        flexWrap: 'wrap',
                         marginBottom: 4,
                       }}
                     >
-                      {job.vehicle}
+                      <div
+                        style={{
+                          fontSize: compact ? 16 : 20,
+                          fontWeight: 800,
+                          color: '#f8fafc',
+                        }}
+                      >
+                        {job.vehicle}
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <HeaderOrderButton
+                          label="Move up"
+                          compact={compact}
+                          disabled={isFirst || !!reorderingJobId}
+                          onClick={() => handleMoveJob(job.id, 'up')}
+                        >
+                          ↑
+                        </HeaderOrderButton>
+                        <HeaderOrderButton
+                          label="Move down"
+                          compact={compact}
+                          disabled={isLast || !!reorderingJobId}
+                          onClick={() => handleMoveJob(job.id, 'down')}
+                        >
+                          ↓
+                        </HeaderOrderButton>
+                      </div>
                     </div>
 
                     <div
@@ -192,6 +360,50 @@ function ActiveJobsSection({
                       }}
                     >
                       RO {job.roNumber}
+                    </div>
+                    {job.paintCode ? (
+                      <div style={{ marginTop: 8 }}>
+                        <span
+                          style={{
+                            fontSize: compact ? 12 : 13,
+                            fontWeight: 900,
+                            color: '#e0f2fe',
+                            background: 'rgba(8,145,178,0.22)',
+                            border: '1px solid rgba(34,211,238,0.3)',
+                            borderRadius: 999,
+                            padding: compact ? '6px 9px' : '7px 11px',
+                            display: 'inline-flex',
+                          }}
+                        >
+                          Paint Code: {job.paintCode}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div
+                      style={{
+                        marginTop: 6,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: compact ? 11 : 12,
+                          fontWeight: 800,
+                          color: '#dbeafe',
+                          background:
+                            index === 0
+                              ? 'rgba(37,99,235,0.24)'
+                              : 'rgba(30,41,59,0.72)',
+                          border:
+                            index === 0
+                              ? '1px solid rgba(96,165,250,0.34)'
+                              : '1px solid rgba(148,163,184,0.16)',
+                          borderRadius: 999,
+                          padding: compact ? '5px 8px' : '6px 10px',
+                          display: 'inline-flex',
+                        }}
+                      >
+                        {index === 0 ? 'Top Priority' : `Priority #${index + 1}`}
+                      </span>
                     </div>
                   </div>
 
@@ -206,6 +418,18 @@ function ActiveJobsSection({
                     <span style={statusBadgeStyle(job.status, compact)}>
                       {statusLabel(job.status)}
                     </span>
+
+                    {!compact ? (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onChangeStatus(job.id);
+                        }}
+                        style={inlineControlButtonStyle(compact)}
+                      >
+                        Change Status
+                      </button>
+                    ) : null}
 
                     <span
                       style={{
@@ -236,11 +460,21 @@ function ActiveJobsSection({
                     Promise: {formatDate(job.promiseDate)}
                   </InfoPill>
 
-                  {job.partsWaiting ? (
+                  {job.paintCode ? (
                     <InfoPill compact={compact} highlight>
-                      Parts Waiting
+                      Paint: {job.paintCode}
                     </InfoPill>
                   ) : null}
+
+                  {hasPartsWaiting ? (
+                    <InfoPill compact={compact} highlight>
+                      {getPartsWorkflowSummary(job)}
+                    </InfoPill>
+                  ) : null}
+
+                  <InfoPill compact={compact}>
+                    {getPartsReceiptSummary(job)}
+                  </InfoPill>
                 </div>
 
                 {unreadNotes > 0 ? (
@@ -281,6 +515,11 @@ function ActiveJobsSection({
                       compact={compact}
                     />
                     <DetailBox
+                      label="Paint Code"
+                      value={job.paintCode || 'Not set'}
+                      compact={compact}
+                    />
+                    <DetailBox
                       label="Amount"
                       value={`${formatAmount(job.amount)} - ${
                         job.amountStatus === 'final' ? 'Final' : 'Not Final'
@@ -293,11 +532,117 @@ function ActiveJobsSection({
                       compact={compact}
                     />
                     <DetailBox
-                      label="Parts Waiting"
-                      value={job.partsWaiting ? 'Yes' : 'No'}
+                      label="Parts Status"
+                      value={getPartsWorkflowSummary(job)}
+                      compact={compact}
+                    />
+                    <DetailBox
+                      label="Parts Received"
+                      value={getPartsReceiptSummary(job)}
                       compact={compact}
                     />
                   </div>
+
+                  <JobDetailsEditor
+                    compact={compact}
+                    paintCode={detailDraft.paintCode}
+                    amount={detailDraft.amount}
+                    amountStatus={detailDraft.amountStatus}
+                    promiseDate={detailDraft.promiseDate}
+                    saving={isSavingDetailsThisJob}
+                    onPaintCodeChange={(value) =>
+                      setJobDetailDrafts((current) => ({
+                        ...current,
+                        [job.id]: {
+                          ...detailDraft,
+                          paintCode: value,
+                        },
+                      }))
+                    }
+                    onAmountChange={(value) =>
+                      setJobDetailDrafts((current) => ({
+                        ...current,
+                        [job.id]: {
+                          ...detailDraft,
+                          amount: value,
+                        },
+                      }))
+                    }
+                    onAmountStatusChange={(value) =>
+                      setJobDetailDrafts((current) => ({
+                        ...current,
+                        [job.id]: {
+                          ...detailDraft,
+                          amountStatus: value,
+                        },
+                      }))
+                    }
+                    onPromiseDateChange={(value) =>
+                      setJobDetailDrafts((current) => ({
+                        ...current,
+                        [job.id]: {
+                          ...detailDraft,
+                          promiseDate: value,
+                        },
+                      }))
+                    }
+                    onSave={() => handleSaveJobDetails(job)}
+                  />
+
+                  <PartsPanel
+                    job={job}
+                    appMode={appMode}
+                    compact={compact}
+                    draft={partDrafts[job.id] ?? { name: '', quantity: '', note: '' }}
+                    noteDrafts={partNoteDrafts}
+                    onDraftChange={(nextDraft) =>
+                      setPartDrafts((current) => ({
+                        ...current,
+                        [job.id]: nextDraft,
+                      }))
+                    }
+                    onPartNoteDraftChange={(partId, value) =>
+                      setPartNoteDrafts((current) => ({
+                        ...current,
+                        [partId]: value,
+                      }))
+                    }
+                    onRequestPart={() => {
+                      const draft = partDrafts[job.id] ?? {
+                        name: '',
+                        quantity: '',
+                        note: '',
+                      };
+
+                      onRequestPart(job.id, {
+                        ...draft,
+                        status: appMode === 'manager' ? 'ordered' : 'requested',
+                      });
+                      setPartDrafts((current) => ({
+                        ...current,
+                        [job.id]: { name: '', quantity: '', note: '' },
+                      }));
+                    }}
+                    onSetPartOrdered={(partId) => onSetPartOrdered(job.id, partId)}
+                    onSetPartReorderNeeded={(partId) =>
+                      onSetPartReorderNeeded(job.id, partId)
+                    }
+                    onMarkPartReceived={(partId) => onMarkPartReceived(job.id, partId)}
+                    onSavePartNote={async (partId) => {
+                      const nextNote =
+                        partNoteDrafts[partId] ??
+                        job.partsRequests.find((part) => part.id === partId)?.note ??
+                        '';
+                      try {
+                        setSavingPartNoteId(partId);
+                        await onSavePartNote(job.id, partId, nextNote);
+                      } finally {
+                        setSavingPartNoteId(null);
+                      }
+                    }}
+                    savingPartNoteId={savingPartNoteId}
+                    onClearLegacyPartsWaiting={() => onClearLegacyPartsWaiting(job.id)}
+                  />
 
                   <NotesPanel job={job} compact={compact} />
 
@@ -394,24 +739,17 @@ function ActiveJobsSection({
                       <ActionButton
                         compact={compact}
                         disabled={isFirst || !!reorderingJobId}
-                        onClick={() => handleMoveJob(job.id, 'up')}
+                        onClick={() => onSetPriority(job.id, 'top')}
                       >
-                        Move Up
+                        Move To Top
                       </ActionButton>
 
                       <ActionButton
                         compact={compact}
                         disabled={isLast || !!reorderingJobId}
-                        onClick={() => handleMoveJob(job.id, 'down')}
+                        onClick={() => onSetPriority(job.id, 'bottom')}
                       >
-                        Move Down
-                      </ActionButton>
-
-                      <ActionButton
-                        compact={compact}
-                        onClick={() => onChangeStatus(job.id)}
-                      >
-                        Change Status
+                        Move To Bottom
                       </ActionButton>
 
                       <ActionButton
@@ -430,6 +768,437 @@ function ActiveJobsSection({
         })}
       </div>
     </section>
+  );
+}
+
+function inlineControlButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(96,165,250,0.28)',
+    background: 'rgba(37,99,235,0.18)',
+    color: '#dbeafe',
+    borderRadius: compact ? 10 : 12,
+    padding: compact ? '6px 9px' : '7px 11px',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+  };
+}
+
+function HeaderOrderButton({
+  children,
+  label,
+  compact,
+  disabled = false,
+  onClick,
+}: {
+  children: React.ReactNode;
+  label: string;
+  compact: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      style={{
+        width: compact ? 24 : 28,
+        height: compact ? 24 : 28,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 999,
+        border: '1px solid rgba(148,163,184,0.2)',
+        background: 'rgba(15,23,42,0.84)',
+        color: '#dbeafe',
+        fontSize: compact ? 12 : 13,
+        fontWeight: 900,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.35 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function JobDetailsEditor({
+  compact,
+  paintCode,
+  amount,
+  amountStatus,
+  promiseDate,
+  saving,
+  onPaintCodeChange,
+  onAmountChange,
+  onAmountStatusChange,
+  onPromiseDateChange,
+  onSave,
+}: {
+  compact: boolean;
+  paintCode: string;
+  amount: string;
+  amountStatus: AmountStatus;
+  promiseDate: string;
+  saving: boolean;
+  onPaintCodeChange: (value: string) => void;
+  onAmountChange: (value: string) => void;
+  onAmountStatusChange: (value: AmountStatus) => void;
+  onPromiseDateChange: (value: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div
+      style={{
+        borderRadius: compact ? 14 : 16,
+        padding: compact ? 12 : 14,
+        background: 'rgba(2,6,23,0.4)',
+        border: '1px solid rgba(148,163,184,0.12)',
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          fontSize: compact ? 13 : 14,
+          fontWeight: 800,
+          color: '#f8fafc',
+        }}
+      >
+        Job Details
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: compact ? '1fr' : '1fr 1fr 1fr 1fr auto',
+          alignItems: 'end',
+        }}
+      >
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Paint Code</span>
+          <input
+            value={paintCode}
+            onChange={(event) => onPaintCodeChange(event.target.value)}
+            style={inputStyle(compact)}
+          />
+        </label>
+
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Amount</span>
+          <input
+            value={amount}
+            onChange={(event) => onAmountChange(event.target.value)}
+            inputMode="decimal"
+            style={inputStyle(compact)}
+          />
+        </label>
+
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Final</span>
+          <select
+            value={amountStatus}
+            onChange={(event) =>
+              onAmountStatusChange(event.target.value as AmountStatus)
+            }
+            style={inputStyle(compact)}
+          >
+            <option value="notFinal">Not Final</option>
+            <option value="final">Final</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Promise Date</span>
+          <input
+            type="date"
+            value={promiseDate}
+            onChange={(event) => onPromiseDateChange(event.target.value)}
+            style={inputStyle(compact)}
+          />
+        </label>
+
+        <ActionButton compact={compact} onClick={onSave} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Details'}
+        </ActionButton>
+      </div>
+    </div>
+  );
+}
+
+function PartsPanel({
+  job,
+  appMode,
+  compact,
+  draft,
+  noteDrafts,
+  onDraftChange,
+  onPartNoteDraftChange,
+  onRequestPart,
+  onSetPartOrdered,
+  onSetPartReorderNeeded,
+  onMarkPartReceived,
+  onSavePartNote,
+  savingPartNoteId,
+  onClearLegacyPartsWaiting,
+}: {
+  job: Job;
+  appMode: AppMode;
+  compact: boolean;
+  draft: { name: string; quantity: string; note: string };
+  noteDrafts: Record<string, string>;
+  onDraftChange: (draft: { name: string; quantity: string; note: string }) => void;
+  onPartNoteDraftChange: (partId: string, value: string) => void;
+  onRequestPart: () => void;
+  onSetPartOrdered: (partId: string) => void;
+  onSetPartReorderNeeded: (partId: string) => void;
+  onMarkPartReceived: (partId: string) => void;
+  onSavePartNote: (partId: string) => Promise<void> | void;
+  savingPartNoteId: string | null;
+  onClearLegacyPartsWaiting: () => void;
+}) {
+  const pendingCount = (job.partsRequests ?? []).filter(
+    (part) => part.status !== 'received',
+  ).length;
+
+  return (
+    <div
+      style={{
+        borderRadius: compact ? 14 : 16,
+        padding: compact ? 12 : 14,
+        background: 'rgba(2,6,23,0.4)',
+        border: '1px solid rgba(148,163,184,0.12)',
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div
+          style={{
+            fontSize: compact ? 13 : 14,
+            fontWeight: 800,
+            color: '#f8fafc',
+          }}
+        >
+          Parts
+        </div>
+
+        <span style={partsSummaryBadgeStyle(compact, pendingCount > 0)}>
+          {pendingCount > 0 ? `${pendingCount} waiting` : 'All received'}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gap: 10,
+          gridTemplateColumns: compact ? '1fr' : '1.2fr 0.7fr 1.1fr auto',
+          alignItems: 'start',
+        }}
+      >
+        <input
+          value={draft.name}
+          onChange={(event) =>
+            onDraftChange({
+              ...draft,
+              name: event.target.value,
+            })
+          }
+          placeholder="Part name"
+          style={inputStyle(compact)}
+        />
+        <input
+          value={draft.quantity}
+          onChange={(event) =>
+            onDraftChange({
+              ...draft,
+              quantity: event.target.value,
+            })
+          }
+          placeholder="Qty"
+          style={inputStyle(compact)}
+        />
+        <input
+          value={draft.note}
+          onChange={(event) =>
+            onDraftChange({
+              ...draft,
+              note: event.target.value,
+            })
+          }
+          placeholder="Part note"
+          style={inputStyle(compact)}
+        />
+        <ActionButton compact={compact} onClick={onRequestPart}>
+          {appMode === 'tech' ? 'Request Part' : 'Add Ordered Part'}
+        </ActionButton>
+      </div>
+
+      {job.partsWaiting && job.partsRequests.length === 0 ? (
+        <div
+          style={{
+            borderRadius: compact ? 12 : 14,
+            padding: compact ? 10 : 12,
+            background: 'rgba(15,23,42,0.62)',
+            border: '1px solid rgba(148,163,184,0.12)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 10,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div
+            style={{
+              fontSize: compact ? 12 : 13,
+              color: '#cbd5e1',
+              fontWeight: 700,
+            }}
+          >
+            Legacy parts-waiting flag only. Add a real part entry or clear it.
+          </div>
+          <ActionButton compact={compact} onClick={onClearLegacyPartsWaiting}>
+            Clear Legacy Waiting
+          </ActionButton>
+        </div>
+      ) : null}
+
+      {job.partsRequests.length ? (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {job.partsRequests.map((part) => {
+            const noteDraft = noteDrafts[part.id] ?? part.note ?? '';
+            return (
+              <div
+                key={part.id}
+                style={{
+                  borderRadius: compact ? 12 : 14,
+                  padding: compact ? 10 : 12,
+                  background: 'rgba(15,23,42,0.62)',
+                  border: '1px solid rgba(148,163,184,0.12)',
+                  display: 'grid',
+                  gap: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    alignItems: 'flex-start',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontSize: compact ? 13 : 15,
+                        fontWeight: 800,
+                        color: '#f8fafc',
+                        marginBottom: 4,
+                      }}
+                    >
+                      {part.name}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: compact ? 11 : 12,
+                        color: '#94a3b8',
+                      }}
+                    >
+                      Qty: {part.quantity} • Requested by {part.requestedBy === 'tech' ? 'Tech' : 'Manager'}
+                    </div>
+                  </div>
+
+                  <span style={partStatusBadgeStyle(part.status, compact)}>
+                    {formatPartStatus(part.status)}
+                  </span>
+                </div>
+
+                <textarea
+                  value={noteDraft}
+                  onChange={(event) =>
+                    onPartNoteDraftChange(part.id, event.target.value)
+                  }
+                  placeholder="Add a note about this part..."
+                  style={textAreaStyle(compact)}
+                />
+
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: compact ? 10 : 12,
+                      color: '#94a3b8',
+                    }}
+                  >
+                    Requested {formatDateTime(part.createdAt)}
+                    {part.receivedAt ? ` • Received ${formatDateTime(part.receivedAt)}` : ''}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <ActionButton compact={compact} onClick={() => onSavePartNote(part.id)}>
+                      {savingPartNoteId === part.id ? 'Saving...' : 'Save Part Note'}
+                    </ActionButton>
+                    {part.status === 'requested' ? (
+                      <ActionButton compact={compact} onClick={() => onSetPartOrdered(part.id)}>
+                        Mark Ordered
+                      </ActionButton>
+                    ) : null}
+                    {part.status !== 'reorderNeeded' && part.status !== 'received' ? (
+                      <ActionButton
+                        compact={compact}
+                        onClick={() => onSetPartReorderNeeded(part.id)}
+                      >
+                        Part Came Wrong
+                      </ActionButton>
+                    ) : null}
+                    {part.status !== 'received' ? (
+                      <ActionButton
+                        compact={compact}
+                        primary
+                        onClick={() => onMarkPartReceived(part.id)}
+                      >
+                        Mark Received
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          style={{
+            fontSize: compact ? 12 : 13,
+            color: '#94a3b8',
+          }}
+        >
+          No parts requested yet.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -706,6 +1475,152 @@ function statusBadgeStyle(status: JobStatus, compact: boolean): React.CSSPropert
     padding: compact ? '6px 10px' : '7px 12px',
     whiteSpace: 'nowrap',
   };
+}
+
+function partStatusBadgeStyle(
+  status: JobPartRequest['status'],
+  compact: boolean,
+): React.CSSProperties {
+  return {
+    background:
+      status === 'received'
+        ? 'rgba(22,163,74,0.22)'
+        : status === 'reorderNeeded'
+        ? 'rgba(127,29,29,0.28)'
+        : status === 'ordered'
+        ? 'rgba(37,99,235,0.22)'
+        : 'rgba(180,83,9,0.22)',
+    border:
+      status === 'received'
+        ? '1px solid rgba(74,222,128,0.28)'
+        : status === 'reorderNeeded'
+        ? '1px solid rgba(248,113,113,0.32)'
+        : status === 'ordered'
+        ? '1px solid rgba(96,165,250,0.34)'
+        : '1px solid rgba(251,191,36,0.28)',
+    color:
+      status === 'received'
+        ? '#dcfce7'
+        : status === 'reorderNeeded'
+        ? '#fecaca'
+        : status === 'ordered'
+        ? '#dbeafe'
+        : '#fde68a',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    borderRadius: 999,
+    padding: compact ? '5px 9px' : '6px 10px',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function formatPartStatus(status: JobPartRequest['status']) {
+  switch (status) {
+    case 'requested':
+      return 'Requested';
+    case 'ordered':
+      return 'Ordered';
+    case 'reorderNeeded':
+      return 'Reorder Needed';
+    case 'received':
+      return 'Received';
+    default:
+      return status;
+  }
+}
+
+function partsSummaryBadgeStyle(
+  compact: boolean,
+  active: boolean,
+): React.CSSProperties {
+  return {
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    color: active ? '#dbeafe' : '#cbd5e1',
+    background: active ? 'rgba(37,99,235,0.22)' : 'rgba(30,41,59,0.72)',
+    border: active
+      ? '1px solid rgba(96,165,250,0.34)'
+      : '1px solid rgba(148,163,184,0.16)',
+    borderRadius: 999,
+    padding: compact ? '5px 8px' : '6px 10px',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function inputStyle(compact: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    boxSizing: 'border-box',
+    borderRadius: compact ? 12 : 14,
+    border: '1px solid rgba(148,163,184,0.16)',
+    background: 'rgba(2,6,23,0.56)',
+    color: '#f8fafc',
+    padding: compact ? '10px 12px' : '12px 14px',
+    fontSize: compact ? 12 : 13,
+    outline: 'none',
+  };
+}
+
+function fieldLabelStyle(compact: boolean): React.CSSProperties {
+  return {
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  };
+}
+
+function textAreaStyle(compact: boolean): React.CSSProperties {
+  return {
+    width: '100%',
+    minHeight: compact ? 72 : 86,
+    resize: 'vertical',
+    boxSizing: 'border-box',
+    borderRadius: compact ? 12 : 14,
+    border: '1px solid rgba(148,163,184,0.16)',
+    background: 'rgba(2,6,23,0.56)',
+    color: '#f8fafc',
+    padding: compact ? 10 : 12,
+    fontSize: compact ? 12 : 13,
+    fontFamily: 'inherit',
+    outline: 'none',
+  };
+}
+
+function getHasPartsWaiting(job: Job) {
+  return (
+    job.partsWaiting ||
+    (job.partsRequests ?? []).some((part) => part.status !== 'received')
+  );
+}
+
+function getPartsWorkflowSummary(job: Job) {
+  if (!job.partsRequests.length) {
+    return job.partsWaiting ? 'Waiting on parts' : 'No parts needed';
+  }
+
+  return getHasPartsWaiting(job) ? 'Waiting on parts' : 'All parts received';
+}
+
+function getPartsReceiptSummary(job: Job) {
+  if (!job.partsRequests.length) {
+    return job.partsWaiting ? 'No parts listed yet' : 'No parts needed';
+  }
+
+  const receivedCount = job.partsRequests.filter(
+    (part) => part.status === 'received',
+  ).length;
+
+  if (receivedCount === 0) {
+    return 'No parts are in';
+  }
+
+  if (receivedCount === job.partsRequests.length) {
+    return 'All parts are in';
+  }
+
+  return 'Some parts are in';
 }
 
 function formatAmount(amount: number) {

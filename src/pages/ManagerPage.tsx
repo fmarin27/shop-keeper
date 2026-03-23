@@ -1,4 +1,4 @@
-import type { DisplayMode, MainTab } from '../types/app';
+import type { DisplayMode, MainTab, OverlayFocusTarget } from '../types/app';
 import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
@@ -9,6 +9,13 @@ type ManagerPageProps = {
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   onSwitchMode: () => void;
+  onCheckForUpdates: () => void;
+  updateStatus: string | null;
+  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionMaterial: (itemId: string) => void;
+  onOpenAttentionMessage: (itemId: string) => void;
+  overlayFocusTarget: OverlayFocusTarget | null;
+  onOverlayFocusHandled: () => void;
 };
 
 function ManagerPage({
@@ -17,6 +24,13 @@ function ManagerPage({
   displayMode,
   onDisplayModeChange,
   onSwitchMode,
+  onCheckForUpdates,
+  updateStatus,
+  onOpenAttentionJob,
+  onOpenAttentionMaterial,
+  onOpenAttentionMessage,
+  overlayFocusTarget,
+  onOverlayFocusHandled,
 }: ManagerPageProps) {
   const isCompact = displayMode === 'compact';
 
@@ -37,13 +51,39 @@ function ManagerPage({
         displayMode={displayMode}
         onDisplayModeChange={onDisplayModeChange}
         onSwitchMode={onSwitchMode}
+        onCheckForUpdates={onCheckForUpdates}
+        updateStatus={updateStatus}
+        onOpenAttentionJob={onOpenAttentionJob}
+        onOpenAttentionMaterial={onOpenAttentionMaterial}
+        onOpenAttentionMessage={onOpenAttentionMessage}
       />
 
       <main style={{ padding: isCompact ? 14 : 24 }}>
         {selectedTab === 'jobs' ? (
-          <JobsTab showAddJob compact={isCompact} />
+          <JobsTab
+            showAddJob
+            compact={isCompact}
+            appMode="manager"
+            focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
+            onFocusedJobHandled={onOverlayFocusHandled}
+          />
         ) : (
-          <MaterialsMessagesTab compact={isCompact} />
+          <MaterialsMessagesTab
+            compact={isCompact}
+            focusedMaterialId={
+              overlayFocusTarget?.tab === 'materialsMessages' &&
+              overlayFocusTarget.itemType === 'material'
+                ? overlayFocusTarget.itemId
+                : null
+            }
+            focusedMessageId={
+              overlayFocusTarget?.tab === 'materialsMessages' &&
+              overlayFocusTarget.itemType === 'message'
+                ? overlayFocusTarget.itemId
+                : null
+            }
+            onFocusHandled={onOverlayFocusHandled}
+          />
         )}
       </main>
     </div>

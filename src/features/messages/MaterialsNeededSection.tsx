@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import type { MaterialRequest, MaterialStatus } from './mockMessages';
+import React, { useEffect, useRef, useState } from 'react';
+import type { MaterialRequest, MaterialStatus } from './types';
 
 type MaterialsNeededSectionProps = {
   materials: MaterialRequest[];
   compact?: boolean;
   unreadCount?: number;
+  focusedMaterialId?: string | null;
+  onFocusedMaterialHandled?: () => void;
   onAddMaterial: (itemName: string, quantity: string, note: string) => void;
   onSetMaterialStatus: (id: string, status: MaterialStatus) => void;
   onMarkMaterialRead: (id: string) => void;
@@ -14,6 +16,8 @@ function MaterialsNeededSection({
   materials,
   compact = false,
   unreadCount = 0,
+  focusedMaterialId = null,
+  onFocusedMaterialHandled,
   onAddMaterial,
   onSetMaterialStatus,
   onMarkMaterialRead,
@@ -22,6 +26,38 @@ function MaterialsNeededSection({
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
   const [note, setNote] = useState('');
+  const focusedMaterialRef = useRef<HTMLDivElement | null>(null);
+  const focusTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current !== null) {
+        window.clearTimeout(focusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!focusedMaterialId) return;
+
+    const target = materials.find((item) => item.id === focusedMaterialId);
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      focusedMaterialRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+
+    if (focusTimeoutRef.current !== null) {
+      window.clearTimeout(focusTimeoutRef.current);
+    }
+
+    focusTimeoutRef.current = window.setTimeout(() => {
+      onFocusedMaterialHandled?.();
+    }, 1200);
+  }, [focusedMaterialId, materials, onFocusedMaterialHandled]);
 
   const submit = () => {
     onAddMaterial(itemName, quantity, note);
@@ -172,15 +208,23 @@ function MaterialsNeededSection({
           materials.map((item) => (
             <div
               key={item.id}
+              ref={focusedMaterialId === item.id ? focusedMaterialRef : null}
               onClick={() => onMarkMaterialRead(item.id)}
               style={{
                 borderRadius: compact ? 14 : 18,
                 padding: compact ? 12 : 18,
                 background: item.unread ? 'rgba(2,6,23,0.72)' : 'rgba(2,6,23,0.62)',
-                border: item.unread
+                border: focusedMaterialId === item.id
+                  ? '1px solid rgba(96,165,250,0.42)'
+                  : item.unread
                   ? '1px solid rgba(96,165,250,0.22)'
                   : '1px solid rgba(148,163,184,0.14)',
-                boxShadow: item.unread ? '0 0 18px rgba(96,165,250,0.08)' : 'none',
+                boxShadow:
+                  focusedMaterialId === item.id
+                    ? '0 0 28px rgba(96,165,250,0.18)'
+                    : item.unread
+                    ? '0 0 18px rgba(96,165,250,0.08)'
+                    : 'none',
                 cursor: 'pointer',
               }}
             >

@@ -177,6 +177,10 @@ function CompletedJobsSection({
                           value={job.customerName}
                         />
                         <DetailBox
+                          label="Paint Code"
+                          value={job.paintCode || 'Not set'}
+                        />
+                        <DetailBox
                           label="Promise Date"
                           value={formatDate(job.promiseDate)}
                         />
@@ -187,8 +191,12 @@ function CompletedJobsSection({
                           }`}
                         />
                         <DetailBox
-                          label="Parts Waiting"
-                          value={job.partsWaiting ? 'Yes' : 'No'}
+                          label="Parts Status"
+                          value={getPartsWorkflowSummary(job)}
+                        />
+                        <DetailBox
+                          label="Parts Received"
+                          value={getPartsReceiptSummary(job)}
                         />
                       </div>
 
@@ -334,6 +342,41 @@ function formatDate(value: string) {
     day: 'numeric',
     year: '2-digit',
   }).format(date);
+}
+
+function hasPartsWaiting(job: Job) {
+  return (
+    job.partsWaiting ||
+    (job.partsRequests ?? []).some((part) => part.status !== 'received')
+  );
+}
+
+function getPartsWorkflowSummary(job: Job) {
+  if (!job.partsRequests.length) {
+    return job.partsWaiting ? 'Waiting on parts' : 'No parts needed';
+  }
+
+  return hasPartsWaiting(job) ? 'Waiting on parts' : 'All parts received';
+}
+
+function getPartsReceiptSummary(job: Job) {
+  if (!job.partsRequests.length) {
+    return job.partsWaiting ? 'No parts listed yet' : 'No parts needed';
+  }
+
+  const receivedCount = job.partsRequests.filter(
+    (part) => part.status === 'received',
+  ).length;
+
+  if (receivedCount === 0) {
+    return 'No parts are in';
+  }
+
+  if (receivedCount === job.partsRequests.length) {
+    return 'All parts are in';
+  }
+
+  return 'Some parts are in';
 }
 
 export default CompletedJobsSection;

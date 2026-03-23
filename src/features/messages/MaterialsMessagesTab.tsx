@@ -5,7 +5,7 @@ import type {
   GeneralMessage,
   MaterialRequest,
   MaterialStatus,
-} from './mockMessages';
+} from './types';
 import {
   addMaterialRequest,
   markMaterialRead,
@@ -21,9 +21,17 @@ import {
 
 type MaterialsMessagesTabProps = {
   compact?: boolean;
+  focusedMaterialId?: string | null;
+  focusedMessageId?: string | null;
+  onFocusHandled?: () => void;
 };
 
-function MaterialsMessagesTab({ compact = false }: MaterialsMessagesTabProps) {
+function MaterialsMessagesTab({
+  compact = false,
+  focusedMaterialId = null,
+  focusedMessageId = null,
+  onFocusHandled,
+}: MaterialsMessagesTabProps) {
   const [materials, setMaterials] = useState<MaterialRequest[]>([]);
   const [messages, setMessages] = useState<GeneralMessage[]>([]);
   const [loadingMaterials, setLoadingMaterials] = useState(true);
@@ -195,6 +203,8 @@ function MaterialsMessagesTab({ compact = false }: MaterialsMessagesTabProps) {
         materials={visibleMaterials}
         compact={compact}
         unreadCount={unreadMaterialsCount}
+        focusedMaterialId={focusedMaterialId}
+        onFocusedMaterialHandled={onFocusHandled}
         onAddMaterial={handleAddMaterial}
         onSetMaterialStatus={handleSetMaterialStatus}
         onMarkMaterialRead={handleMarkMaterialRead}
@@ -204,6 +214,8 @@ function MaterialsMessagesTab({ compact = false }: MaterialsMessagesTabProps) {
         messages={visibleMessages}
         compact={compact}
         unreadCount={unreadMessagesCount}
+        focusedMessageId={focusedMessageId}
+        onFocusedMessageHandled={onFocusHandled}
         onAddTextMessage={handleAddTextMessage}
         onAddAudioMessage={addAudioGeneralMessage}
         onMarkMessageRead={handleMarkMessageRead}

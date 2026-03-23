@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { GeneralMessage } from './mockMessages';
+import type { GeneralMessage } from './types';
 
 type GeneralMessageWithAudio = GeneralMessage & {
   audioUrl?: string;
@@ -9,6 +9,8 @@ type GeneralMessagesSectionProps = {
   messages: GeneralMessageWithAudio[];
   compact?: boolean;
   unreadCount?: number;
+  focusedMessageId?: string | null;
+  onFocusedMessageHandled?: () => void;
   onAddTextMessage: (text: string) => void;
   onAddAudioMessage?: (file: Blob) => Promise<void> | void;
   onMarkMessageRead: (id: string) => void;
@@ -18,6 +20,8 @@ function GeneralMessagesSection({
   messages,
   compact = false,
   unreadCount = 0,
+  focusedMessageId = null,
+  onFocusedMessageHandled,
   onAddTextMessage,
   onAddAudioMessage,
   onMarkMessageRead,
@@ -31,12 +35,39 @@ function GeneralMessagesSection({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const focusedMessageRef = useRef<HTMLDivElement | null>(null);
+  const focusTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       cleanupRecorder();
+      if (focusTimeoutRef.current !== null) {
+        window.clearTimeout(focusTimeoutRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!focusedMessageId) return;
+
+    const target = messages.find((message) => message.id === focusedMessageId);
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      focusedMessageRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+
+    if (focusTimeoutRef.current !== null) {
+      window.clearTimeout(focusTimeoutRef.current);
+    }
+
+    focusTimeoutRef.current = window.setTimeout(() => {
+      onFocusedMessageHandled?.();
+    }, 1200);
+  }, [focusedMessageId, messages, onFocusedMessageHandled]);
 
   const submit = () => {
     const trimmed = draft.trim();
@@ -344,15 +375,23 @@ function GeneralMessagesSection({
           messages.map((message) => (
             <div
               key={message.id}
+              ref={focusedMessageId === message.id ? focusedMessageRef : null}
               onClick={() => onMarkMessageRead(message.id)}
               style={{
                 borderRadius: compact ? 14 : 18,
                 padding: compact ? 12 : 18,
                 background: message.unread ? 'rgba(2,6,23,0.72)' : 'rgba(2,6,23,0.62)',
-                border: message.unread
+                border: focusedMessageId === message.id
+                  ? '1px solid rgba(96,165,250,0.42)'
+                  : message.unread
                   ? '1px solid rgba(96,165,250,0.22)'
                   : '1px solid rgba(148,163,184,0.14)',
-                boxShadow: message.unread ? '0 0 18px rgba(96,165,250,0.08)' : 'none',
+                boxShadow:
+                  focusedMessageId === message.id
+                    ? '0 0 28px rgba(96,165,250,0.18)'
+                    : message.unread
+                    ? '0 0 18px rgba(96,165,250,0.08)'
+                    : 'none',
                 cursor: 'pointer',
               }}
             >

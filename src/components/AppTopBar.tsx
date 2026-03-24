@@ -149,8 +149,9 @@ function AppTopBar({
     <header
       style={{
         padding: isCompact ? 12 : 24,
-        borderBottom: '1px solid #334155',
-        background: '#020617',
+        borderBottom: '2px solid rgba(148,163,184,0.36)',
+        background: 'linear-gradient(180deg, rgba(44,60,82,0.98), rgba(33,46,65,0.98))',
+        boxShadow: '0 14px 34px rgba(0,0,0,0.16)',
       }}
     >
       <div
@@ -177,11 +178,11 @@ function AppTopBar({
           style={{
             padding: isCompact ? '5px 10px' : '10px 18px',
             borderRadius: 999,
-            background: '#1e40af',
-            border: '1px solid #3b82f6',
+            background: '#315aab',
+            border: '1px solid #7fb0ff',
             fontSize: isCompact ? 12 : 18,
             fontWeight: 700,
-            color: '#dbeafe',
+            color: '#eef6ff',
           }}
         >
           {modeLabel}
@@ -192,11 +193,11 @@ function AppTopBar({
             style={{
               padding: '5px 10px',
               borderRadius: 999,
-              background: '#1d4ed8',
-              border: '1px solid #60a5fa',
+              background: '#315aab',
+              border: '1px solid #7fb0ff',
               fontSize: 11,
               fontWeight: 800,
-              color: '#dbeafe',
+              color: '#eef6ff',
             }}
           >
             Priority View
@@ -230,8 +231,8 @@ function AppTopBar({
           onClick={onCheckForUpdates}
           style={{
             border: '1px solid #2563eb',
-            background: '#1d4ed8',
-            color: '#eff6ff',
+            background: '#3865bb',
+            color: '#f7fbff',
             borderRadius: isCompact ? 12 : 16,
             padding: isCompact ? '8px 12px' : '14px 20px',
             fontSize: isCompact ? 12 : 16,
@@ -245,9 +246,9 @@ function AppTopBar({
         <button
           onClick={onSwitchMode}
           style={{
-            border: '1px solid #475569',
-            background: '#1e293b',
-            color: '#f8fafc',
+            border: '1px solid #7f93ab',
+            background: '#435267',
+            color: '#f8fbff',
             borderRadius: isCompact ? 12 : 16,
             padding: isCompact ? '8px 12px' : '14px 26px',
             fontSize: isCompact ? 12 : 16,
@@ -303,16 +304,16 @@ function AttentionPanel({
   onOpenMessage: (itemId: string) => void;
 }) {
   return (
-    <div
-      style={{
-        marginTop: 18,
-        padding: 16,
-        borderRadius: 18,
-        background: 'rgba(15,23,42,0.82)',
-        border: '1px solid rgba(96,165,250,0.18)',
-        boxShadow: '0 0 24px rgba(96,165,250,0.08)',
-      }}
-    >
+        <div
+          style={{
+            marginTop: 18,
+            padding: 18,
+            borderRadius: 18,
+            background: 'rgba(57,74,97,0.96)',
+            border: '2px solid rgba(168,184,204,0.34)',
+            boxShadow: '0 0 24px rgba(96,165,250,0.06), inset 0 0 0 1px rgba(255,255,255,0.05)',
+          }}
+        >
       <div
         style={{
           display: 'flex',
@@ -324,10 +325,28 @@ function AttentionPanel({
         }}
       >
         <div>
-          <div style={{ fontSize: 18, fontWeight: 900, color: '#f8fafc' }}>
-            Needs Attention
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span
+              style={{
+                borderRadius: 999,
+                padding: '7px 12px',
+                background:
+                  'linear-gradient(180deg, rgba(37,99,235,0.26), rgba(29,78,216,0.36))',
+                border: '1px solid rgba(147,197,253,0.42)',
+                color: '#eff6ff',
+                fontSize: 12,
+                fontWeight: 900,
+                letterSpacing: 0.8,
+                textTransform: 'uppercase',
+              }}
+            >
+              Attention
+            </span>
+            <div style={{ fontSize: 18, fontWeight: 900, color: '#f8fafc' }}>
+              Needs Attention
+            </div>
           </div>
-          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: '#d2dceb', marginTop: 4 }}>
             Unread notes, waiting parts, unread materials, and unread messages.
           </div>
         </div>
@@ -358,8 +377,8 @@ function AttentionPanel({
                 onOpenMessage(item.itemId);
               }}
               style={{
-                border: '1px solid rgba(96,165,250,0.18)',
-                background: 'rgba(2,6,23,0.56)',
+                border: '2px solid rgba(168,184,204,0.3)',
+                background: 'rgba(39,53,73,0.98)',
                 color: '#f8fafc',
                 borderRadius: 16,
                 padding: '12px 13px',
@@ -382,7 +401,7 @@ function AttentionPanel({
               <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>
                 {item.title}
               </div>
-              <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.35 }}>
+              <div style={{ fontSize: 12, color: '#e3eaf4', lineHeight: 1.35 }}>
                 {item.description}
               </div>
             </button>
@@ -393,9 +412,9 @@ function AttentionPanel({
           style={{
             borderRadius: 14,
             padding: '12px 14px',
-            background: 'rgba(2,6,23,0.48)',
-            border: '1px solid rgba(148,163,184,0.12)',
-            color: '#94a3b8',
+            background: 'rgba(39,53,73,0.98)',
+            border: '2px solid rgba(168,184,204,0.3)',
+            color: '#d2dceb',
             fontSize: 13,
             fontWeight: 700,
           }}

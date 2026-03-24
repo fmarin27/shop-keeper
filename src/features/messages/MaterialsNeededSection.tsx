@@ -74,15 +74,15 @@ function MaterialsNeededSection({
       style={{
         borderRadius: compact ? 16 : 24,
         padding: compact ? 14 : 28,
-        background: unreadCount > 0 ? 'rgba(15,23,42,0.86)' : 'rgba(15,23,42,0.78)',
+        background: unreadCount > 0 ? 'rgba(58,74,97,0.96)' : 'rgba(58,74,97,0.94)',
         border:
           unreadCount > 0
-            ? '1px solid rgba(96,165,250,0.24)'
-            : '1px solid rgba(148,163,184,0.18)',
+            ? '2px solid rgba(96,165,250,0.42)'
+            : '2px solid rgba(175,189,208,0.32)',
         boxShadow:
           unreadCount > 0
-            ? '0 0 26px rgba(96,165,250,0.1), 0 18px 40px rgba(0,0,0,0.18)'
-            : '0 18px 40px rgba(0,0,0,0.18)',
+            ? '0 0 26px rgba(96,165,250,0.1), 0 18px 40px rgba(0,0,0,0.14)'
+            : '0 18px 40px rgba(0,0,0,0.14), inset 0 0 0 1px rgba(255,255,255,0.05)',
       }}
     >
       <div
@@ -96,6 +96,22 @@ function MaterialsNeededSection({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span
+            style={{
+              borderRadius: 999,
+              padding: compact ? '5px 9px' : '7px 12px',
+              background:
+                'linear-gradient(180deg, rgba(251,191,36,0.26), rgba(180,83,9,0.34))',
+              border: '1px solid rgba(253,224,71,0.42)',
+              color: '#fff7ed',
+              fontSize: compact ? 10 : 12,
+              fontWeight: 900,
+              letterSpacing: 0.8,
+              textTransform: 'uppercase',
+            }}
+          >
+            Materials
+          </span>
           <h2
             style={{
               margin: 0,
@@ -154,8 +170,8 @@ function MaterialsNeededSection({
             marginBottom: 18,
             padding: 14,
             borderRadius: 16,
-            background: 'rgba(2,6,23,0.46)',
-            border: '1px solid rgba(148,163,184,0.14)',
+            background: 'rgba(39,53,73,0.96)',
+            border: '2px solid rgba(175,189,208,0.3)',
           }}
         >
           <input
@@ -205,7 +221,7 @@ function MaterialsNeededSection({
 
       <div style={{ display: 'grid', gap: compact ? 8 : 14 }}>
         {materials.length ? (
-          materials.map((item) => (
+          materials.map((item, index) => (
             <div
               key={item.id}
               ref={focusedMaterialId === item.id ? focusedMaterialRef : null}
@@ -213,18 +229,24 @@ function MaterialsNeededSection({
               style={{
                 borderRadius: compact ? 14 : 18,
                 padding: compact ? 12 : 18,
-                background: item.unread ? 'rgba(2,6,23,0.72)' : 'rgba(2,6,23,0.62)',
+                background: item.unread
+                  ? index % 2 === 0
+                    ? 'rgba(89,60,34,0.98)'
+                    : 'rgba(111,75,43,0.98)'
+                  : index % 2 === 0
+                  ? 'rgba(77,58,40,0.96)'
+                  : 'rgba(98,72,49,0.96)',
                 border: focusedMaterialId === item.id
-                  ? '1px solid rgba(96,165,250,0.42)'
+                  ? '2px solid rgba(96,165,250,0.68)'
                   : item.unread
-                  ? '1px solid rgba(96,165,250,0.22)'
-                  : '1px solid rgba(148,163,184,0.14)',
+                  ? '2px solid rgba(96,165,250,0.34)'
+                  : '2px solid rgba(148,163,184,0.3)',
                 boxShadow:
                   focusedMaterialId === item.id
                     ? '0 0 28px rgba(96,165,250,0.18)'
                     : item.unread
-                    ? '0 0 18px rgba(96,165,250,0.08)'
-                    : 'none',
+                    ? '0 10px 24px rgba(0,0,0,0.18)'
+                    : '0 10px 24px rgba(0,0,0,0.14)',
                 cursor: 'pointer',
               }}
             >
@@ -253,7 +275,7 @@ function MaterialsNeededSection({
                   <div
                     style={{
                       fontSize: compact ? 11 : 14,
-                      color: '#94a3b8',
+                      color: '#b8c7da',
                     }}
                   >
                     Qty: {item.quantity}
@@ -289,7 +311,7 @@ function MaterialsNeededSection({
                 <div
                   style={{
                     fontSize: compact ? 10 : 12,
-                    color: '#94a3b8',
+                    color: '#b8c7da',
                   }}
                 >
                   {formatDateTime(item.createdAt)}
@@ -329,9 +351,9 @@ function MaterialsNeededSection({
             style={{
               borderRadius: compact ? 14 : 18,
               padding: compact ? 12 : 16,
-              background: 'rgba(2,6,23,0.42)',
-              border: '1px solid rgba(148,163,184,0.12)',
-              color: '#94a3b8',
+              background: 'rgba(39,53,73,0.96)',
+              border: '2px solid rgba(175,189,208,0.3)',
+              color: '#b8c7da',
               fontSize: compact ? 11 : 13,
               fontWeight: 700,
             }}
@@ -407,8 +429,8 @@ function inputStyle(compact: boolean): React.CSSProperties {
     width: '100%',
     boxSizing: 'border-box',
     borderRadius: compact ? 12 : 14,
-    border: '1px solid rgba(148,163,184,0.16)',
-    background: 'rgba(2,6,23,0.56)',
+    border: '2px solid rgba(148,163,184,0.24)',
+    background: 'rgba(9,15,28,0.96)',
     color: '#f8fafc',
     padding: compact ? '10px 12px' : '12px 14px',
     fontSize: compact ? 12 : 13,
@@ -420,10 +442,10 @@ function actionButtonStyle(compact: boolean, primary: boolean): React.CSSPropert
   return {
     border: primary
       ? '1px solid rgba(96,165,250,0.4)'
-      : '1px solid rgba(148,163,184,0.18)',
+      : '1px solid rgba(148,163,184,0.34)',
     background: primary
-      ? 'rgba(37,99,235,0.26)'
-      : 'rgba(30,41,59,0.72)',
+      ? 'rgba(37,99,235,0.38)'
+      : 'rgba(51,65,85,0.92)',
     color: '#f8fafc',
     borderRadius: compact ? 12 : 14,
     padding: compact ? '9px 12px' : '11px 14px',
@@ -435,8 +457,8 @@ function actionButtonStyle(compact: boolean, primary: boolean): React.CSSPropert
 
 function miniButtonStyle(compact: boolean): React.CSSProperties {
   return {
-    border: '1px solid rgba(148,163,184,0.18)',
-    background: 'rgba(30,41,59,0.72)',
+    border: '1px solid rgba(148,163,184,0.34)',
+    background: 'rgba(51,65,85,0.92)',
     color: '#f8fafc',
     borderRadius: compact ? 10 : 12,
     padding: compact ? '7px 10px' : '8px 12px',

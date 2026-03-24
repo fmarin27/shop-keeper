@@ -25,7 +25,7 @@ function getWindowOptions(): Electron.BrowserWindowConstructorOptions {
     minWidth: 700,
     minHeight: 500,
     autoHideMenuBar: true,
-    title: 'Shop Floor',
+    title: 'Shop Keeper',
     alwaysOnTop: isOverlay,
     frame: true,
     transparent: false,
@@ -261,6 +261,12 @@ app.whenReady().then(async () => {
       };
     }
   });
+
+  ipcMain.handle('app:getInfo', () => ({
+    name: app.getName(),
+    version: app.getVersion(),
+    owner: 'Fernando Marin',
+  }));
 
   await createWindow();
   setupAutoUpdates();

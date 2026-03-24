@@ -235,9 +235,9 @@ function ActiveJobsSection({
       style={{
         borderRadius: compact ? 18 : 24,
         padding: compact ? 18 : 28,
-        background: 'rgba(15,23,42,0.78)',
-        border: '1px solid rgba(148,163,184,0.18)',
-        boxShadow: '0 18px 40px rgba(0,0,0,0.18)',
+        background: 'rgba(58,74,97,0.94)',
+        border: '2px solid rgba(175,189,208,0.38)',
+        boxShadow: '0 18px 40px rgba(0,0,0,0.14), inset 0 0 0 1px rgba(255,255,255,0.05)',
       }}
     >
       <h2
@@ -262,6 +262,7 @@ function ActiveJobsSection({
           const isFirst = index === 0;
           const isLast = index === jobs.length - 1;
           const isFocused = focusedJobId === job.id;
+          const isEven = index % 2 === 0;
           const hasPartsWaiting = getHasPartsWaiting(job);
           const detailDraft = jobDetailDrafts[job.id] ?? {
             paintCode: job.paintCode,
@@ -277,11 +278,13 @@ function ActiveJobsSection({
               ref={isFocused ? focusedJobRef : null}
               style={{
                 borderRadius: compact ? 16 : 20,
-                background: 'rgba(2,6,23,0.62)',
+                background: isEven ? 'rgba(39,53,73,0.98)' : 'rgba(47,62,84,0.98)',
                 border: isFocused
-                  ? '1px solid rgba(96,165,250,0.42)'
-                  : '1px solid rgba(148,163,184,0.14)',
-                boxShadow: isFocused ? '0 0 28px rgba(96,165,250,0.18)' : 'none',
+                  ? '2px solid rgba(96,165,250,0.72)'
+                  : '2px solid rgba(175,189,208,0.32)',
+                boxShadow: isFocused
+                  ? '0 0 0 1px rgba(191,219,254,0.24), 0 0 28px rgba(96,165,250,0.18)'
+                  : '0 10px 24px rgba(0,0,0,0.12)',
                 overflow: 'hidden',
               }}
             >
@@ -356,7 +359,7 @@ function ActiveJobsSection({
                     <div
                       style={{
                         fontSize: compact ? 12 : 14,
-                        color: '#94a3b8',
+                        color: '#b8c7da',
                       }}
                     >
                       RO {job.roNumber}
@@ -431,10 +434,22 @@ function ActiveJobsSection({
                       </button>
                     ) : null}
 
+                    {job.status !== 'done' ? (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onMarkDone(job.id);
+                        }}
+                        style={markDoneButtonStyle(compact)}
+                      >
+                        Mark Done
+                      </button>
+                    ) : null}
+
                     <span
                       style={{
                         fontSize: compact ? 16 : 18,
-                        color: '#94a3b8',
+                        color: '#c7d2e2',
                         fontWeight: 700,
                       }}
                     >
@@ -495,9 +510,9 @@ function ActiveJobsSection({
               {isOpen ? (
                 <div
                   style={{
-                    borderTop: '1px solid rgba(148,163,184,0.14)',
+                    borderTop: '2px solid rgba(175,189,208,0.3)',
                     padding: compact ? 14 : 18,
-                    background: 'rgba(15,23,42,0.5)',
+                    background: 'rgba(67,84,108,0.96)',
                     display: 'grid',
                     gap: compact ? 12 : 16,
                   }}
@@ -507,6 +522,8 @@ function ActiveJobsSection({
                       display: 'grid',
                       gridTemplateColumns: compact ? '1fr' : 'repeat(2, minmax(0, 1fr))',
                       gap: compact ? 10 : 14,
+                      paddingBottom: compact ? 2 : 4,
+                      borderBottom: '2px solid rgba(148,163,184,0.18)',
                     }}
                   >
                     <DetailBox
@@ -543,51 +560,57 @@ function ActiveJobsSection({
                     />
                   </div>
 
-                  <JobDetailsEditor
-                    compact={compact}
-                    paintCode={detailDraft.paintCode}
-                    amount={detailDraft.amount}
-                    amountStatus={detailDraft.amountStatus}
-                    promiseDate={detailDraft.promiseDate}
-                    saving={isSavingDetailsThisJob}
-                    onPaintCodeChange={(value) =>
-                      setJobDetailDrafts((current) => ({
-                        ...current,
-                        [job.id]: {
-                          ...detailDraft,
-                          paintCode: value,
-                        },
-                      }))
-                    }
-                    onAmountChange={(value) =>
-                      setJobDetailDrafts((current) => ({
-                        ...current,
-                        [job.id]: {
-                          ...detailDraft,
-                          amount: value,
-                        },
-                      }))
-                    }
-                    onAmountStatusChange={(value) =>
-                      setJobDetailDrafts((current) => ({
-                        ...current,
-                        [job.id]: {
-                          ...detailDraft,
-                          amountStatus: value,
-                        },
-                      }))
-                    }
-                    onPromiseDateChange={(value) =>
-                      setJobDetailDrafts((current) => ({
-                        ...current,
-                        [job.id]: {
-                          ...detailDraft,
-                          promiseDate: value,
-                        },
-                      }))
-                    }
-                    onSave={() => handleSaveJobDetails(job)}
-                  />
+                  {appMode === 'manager' ? (
+                    <>
+                      <JobDetailsEditor
+                        compact={compact}
+                        paintCode={detailDraft.paintCode}
+                        amount={detailDraft.amount}
+                        amountStatus={detailDraft.amountStatus}
+                        promiseDate={detailDraft.promiseDate}
+                        saving={isSavingDetailsThisJob}
+                        onPaintCodeChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              paintCode: value,
+                            },
+                          }))
+                        }
+                        onAmountChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              amount: value,
+                            },
+                          }))
+                        }
+                        onAmountStatusChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              amountStatus: value,
+                            },
+                          }))
+                        }
+                        onPromiseDateChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              promiseDate: value,
+                            },
+                          }))
+                        }
+                        onSave={() => handleSaveJobDetails(job)}
+                      />
+
+                      <SectionDivider />
+                    </>
+                  ) : null}
 
                   <PartsPanel
                     job={job}
@@ -644,12 +667,20 @@ function ActiveJobsSection({
                     onClearLegacyPartsWaiting={() => onClearLegacyPartsWaiting(job.id)}
                   />
 
+                  <SectionDivider />
+
                   <NotesPanel job={job} compact={compact} />
+
+                  <SectionDivider />
 
                   <div
                     style={{
                       display: 'grid',
                       gap: 10,
+                      borderRadius: compact ? 14 : 16,
+                      padding: compact ? 12 : 14,
+                      background: 'rgba(17,27,46,0.94)',
+                      border: '2px solid rgba(148,163,184,0.24)',
                     }}
                   >
                     <textarea
@@ -667,8 +698,8 @@ function ActiveJobsSection({
                         resize: 'vertical',
                         boxSizing: 'border-box',
                         borderRadius: compact ? 12 : 14,
-                        border: '1px solid rgba(148,163,184,0.16)',
-                        background: 'rgba(2,6,23,0.56)',
+                        border: '2px solid rgba(148,163,184,0.24)',
+                        background: 'rgba(9,15,28,0.96)',
                         color: '#f8fafc',
                         padding: compact ? 10 : 12,
                         fontSize: compact ? 12 : 13,
@@ -752,13 +783,6 @@ function ActiveJobsSection({
                         Move To Bottom
                       </ActionButton>
 
-                      <ActionButton
-                        compact={compact}
-                        primary
-                        onClick={() => onMarkDone(job.id)}
-                      >
-                        Mark Done
-                      </ActionButton>
                     </div>
                   </div>
                 </div>
@@ -781,6 +805,22 @@ function inlineControlButtonStyle(compact: boolean): React.CSSProperties {
     fontSize: compact ? 11 : 12,
     fontWeight: 800,
     cursor: 'pointer',
+  };
+}
+
+function markDoneButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(110,231,183,0.7)',
+    background:
+      'linear-gradient(180deg, rgba(22,163,74,0.96) 0%, rgba(21,128,61,0.96) 100%)',
+    color: '#f0fdf4',
+    borderRadius: compact ? 12 : 14,
+    padding: compact ? '8px 11px' : '10px 14px',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+    cursor: 'pointer',
+    boxShadow: '0 8px 18px rgba(21,128,61,0.24)',
+    whiteSpace: 'nowrap',
   };
 }
 
@@ -827,6 +867,66 @@ function HeaderOrderButton({
   );
 }
 
+function SectionDivider() {
+  return (
+    <div
+      style={{
+        height: 2,
+        borderRadius: 999,
+        background:
+          'linear-gradient(90deg, rgba(148,163,184,0.04) 0%, rgba(148,163,184,0.3) 18%, rgba(148,163,184,0.3) 82%, rgba(148,163,184,0.04) 100%)',
+      }}
+    />
+  );
+}
+
+function SectionLabel({
+  title,
+  tone,
+  compact = false,
+}: {
+  title: string;
+  tone: 'blue' | 'amber' | 'violet';
+  compact?: boolean;
+}) {
+  const tones = {
+    blue: {
+      background: 'linear-gradient(180deg, rgba(45,212,191,0.28), rgba(14,116,144,0.32))',
+      border: '1px solid rgba(103,232,249,0.42)',
+      color: '#ecfeff',
+    },
+    amber: {
+      background: 'linear-gradient(180deg, rgba(251,191,36,0.26), rgba(180,83,9,0.34))',
+      border: '1px solid rgba(253,224,71,0.42)',
+      color: '#fff7ed',
+    },
+    violet: {
+      background: 'linear-gradient(180deg, rgba(192,132,252,0.26), rgba(109,40,217,0.34))',
+      border: '1px solid rgba(216,180,254,0.44)',
+      color: '#faf5ff',
+    },
+  } satisfies Record<'blue' | 'amber' | 'violet', React.CSSProperties>;
+
+  return (
+    <div
+      style={{
+        alignSelf: 'start',
+        display: 'inline-flex',
+        alignItems: 'center',
+        borderRadius: 999,
+        padding: compact ? '6px 10px' : '7px 12px',
+        fontSize: compact ? 11 : 12,
+        fontWeight: 900,
+        letterSpacing: 0.9,
+        textTransform: 'uppercase',
+        ...tones[tone],
+      }}
+    >
+      {title}
+    </div>
+  );
+}
+
 function JobDetailsEditor({
   compact,
   paintCode,
@@ -857,20 +957,22 @@ function JobDetailsEditor({
       style={{
         borderRadius: compact ? 14 : 16,
         padding: compact ? 12 : 14,
-        background: 'rgba(2,6,23,0.4)',
-        border: '1px solid rgba(148,163,184,0.12)',
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
         display: 'grid',
         gap: 12,
       }}
     >
       <div
         style={{
-          fontSize: compact ? 13 : 14,
-          fontWeight: 800,
-          color: '#f8fafc',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
         }}
       >
-        Job Details
+        <SectionLabel title="Job Details" tone="blue" compact={compact} />
       </div>
 
       <div
@@ -972,8 +1074,8 @@ function PartsPanel({
       style={{
         borderRadius: compact ? 14 : 16,
         padding: compact ? 12 : 14,
-        background: 'rgba(2,6,23,0.4)',
-        border: '1px solid rgba(148,163,184,0.12)',
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
         display: 'grid',
         gap: 12,
       }}
@@ -989,12 +1091,12 @@ function PartsPanel({
       >
         <div
           style={{
-            fontSize: compact ? 13 : 14,
-            fontWeight: 800,
-            color: '#f8fafc',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
           }}
         >
-          Parts
+          <SectionLabel title="Parts" tone="amber" compact={compact} />
         </div>
 
         <span style={partsSummaryBadgeStyle(compact, pendingCount > 0)}>
@@ -1053,8 +1155,8 @@ function PartsPanel({
           style={{
             borderRadius: compact ? 12 : 14,
             padding: compact ? 10 : 12,
-            background: 'rgba(15,23,42,0.62)',
-            border: '1px solid rgba(148,163,184,0.12)',
+            background: 'rgba(15,24,42,0.98)',
+            border: '2px solid rgba(148,163,184,0.28)',
             display: 'flex',
             justifyContent: 'space-between',
             gap: 10,
@@ -1065,7 +1167,7 @@ function PartsPanel({
           <div
             style={{
               fontSize: compact ? 12 : 13,
-              color: '#cbd5e1',
+              color: '#d6dfeb',
               fontWeight: 700,
             }}
           >
@@ -1087,8 +1189,8 @@ function PartsPanel({
                 style={{
                   borderRadius: compact ? 12 : 14,
                   padding: compact ? 10 : 12,
-                  background: 'rgba(15,23,42,0.62)',
-                  border: '1px solid rgba(148,163,184,0.12)',
+                  background: 'rgba(15,24,42,0.98)',
+                  border: '2px solid rgba(148,163,184,0.28)',
                   display: 'grid',
                   gap: 10,
                 }}
@@ -1116,7 +1218,7 @@ function PartsPanel({
                     <div
                       style={{
                         fontSize: compact ? 11 : 12,
-                        color: '#94a3b8',
+                        color: '#b8c7da',
                       }}
                     >
                       Qty: {part.quantity} • Requested by {part.requestedBy === 'tech' ? 'Tech' : 'Manager'}
@@ -1149,7 +1251,7 @@ function PartsPanel({
                   <div
                     style={{
                       fontSize: compact ? 10 : 12,
-                      color: '#94a3b8',
+                      color: '#b8c7da',
                     }}
                   >
                     Requested {formatDateTime(part.createdAt)}
@@ -1192,7 +1294,7 @@ function PartsPanel({
         <div
           style={{
             fontSize: compact ? 12 : 13,
-            color: '#94a3b8',
+            color: '#b8c7da',
           }}
         >
           No parts requested yet.
@@ -1214,19 +1316,18 @@ function NotesPanel({
       style={{
         borderRadius: compact ? 14 : 16,
         padding: compact ? 12 : 14,
-        background: 'rgba(2,6,23,0.4)',
-        border: '1px solid rgba(148,163,184,0.12)',
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
       }}
     >
       <div
         style={{
-          fontSize: compact ? 13 : 14,
-          fontWeight: 800,
-          color: '#f8fafc',
+          display: 'flex',
+          alignItems: 'center',
           marginBottom: 10,
         }}
       >
-        Notes
+        <SectionLabel title="Notes" tone="violet" compact={compact} />
       </div>
 
       {job.textNotes.length ? (
@@ -1239,7 +1340,7 @@ function NotesPanel({
         <div
           style={{
             fontSize: compact ? 12 : 13,
-            color: '#94a3b8',
+            color: '#b8c7da',
           }}
         >
           No notes yet.
@@ -1261,8 +1362,8 @@ function NoteRow({
       style={{
         borderRadius: compact ? 12 : 14,
         padding: compact ? 10 : 12,
-        background: 'rgba(15,23,42,0.62)',
-        border: '1px solid rgba(148,163,184,0.12)',
+        background: 'rgba(15,24,42,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
       }}
     >
       <div
@@ -1309,7 +1410,7 @@ function NoteRow({
       <div
         style={{
           fontSize: compact ? 11 : 12,
-          color: '#94a3b8',
+          color: '#b8c7da',
         }}
       >
         {note.type === 'audio' ? 'Audio note • ' : ''}
@@ -1333,15 +1434,15 @@ function DetailBox({
       style={{
         borderRadius: compact ? 14 : 16,
         padding: compact ? 12 : 14,
-        background: 'rgba(2,6,23,0.4)',
-        border: '1px solid rgba(148,163,184,0.12)',
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
       }}
     >
       <div
         style={{
           fontSize: compact ? 11 : 12,
           fontWeight: 800,
-          color: '#94a3b8',
+          color: '#b8c7da',
           marginBottom: 4,
           textTransform: 'uppercase',
           letterSpacing: 0.5,
@@ -1382,10 +1483,10 @@ function ActionButton({
       style={{
         border: primary
           ? '1px solid rgba(96,165,250,0.4)'
-          : '1px solid rgba(148,163,184,0.18)',
+          : '1px solid rgba(148,163,184,0.34)',
         background: primary
-          ? 'rgba(37,99,235,0.26)'
-          : 'rgba(30,41,59,0.72)',
+          ? 'rgba(37,99,235,0.38)'
+          : 'rgba(51,65,85,0.92)',
         color: '#f8fafc',
         borderRadius: compact ? 12 : 14,
         padding: compact ? '9px 12px' : '11px 14px',
@@ -1415,10 +1516,10 @@ function InfoPill({
         fontSize: compact ? 12 : 13,
         fontWeight: 700,
         color: highlight ? '#dbeafe' : '#cbd5e1',
-        background: highlight ? 'rgba(37,99,235,0.22)' : 'rgba(30,41,59,0.72)',
+        background: highlight ? 'rgba(37,99,235,0.3)' : 'rgba(51,65,85,0.92)',
         border: highlight
-          ? '1px solid rgba(96,165,250,0.38)'
-          : '1px solid rgba(148,163,184,0.16)',
+          ? '1px solid rgba(96,165,250,0.52)'
+          : '1px solid rgba(148,163,184,0.28)',
         borderRadius: 999,
         padding: compact ? '6px 9px' : '7px 11px',
       }}
@@ -1552,8 +1653,8 @@ function inputStyle(compact: boolean): React.CSSProperties {
     width: '100%',
     boxSizing: 'border-box',
     borderRadius: compact ? 12 : 14,
-    border: '1px solid rgba(148,163,184,0.16)',
-    background: 'rgba(2,6,23,0.56)',
+    border: '2px solid rgba(148,163,184,0.32)',
+    background: 'rgba(12,19,34,0.98)',
     color: '#f8fafc',
     padding: compact ? '10px 12px' : '12px 14px',
     fontSize: compact ? 12 : 13,
@@ -1565,7 +1666,7 @@ function fieldLabelStyle(compact: boolean): React.CSSProperties {
   return {
     fontSize: compact ? 11 : 12,
     fontWeight: 800,
-    color: '#94a3b8',
+    color: '#b8c7da',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   };
@@ -1578,8 +1679,8 @@ function textAreaStyle(compact: boolean): React.CSSProperties {
     resize: 'vertical',
     boxSizing: 'border-box',
     borderRadius: compact ? 12 : 14,
-    border: '1px solid rgba(148,163,184,0.16)',
-    background: 'rgba(2,6,23,0.56)',
+    border: '2px solid rgba(148,163,184,0.32)',
+    background: 'rgba(12,19,34,0.98)',
     color: '#f8fafc',
     padding: compact ? 10 : 12,
     fontSize: compact ? 12 : 13,

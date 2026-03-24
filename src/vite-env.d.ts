@@ -3,6 +3,12 @@
 import type { AppMode, DisplayMode, LocalAppSettings } from './types/app';
 
 declare global {
+  type AppInfo = {
+    name: string;
+    version: string;
+    owner: string;
+  };
+
   type UpdateCheckResult = {
     ok: boolean;
     message?: string;
@@ -24,6 +30,7 @@ declare global {
       }) => Promise<LocalAppSettings>;
       switchToNormalWindow: () => Promise<void>;
       checkForUpdates: () => Promise<UpdateCheckResult>;
+      getAppInfo: () => Promise<AppInfo>;
     };
   }
 }

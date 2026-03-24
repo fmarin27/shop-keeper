@@ -39,8 +39,8 @@ function TechPage({
       style={{
         minHeight: '100vh',
         background:
-          'linear-gradient(180deg, rgba(2,6,23,1) 0%, rgba(8,15,30,1) 100%)',
-        color: '#e5e7eb',
+          'linear-gradient(180deg, #263447 0%, #1d2a3b 38%, #172233 100%)',
+        color: '#f4f7fb',
         fontFamily: 'Segoe UI, Inter, sans-serif',
       }}
     >

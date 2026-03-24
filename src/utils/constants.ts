@@ -1,6 +1,7 @@
 import type { LocalAppSettings } from '../types/app';
 
 export const APP_TITLE = 'Shop Floor';
+export const MANAGER_MODE_PASSWORD = '1981';
 
 export const TAB_LABELS = {
   jobs: 'Jobs',

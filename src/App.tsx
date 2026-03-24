@@ -3,6 +3,7 @@ import OverlayView from './components/OverlayView';
 import ManagerPage from './pages/ManagerPage';
 import ModeChooserPage from './pages/ModeChooserPage';
 import TechPage from './pages/TechPage';
+import { MANAGER_MODE_PASSWORD } from './utils/constants';
 import type {
   AppMode,
   DisplayMode,
@@ -37,7 +38,26 @@ function App() {
     loadSettings();
   }, []);
 
+  const verifyManagerAccess = () => {
+    const enteredPassword = window.prompt('Enter manager password');
+
+    if (enteredPassword === null) {
+      return false;
+    }
+
+    if (enteredPassword !== MANAGER_MODE_PASSWORD) {
+      window.alert('Incorrect manager password.');
+      return false;
+    }
+
+    return true;
+  };
+
   const handleModeSelect = async (mode: AppMode) => {
+    if (mode === 'manager' && appMode !== 'manager' && !verifyManagerAccess()) {
+      return;
+    }
+
     try {
       if (window.appBridge?.setAppMode) {
         const settings = await window.appBridge.setAppMode(mode);

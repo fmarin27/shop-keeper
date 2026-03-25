@@ -19,6 +19,8 @@ type AppTopBarProps = {
   onSwitchMode: () => void;
   onCheckForUpdates: () => void;
   updateStatus: string | null;
+  updateButtonLabel: string;
+  updateButtonDisabled: boolean;
   onOpenAttentionJob: (jobId: string) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
@@ -33,6 +35,8 @@ function AppTopBar({
   onSwitchMode,
   onCheckForUpdates,
   updateStatus,
+  updateButtonLabel,
+  updateButtonDisabled,
   onOpenAttentionJob,
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
@@ -229,18 +233,20 @@ function AppTopBar({
 
         <button
           onClick={onCheckForUpdates}
+          disabled={updateButtonDisabled}
           style={{
             border: '1px solid #2563eb',
-            background: '#3865bb',
+            background: updateButtonDisabled ? '#61748f' : '#3865bb',
             color: '#f7fbff',
             borderRadius: isCompact ? 12 : 16,
             padding: isCompact ? '8px 12px' : '14px 20px',
             fontSize: isCompact ? 12 : 16,
             fontWeight: 700,
-            cursor: 'pointer',
+            cursor: updateButtonDisabled ? 'not-allowed' : 'pointer',
+            opacity: updateButtonDisabled ? 0.8 : 1,
           }}
         >
-          Check for Updates
+          {updateButtonLabel}
         </button>
 
         <button

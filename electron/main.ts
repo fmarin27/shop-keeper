@@ -8,6 +8,50 @@ const settingsStore = new SettingsStore();
 let mainWindow: BrowserWindow | null = null;
 let updateCheckStarted = false;
 
+type UpdaterStatus =
+  | {
+      phase: 'idle';
+      message?: string;
+    }
+  | {
+      phase: 'checking';
+      message: string;
+    }
+  | {
+      phase: 'available';
+      version: string;
+      message: string;
+    }
+  | {
+      phase: 'downloading';
+      version?: string;
+      progressPercent: number;
+      message: string;
+    }
+  | {
+      phase: 'downloaded';
+      version: string;
+      message: string;
+    }
+  | {
+      phase: 'not-available';
+      version?: string;
+      message: string;
+    }
+  | {
+      phase: 'error';
+      message: string;
+    };
+
+let updaterStatus: UpdaterStatus = {
+  phase: 'idle',
+};
+
+function publishUpdaterStatus(nextStatus: UpdaterStatus) {
+  updaterStatus = nextStatus;
+  mainWindow?.webContents.send('updater:status', updaterStatus);
+}
+
 function getHtmlPath() {
   return path.join(app.getAppPath(), 'dist', 'index.html');
 }
@@ -87,24 +131,48 @@ function setupAutoUpdates() {
 
   autoUpdater.on('checking-for-update', () => {
     console.log('[updater] Checking for update...');
+    publishUpdaterStatus({
+      phase: 'checking',
+      message: 'Checking for updates...',
+    });
   });
 
   autoUpdater.on('update-available', (info) => {
     console.log('[updater] Update available:', info.version);
+    publishUpdaterStatus({
+      phase: 'available',
+      version: info.version,
+      message: `Update ${info.version} found. Downloading now...`,
+    });
   });
 
   autoUpdater.on('update-not-available', (info) => {
     console.log('[updater] No update available. Current/latest:', info.version);
+    publishUpdaterStatus({
+      phase: 'not-available',
+      version: info.version,
+      message: 'This app is up to date.',
+    });
   });
 
   autoUpdater.on('download-progress', (progress) => {
     console.log(
       `[updater] Downloading ${Math.round(progress.percent)}% (${progress.transferred}/${progress.total})`,
     );
+    publishUpdaterStatus({
+      phase: 'downloading',
+      progressPercent: Math.round(progress.percent),
+      message: `Downloading update... ${Math.round(progress.percent)}%`,
+    });
   });
 
   autoUpdater.on('update-downloaded', async (info) => {
     console.log('[updater] Update downloaded:', info.version);
+    publishUpdaterStatus({
+      phase: 'downloaded',
+      version: info.version,
+      message: `Update ${info.version} is ready. Restart to install.`,
+    });
 
     const targetWindow = mainWindow ?? BrowserWindow.getFocusedWindow();
 
@@ -137,6 +205,10 @@ function setupAutoUpdates() {
 
   autoUpdater.on('error', (error) => {
     console.error('[updater] Auto update error:', error);
+    publishUpdaterStatus({
+      phase: 'error',
+      message: error instanceof Error ? error.message : 'Update failed.',
+    });
   });
 
   void autoUpdater.checkForUpdatesAndNotify();
@@ -156,6 +228,9 @@ async function createWindow() {
   }
 
   applyDisplayMode(mainWindow);
+  mainWindow.webContents.once('did-finish-load', () => {
+    mainWindow?.webContents.send('updater:status', updaterStatus);
+  });
 
   mainWindow.on('resize', () => {
     const settings = settingsStore.getSettings();
@@ -248,18 +323,48 @@ app.whenReady().then(async () => {
     }
 
     try {
+      publishUpdaterStatus({
+        phase: 'checking',
+        message: 'Checking for updates...',
+      });
       const result = await autoUpdater.checkForUpdates();
       return {
         ok: true,
         updateInfo: result?.updateInfo ?? null,
+        status: updaterStatus,
       };
     } catch (error) {
       console.error('[updater] Manual check failed:', error);
+      const message =
+        error instanceof Error ? error.message : 'Update check failed.';
+      publishUpdaterStatus({
+        phase: 'error',
+        message,
+      });
       return {
         ok: false,
-        message: error instanceof Error ? error.message : 'Update check failed.',
+        message,
       };
     }
+  });
+
+  ipcMain.handle('updater:getStatus', () => updaterStatus);
+
+  ipcMain.handle('updater:installNow', () => {
+    if (updaterStatus.phase !== 'downloaded') {
+      return {
+        ok: false,
+        message: 'No downloaded update is ready to install.',
+      };
+    }
+
+    setImmediate(() => {
+      autoUpdater.quitAndInstall();
+    });
+
+    return {
+      ok: true,
+    };
   });
 
   ipcMain.handle('app:getInfo', () => ({

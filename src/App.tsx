@@ -25,6 +25,9 @@ function App() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('normal');
   const [selectedTab, setSelectedTab] = useState<MainTab>('jobs');
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [updaterState, setUpdaterState] = useState<UpdaterStatus>({
+    phase: 'idle',
+  });
   const [managerPassword, setManagerPassword] = useState('');
   const [managerPasswordError, setManagerPasswordError] = useState<string | null>(null);
   const [pendingMode, setPendingMode] = useState<AppMode | null>(null);
@@ -75,6 +78,36 @@ function App() {
     };
 
     loadSettings();
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadUpdaterStatus = async () => {
+      if (!window.appBridge?.getUpdaterStatus) return;
+
+      try {
+        const status = await window.appBridge.getUpdaterStatus();
+        if (isMounted) {
+          setUpdaterState(status);
+          setUpdateStatus(status.message ?? null);
+        }
+      } catch (error) {
+        console.error('Failed to load updater status:', error);
+      }
+    };
+
+    loadUpdaterStatus();
+
+    const unsubscribe = window.appBridge?.onUpdaterStatus?.((status) => {
+      setUpdaterState(status);
+      setUpdateStatus(status.message ?? null);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe?.();
+    };
   }, []);
 
   const applyModeSelect = async (mode: AppMode) => {
@@ -140,12 +173,23 @@ function App() {
   };
 
   const handleCheckForUpdates = async () => {
+    if (updaterState.phase === 'downloaded') {
+      if (!window.appBridge?.installUpdate) {
+        setUpdateStatus('Install action is unavailable in this build.');
+        return;
+      }
+
+      const result = await window.appBridge.installUpdate();
+      if (!result.ok) {
+        setUpdateStatus(result.message ?? 'Update install could not start.');
+      }
+      return;
+    }
+
     if (!window.appBridge?.checkForUpdates) {
       setUpdateStatus('Update checks are unavailable in this build.');
       return;
     }
-
-    setUpdateStatus('Checking for updates...');
 
     try {
       const result = await window.appBridge.checkForUpdates();
@@ -154,13 +198,10 @@ function App() {
         setUpdateStatus(result.message ?? 'Update check failed.');
         return;
       }
-
-      if (result.updateInfo?.version) {
-        setUpdateStatus(`Latest published version: ${result.updateInfo.version}`);
-        return;
+      if (result.status) {
+        setUpdaterState(result.status);
+        setUpdateStatus(result.status.message ?? null);
       }
-
-      setUpdateStatus('No update is currently available.');
     } catch (error) {
       console.error('Failed to check for updates:', error);
       setUpdateStatus('Update check failed.');
@@ -241,6 +282,17 @@ function App() {
     onSwitchMode: handleSwitchMode,
     onCheckForUpdates: handleCheckForUpdates,
     updateStatus,
+    updateButtonLabel:
+      updaterState.phase === 'downloaded'
+        ? 'Restart to Update'
+        : updaterState.phase === 'checking'
+        ? 'Checking...'
+        : updaterState.phase === 'available' || updaterState.phase === 'downloading'
+        ? 'Downloading...'
+        : updaterState.phase === 'error'
+        ? 'Check Again'
+        : 'Check for Updates',
+    updateButtonDisabled: updaterState.phase === 'checking',
     onOpenAttentionJob: (jobId: string) => {
       void openJobsView(jobId);
     },

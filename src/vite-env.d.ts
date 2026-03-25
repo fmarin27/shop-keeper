@@ -15,6 +15,47 @@ declare global {
     updateInfo?: {
       version: string;
     } | null;
+    status?: UpdaterStatus;
+  };
+
+  type UpdaterStatus =
+    | {
+        phase: 'idle';
+        message?: string;
+      }
+    | {
+        phase: 'checking';
+        message: string;
+      }
+    | {
+        phase: 'available';
+        version: string;
+        message: string;
+      }
+    | {
+        phase: 'downloading';
+        version?: string;
+        progressPercent: number;
+        message: string;
+      }
+    | {
+        phase: 'downloaded';
+        version: string;
+        message: string;
+      }
+    | {
+        phase: 'not-available';
+        version?: string;
+        message: string;
+      }
+    | {
+        phase: 'error';
+        message: string;
+      };
+
+  type UpdateInstallResult = {
+    ok: boolean;
+    message?: string;
   };
 
   interface Window {
@@ -30,6 +71,9 @@ declare global {
       }) => Promise<LocalAppSettings>;
       switchToNormalWindow: () => Promise<void>;
       checkForUpdates: () => Promise<UpdateCheckResult>;
+      getUpdaterStatus: () => Promise<UpdaterStatus>;
+      installUpdate: () => Promise<UpdateInstallResult>;
+      onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
       getAppInfo: () => Promise<AppInfo>;
     };
   }

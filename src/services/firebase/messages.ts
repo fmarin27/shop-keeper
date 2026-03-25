@@ -10,7 +10,10 @@ import {
 } from 'firebase/firestore';
 import { db } from './config';
 import { uploadGeneralMessageAudio } from './storage';
-import type { GeneralMessage } from '../../features/messages/types';
+import type {
+  GeneralMessage,
+  MessageAudienceMode,
+} from '../../features/messages/types';
 
 const messagesCollection = collection(db, 'generalMessages');
 
@@ -19,6 +22,7 @@ type GeneralMessageWithAudio = GeneralMessage & {
 };
 
 export function subscribeToGeneralMessages(
+  appMode: MessageAudienceMode,
   callback: (items: GeneralMessageWithAudio[]) => void,
 ) {
   const q = query(messagesCollection, orderBy('createdAt', 'desc'));
@@ -36,7 +40,13 @@ export function subscribeToGeneralMessages(
           typeof data.createdAt === 'string'
             ? data.createdAt
             : data.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
-        unread: data.unread ?? false,
+        unread:
+          appMode === 'manager'
+            ? data.unreadByManager ?? data.unread ?? false
+            : data.unreadByTech ?? data.unread ?? false,
+        createdBy: data.createdBy ?? 'manager',
+        unreadByManager: data.unreadByManager ?? data.unread ?? false,
+        unreadByTech: data.unreadByTech ?? data.unread ?? false,
       };
     });
 
@@ -44,35 +54,56 @@ export function subscribeToGeneralMessages(
   });
 }
 
-export async function addTextGeneralMessage(text: string) {
+export async function addTextGeneralMessage(
+  text: string,
+  createdBy: MessageAudienceMode,
+) {
   const trimmed = text.trim();
   if (!trimmed) return;
 
   await addDoc(messagesCollection, {
     type: 'text',
     text: trimmed,
-    unread: true,
+    createdBy,
+    unread: createdBy === 'tech',
+    unreadByManager: createdBy === 'tech',
+    unreadByTech: createdBy === 'manager',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function addAudioGeneralMessage(file: Blob) {
+export async function addAudioGeneralMessage(
+  file: Blob,
+  createdBy: MessageAudienceMode,
+) {
   const audioUrl = await uploadGeneralMessageAudio(file);
 
   await addDoc(messagesCollection, {
     type: 'audio',
     text: 'Audio message',
     audioUrl,
-    unread: true,
+    createdBy,
+    unread: createdBy === 'tech',
+    unreadByManager: createdBy === 'tech',
+    unreadByTech: createdBy === 'manager',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function markGeneralMessageRead(id: string) {
-  await updateDoc(doc(db, 'generalMessages', id), {
-    unread: false,
-    updatedAt: serverTimestamp(),
-  });
+export async function markGeneralMessageRead(
+  id: string,
+  appMode: MessageAudienceMode,
+) {
+  await updateDoc(doc(db, 'generalMessages', id), appMode === 'manager'
+    ? {
+        unread: false,
+        unreadByManager: false,
+        updatedAt: serverTimestamp(),
+      }
+    : {
+        unreadByTech: false,
+        updatedAt: serverTimestamp(),
+      });
 }

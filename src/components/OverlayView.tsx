@@ -45,15 +45,15 @@ export default function OverlayView({
 
   useEffect(() => {
     const unsubJobs = subscribeToJobs(setJobs);
-    const unsubMaterials = subscribeToMaterials(setMaterials);
-    const unsubMessages = subscribeToGeneralMessages(setMessages);
+    const unsubMaterials = subscribeToMaterials(appMode, setMaterials);
+    const unsubMessages = subscribeToGeneralMessages(appMode, setMessages);
 
     return () => {
       unsubJobs();
       unsubMaterials();
       unsubMessages();
     };
-  }, []);
+  }, [appMode]);
 
   const unreadJobNotesCount = useMemo(
     () =>

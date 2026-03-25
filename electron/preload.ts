@@ -46,6 +46,13 @@ contextBridge.exposeInMainWorld('appBridge', {
   checkForUpdates: () => ipcRenderer.invoke('updater:checkNow'),
   getUpdaterStatus: () => ipcRenderer.invoke('updater:getStatus'),
   installUpdate: () => ipcRenderer.invoke('updater:installNow'),
+  sendMaterialRequestEmail: (payload: {
+    materialId: string;
+    itemName: string;
+    quantity: string;
+    note?: string;
+    requestedBy: 'manager' | 'tech';
+  }) => ipcRenderer.invoke('mail:sendMaterialRequestEmail', payload),
   onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: UpdaterStatus) => {
       listener(status);

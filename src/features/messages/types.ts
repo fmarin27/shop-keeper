@@ -1,4 +1,6 @@
 export type MaterialStatus = 'requested' | 'ordered' | 'received';
+export type MessageAudienceMode = 'manager' | 'tech';
+export type MaterialEmailStatus = 'sent' | 'confirmed' | 'failed';
 
 export type MaterialRequest = {
   id: string;
@@ -7,6 +9,13 @@ export type MaterialRequest = {
   note?: string;
   createdAt: string;
   unread: boolean;
+  createdBy?: MessageAudienceMode;
+  unreadByManager?: boolean;
+  unreadByTech?: boolean;
+  emailStatus?: MaterialEmailStatus;
+  emailSentAt?: string;
+  emailConfirmedAt?: string;
+  emailReplyText?: string;
   status: MaterialStatus;
 };
 
@@ -16,4 +25,7 @@ export type GeneralMessage = {
   text: string;
   createdAt: string;
   unread: boolean;
+  createdBy?: MessageAudienceMode;
+  unreadByManager?: boolean;
+  unreadByTech?: boolean;
 };

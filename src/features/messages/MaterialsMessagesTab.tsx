@@ -3,23 +3,25 @@ import MaterialsNeededSection from './MaterialsNeededSection';
 import GeneralMessagesSection from './GeneralMessagesSection';
 import type {
   GeneralMessage,
+  MessageAudienceMode,
   MaterialRequest,
   MaterialStatus,
 } from './types';
 import {
   addMaterialRequest,
   markMaterialRead,
+  setMaterialEmailStatus,
   subscribeToMaterials,
   updateMaterialStatus,
 } from '../../services/firebase/materials';
 import {
   addAudioGeneralMessage,
-  addTextGeneralMessage,
   markGeneralMessageRead,
   subscribeToGeneralMessages,
 } from '../../services/firebase/messages';
 
 type MaterialsMessagesTabProps = {
+  appMode: MessageAudienceMode;
   compact?: boolean;
   focusedMaterialId?: string | null;
   focusedMessageId?: string | null;
@@ -27,6 +29,7 @@ type MaterialsMessagesTabProps = {
 };
 
 function MaterialsMessagesTab({
+  appMode,
   compact = false,
   focusedMaterialId = null,
   focusedMessageId = null,
@@ -38,12 +41,12 @@ function MaterialsMessagesTab({
   const [loadingMessages, setLoadingMessages] = useState(true);
 
   useEffect(() => {
-    const unsubMaterials = subscribeToMaterials((items) => {
+    const unsubMaterials = subscribeToMaterials(appMode, (items) => {
       setMaterials(items);
       setLoadingMaterials(false);
     });
 
-    const unsubMessages = subscribeToGeneralMessages((items) => {
+    const unsubMessages = subscribeToGeneralMessages(appMode, (items) => {
       setMessages(items);
       setLoadingMessages(false);
     });
@@ -52,7 +55,7 @@ function MaterialsMessagesTab({
       unsubMaterials();
       unsubMessages();
     };
-  }, []);
+  }, [appMode]);
 
   const unreadMaterialsCount = useMemo(
     () => materials.filter((item) => item.unread).length,
@@ -81,7 +84,56 @@ function MaterialsMessagesTab({
     quantity: string,
     note: string,
   ) => {
-    await addMaterialRequest(itemName, quantity, note);
+    try {
+      const materialId = await addMaterialRequest(itemName, quantity, note, appMode);
+
+      if (!materialId) {
+        return {
+          ok: false,
+          message: 'Could not save material request.',
+        };
+      }
+
+      let emailMessage = 'Material request saved.';
+
+      if (appMode === 'tech') {
+        const emailResult = await window.appBridge.sendMaterialRequestEmail({
+          materialId,
+          itemName: itemName.trim(),
+          quantity: quantity.trim(),
+          note: note.trim(),
+          requestedBy: appMode,
+        });
+
+        if (!emailResult.ok) {
+          await setMaterialEmailStatus(
+            materialId,
+            'failed',
+            emailResult.message ?? 'Unknown error.',
+          );
+          return {
+            ok: false,
+            message: `Request saved, but email failed: ${emailResult.message ?? 'Unknown error.'}`,
+          };
+        }
+
+        await setMaterialEmailStatus(materialId, 'sent');
+        emailMessage = emailResult.message ?? 'Material request saved and emailed.';
+      }
+
+      return {
+        ok: true,
+        message: emailMessage,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not save material request.',
+      };
+    }
   };
 
   const handleSetMaterialStatus = async (
@@ -92,15 +144,15 @@ function MaterialsMessagesTab({
   };
 
   const handleMarkMaterialRead = async (id: string) => {
-    await markMaterialRead(id);
+    await markMaterialRead(id, appMode);
   };
 
   const handleAddTextMessage = async (text: string) => {
-    await addTextGeneralMessage(text);
+    await addTextGeneralMessage(text, appMode);
   };
 
   const handleMarkMessageRead = async (id: string) => {
-    await markGeneralMessageRead(id);
+    await markGeneralMessageRead(id, appMode);
   };
 
   if (loadingMaterials || loadingMessages) {
@@ -201,6 +253,7 @@ function MaterialsMessagesTab({
 
       <MaterialsNeededSection
         materials={visibleMaterials}
+        appMode={appMode}
         compact={compact}
         unreadCount={unreadMaterialsCount}
         focusedMaterialId={focusedMaterialId}
@@ -217,7 +270,7 @@ function MaterialsMessagesTab({
         focusedMessageId={focusedMessageId}
         onFocusedMessageHandled={onFocusHandled}
         onAddTextMessage={handleAddTextMessage}
-        onAddAudioMessage={addAudioGeneralMessage}
+        onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
         onMarkMessageRead={handleMarkMessageRead}
       />
     </div>

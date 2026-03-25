@@ -11,6 +11,8 @@ type ManagerPageProps = {
   onSwitchMode: () => void;
   onCheckForUpdates: () => void;
   updateStatus: string | null;
+  updateButtonLabel: string;
+  updateButtonDisabled: boolean;
   onOpenAttentionJob: (jobId: string) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
@@ -26,6 +28,8 @@ function ManagerPage({
   onSwitchMode,
   onCheckForUpdates,
   updateStatus,
+  updateButtonLabel,
+  updateButtonDisabled,
   onOpenAttentionJob,
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
@@ -53,6 +57,8 @@ function ManagerPage({
         onSwitchMode={onSwitchMode}
         onCheckForUpdates={onCheckForUpdates}
         updateStatus={updateStatus}
+        updateButtonLabel={updateButtonLabel}
+        updateButtonDisabled={updateButtonDisabled}
         onOpenAttentionJob={onOpenAttentionJob}
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
@@ -69,6 +75,7 @@ function ManagerPage({
           />
         ) : (
           <MaterialsMessagesTab
+            appMode="manager"
             compact={isCompact}
             focusedMaterialId={
               overlayFocusTarget?.tab === 'materialsMessages' &&

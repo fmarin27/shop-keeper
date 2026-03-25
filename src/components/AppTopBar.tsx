@@ -7,6 +7,7 @@ import { subscribeToMaterials } from '../services/firebase/materials';
 import { subscribeToGeneralMessages } from '../services/firebase/messages';
 import type {
   GeneralMessage,
+  MessageAudienceMode,
   MaterialRequest,
 } from '../features/messages/types';
 
@@ -42,6 +43,8 @@ function AppTopBar({
   onOpenAttentionMessage,
 }: AppTopBarProps) {
   const isCompact = displayMode === 'compact';
+  const appMode: MessageAudienceMode =
+    modeLabel === 'Manager' ? 'manager' : 'tech';
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [materials, setMaterials] = useState<MaterialRequest[]>([]);
@@ -52,11 +55,11 @@ function AppTopBar({
       setJobs(items);
     });
 
-    const unsubMaterials = subscribeToMaterials((items) => {
+    const unsubMaterials = subscribeToMaterials(appMode, (items) => {
       setMaterials(items);
     });
 
-    const unsubMessages = subscribeToGeneralMessages((items) => {
+    const unsubMessages = subscribeToGeneralMessages(appMode, (items) => {
       setMessages(items);
     });
 
@@ -65,7 +68,7 @@ function AppTopBar({
       unsubMaterials();
       unsubMessages();
     };
-  }, []);
+  }, [appMode]);
 
   const jobsUnreadCount = useMemo(
     () =>

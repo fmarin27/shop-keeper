@@ -58,6 +58,11 @@ declare global {
     message?: string;
   };
 
+  type SendMaterialEmailResult = {
+    ok: boolean;
+    message?: string;
+  };
+
   interface Window {
     appBridge: {
       getSettings: () => Promise<LocalAppSettings>;
@@ -73,6 +78,13 @@ declare global {
       checkForUpdates: () => Promise<UpdateCheckResult>;
       getUpdaterStatus: () => Promise<UpdaterStatus>;
       installUpdate: () => Promise<UpdateInstallResult>;
+      sendMaterialRequestEmail: (payload: {
+        materialId: string;
+        itemName: string;
+        quantity: string;
+        note?: string;
+        requestedBy: AppMode;
+      }) => Promise<SendMaterialEmailResult>;
       onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
       getAppInfo: () => Promise<AppInfo>;
     };

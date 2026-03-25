@@ -1,19 +1,29 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { MaterialRequest, MaterialStatus } from './types';
+import type {
+  MaterialRequest,
+  MaterialStatus,
+  MessageAudienceMode,
+} from './types';
 
 type MaterialsNeededSectionProps = {
   materials: MaterialRequest[];
+  appMode: MessageAudienceMode;
   compact?: boolean;
   unreadCount?: number;
   focusedMaterialId?: string | null;
   onFocusedMaterialHandled?: () => void;
-  onAddMaterial: (itemName: string, quantity: string, note: string) => void;
+  onAddMaterial: (
+    itemName: string,
+    quantity: string,
+    note: string,
+  ) => Promise<{ ok: boolean; message?: string }>;
   onSetMaterialStatus: (id: string, status: MaterialStatus) => void;
   onMarkMaterialRead: (id: string) => void;
 };
 
 function MaterialsNeededSection({
   materials,
+  appMode,
   compact = false,
   unreadCount = 0,
   focusedMaterialId = null,
@@ -26,6 +36,11 @@ function MaterialsNeededSection({
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
   const [note, setNote] = useState('');
+  const [saveState, setSaveState] = useState<{
+    kind: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const focusedMaterialRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
 
@@ -59,12 +74,36 @@ function MaterialsNeededSection({
     }, 1200);
   }, [focusedMaterialId, materials, onFocusedMaterialHandled]);
 
-  const submit = () => {
-    onAddMaterial(itemName, quantity, note);
+  const submit = async () => {
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
+    setSaveState(null);
+
+    const result = await onAddMaterial(
+      itemName,
+      quantity,
+      note,
+    );
+
+    if (!result.ok) {
+      setSaveState({
+        kind: 'error',
+        message: result.message ?? 'Could not save material request.',
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
     setItemName('');
     setQuantity('');
     setNote('');
     setShowForm(false);
+    setSaveState({
+      kind: 'success',
+      message: result.message ?? 'Material request saved.',
+    });
+    setIsSubmitting(false);
   };
 
   const showComposer = !compact;
@@ -200,9 +239,27 @@ function MaterialsNeededSection({
             }}
           />
 
+          {saveState ? (
+            <div
+              style={{
+                color: saveState.kind === 'success' ? '#bbf7d0' : '#fecaca',
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              {saveState.message}
+            </div>
+          ) : null}
+
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button onClick={submit} style={actionButtonStyle(false, true)}>
-              Save Request
+            <button
+              onClick={() => {
+                void submit();
+              }}
+              style={actionButtonStyle(false, true)}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Saving...' : 'Save Request'}
             </button>
             <button
               onClick={() => {
@@ -210,8 +267,10 @@ function MaterialsNeededSection({
                 setItemName('');
                 setQuantity('');
                 setNote('');
+                setSaveState(null);
               }}
               style={actionButtonStyle(false, false)}
+              disabled={isSubmitting}
             >
               Cancel
             </button>
@@ -272,14 +331,53 @@ function MaterialsNeededSection({
                     {item.itemName}
                   </div>
 
-                  <div
-                    style={{
-                      fontSize: compact ? 11 : 14,
+                <div
+                  style={{
+                    fontSize: compact ? 11 : 14,
                       color: '#b8c7da',
                     }}
                   >
                     Qty: {item.quantity}
                   </div>
+
+                  {item.emailStatus === 'sent' ? (
+                    <div
+                      style={{
+                        fontSize: compact ? 10 : 12,
+                        color: '#bfdbfe',
+                        fontWeight: 800,
+                        marginTop: 4,
+                      }}
+                    >
+                      Email sent to materials
+                    </div>
+                  ) : null}
+
+                  {item.emailStatus === 'confirmed' ? (
+                    <div
+                      style={{
+                        fontSize: compact ? 10 : 12,
+                        color: '#bbf7d0',
+                        fontWeight: 900,
+                        marginTop: 4,
+                      }}
+                    >
+                      Vendor confirmed by email
+                    </div>
+                  ) : null}
+
+                  {item.emailStatus === 'failed' ? (
+                    <div
+                      style={{
+                        fontSize: compact ? 10 : 12,
+                        color: '#fecaca',
+                        fontWeight: 800,
+                        marginTop: 4,
+                      }}
+                    >
+                      Email failed
+                    </div>
+                  ) : null}
                 </div>
 
                 <span style={statusBadgeStyle(item.status, compact)}>
@@ -296,6 +394,18 @@ function MaterialsNeededSection({
                   }}
                 >
                   {item.note}
+                </div>
+              ) : null}
+
+              {item.emailStatus === 'confirmed' && item.emailReplyText ? (
+                <div
+                  style={{
+                    fontSize: compact ? 11 : 13,
+                    color: '#d1fae5',
+                    marginBottom: 10,
+                  }}
+                >
+                  Reply: {item.emailReplyText}
                 </div>
               ) : null}
 

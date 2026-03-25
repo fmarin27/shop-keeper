@@ -1,6 +1,6 @@
 {
   "name": "shop-floor-app-skeleton",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": true,
   "main": "dist-electron/main.js",
   "description": "Shop floor desktop app skeleton with Manager/Tech modes and Normal/Compact/Overlay views.",
@@ -15,11 +15,16 @@
   "dependencies": {
     "electron-updater": "^6.8.3",
     "firebase": "^12.10.0",
+    "imapflow": "^1.2.18",
+    "mailparser": "^3.9.6",
+    "nodemailer": "^8.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.10.2",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

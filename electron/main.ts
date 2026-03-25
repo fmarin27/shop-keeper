@@ -1,12 +1,30 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { ImapFlow } from 'imapflow';
+import { simpleParser } from 'mailparser';
+import nodemailer from 'nodemailer';
+import {
+  doc,
+  getDoc,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore';
+import { electronDb } from './firebase';
 import { SettingsStore } from './store';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const settingsStore = new SettingsStore();
 let mainWindow: BrowserWindow | null = null;
 let updateCheckStarted = false;
+
+const MATERIALS_EMAIL_FROM = 'fernandomarin27@gmail.com';
+const MATERIALS_EMAIL_APP_PASSWORD = 'cbuewgyckiwbjfxo';
+const MATERIALS_EMAIL_TO = 'jay@bronxautopaint.com';
+const MATERIALS_EMAIL_CC = 'fernandomarin27@gmail.com';
+const MATERIAL_REPLY_CHECK_INTERVAL_MS = 1000 * 60 * 2;
+const MATERIAL_REQUEST_TOKEN_PREFIX = 'SK-MAT';
+let materialReplyCheckStarted = false;
 
 type UpdaterStatus =
   | {
@@ -47,9 +65,166 @@ let updaterStatus: UpdaterStatus = {
   phase: 'idle',
 };
 
+function installSafeConsole() {
+  const wrap = <T extends (...args: any[]) => void>(fn: T) => {
+    return (...args: Parameters<T>) => {
+      try {
+        fn(...args);
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error as { code?: string }).code === 'EPIPE'
+        ) {
+          return;
+        }
+
+        throw error;
+      }
+    };
+  };
+
+  console.log = wrap(console.log.bind(console));
+  console.error = wrap(console.error.bind(console));
+  console.warn = wrap(console.warn.bind(console));
+  console.info = wrap(console.info.bind(console));
+}
+
 function publishUpdaterStatus(nextStatus: UpdaterStatus) {
   updaterStatus = nextStatus;
   mainWindow?.webContents.send('updater:status', updaterStatus);
+}
+
+async function sendMaterialRequestEmail(payload: {
+  materialId: string;
+  itemName: string;
+  quantity: string;
+  note?: string;
+  requestedBy: 'manager' | 'tech';
+}) {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: MATERIALS_EMAIL_FROM,
+      pass: MATERIALS_EMAIL_APP_PASSWORD,
+    },
+  });
+
+  const requestedAt = new Intl.DateTimeFormat('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date());
+
+  const subject = `[${MATERIAL_REQUEST_TOKEN_PREFIX}:${payload.materialId}] Shop Keeper Material Request - ${payload.itemName}`;
+  const lines = [
+    'New material request from Shop Keeper.',
+    '',
+    `Requested by: ${payload.requestedBy === 'tech' ? 'Tech' : 'Manager'}`,
+    `Material: ${payload.itemName}`,
+    `Quantity: ${payload.quantity}`,
+    `Requested at: ${requestedAt}`,
+  ];
+
+  if (payload.note?.trim()) {
+    lines.push(`Note: ${payload.note.trim()}`);
+  }
+
+  await transporter.sendMail({
+    from: MATERIALS_EMAIL_FROM,
+    to: MATERIALS_EMAIL_TO,
+    cc: MATERIALS_EMAIL_CC,
+    subject,
+    text: lines.join('\n'),
+  });
+}
+
+function extractMaterialRequestId(subject: string) {
+  const match = subject.match(/\[SK-MAT:([A-Za-z0-9_-]+)\]/i);
+  return match?.[1] ?? null;
+}
+
+async function markMaterialEmailConfirmed(materialId: string, replyText: string) {
+  const materialRef = doc(electronDb, 'materials', materialId);
+  const snapshot = await getDoc(materialRef);
+
+  if (!snapshot.exists()) {
+    return;
+  }
+
+  const data = snapshot.data() as Record<string, unknown>;
+
+  if (data.emailStatus === 'confirmed') {
+    return;
+  }
+
+  await updateDoc(materialRef, {
+    emailStatus: 'confirmed',
+    emailConfirmedAt: serverTimestamp(),
+    emailReplyText: replyText.slice(0, 1000),
+    unread: true,
+    unreadByManager: true,
+    unreadByTech: true,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+async function checkMaterialReplyConfirmations() {
+  const client = new ImapFlow({
+    host: 'imap.gmail.com',
+    port: 993,
+    secure: true,
+    auth: {
+      user: MATERIALS_EMAIL_FROM,
+      pass: MATERIALS_EMAIL_APP_PASSWORD,
+    },
+  });
+
+  try {
+    await client.connect();
+    await client.mailboxOpen('INBOX');
+
+    for await (const message of client.fetch({ seen: false }, { uid: true, envelope: true, source: true })) {
+      const subject = message.envelope?.subject ?? '';
+      const materialId = extractMaterialRequestId(subject);
+
+      if (!materialId || !message.source) {
+        continue;
+      }
+
+      const parsed = await simpleParser(message.source);
+      const replyText = `${parsed.subject ?? ''}\n${parsed.text ?? ''}`.trim();
+
+      if (!replyText) {
+        continue;
+      }
+
+      await markMaterialEmailConfirmed(materialId, replyText);
+
+      if (message.uid) {
+        await client.messageFlagsAdd(message.uid, ['\\Seen']);
+      }
+    }
+  } catch (error) {
+    console.error('[mail] Failed to check material reply confirmations:', error);
+  } finally {
+    await client.logout().catch(() => undefined);
+  }
+}
+
+function startMaterialReplyConfirmationWatcher() {
+  if (materialReplyCheckStarted || isDev) {
+    return;
+  }
+
+  materialReplyCheckStarted = true;
+  void checkMaterialReplyConfirmations();
+  setInterval(() => {
+    void checkMaterialReplyConfirmations();
+  }, MATERIAL_REPLY_CHECK_INTERVAL_MS);
 }
 
 function getHtmlPath() {
@@ -256,6 +431,8 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  installSafeConsole();
+
   session.defaultSession.setPermissionRequestHandler(
     (_webContents, permission, callback) => {
       if (permission === 'media') {
@@ -367,6 +544,37 @@ app.whenReady().then(async () => {
     };
   });
 
+  ipcMain.handle(
+    'mail:sendMaterialRequestEmail',
+    async (
+      _event,
+      payload: {
+        materialId: string;
+        itemName: string;
+        quantity: string;
+        note?: string;
+        requestedBy: 'manager' | 'tech';
+      },
+    ) => {
+      try {
+        await sendMaterialRequestEmail(payload);
+        return {
+          ok: true,
+          message: `Email sent to ${MATERIALS_EMAIL_TO}.`,
+        };
+      } catch (error) {
+        console.error('[mail] Failed to send material request email:', error);
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Could not send material request email.',
+        };
+      }
+    },
+  );
+
   ipcMain.handle('app:getInfo', () => ({
     name: app.getName(),
     version: app.getVersion(),
@@ -375,6 +583,7 @@ app.whenReady().then(async () => {
 
   await createWindow();
   setupAutoUpdates();
+  startMaterialReplyConfirmationWatcher();
 
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

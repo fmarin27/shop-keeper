@@ -8,6 +8,7 @@ export type MaterialRequest = {
   quantity: string;
   note?: string;
   createdAt: string;
+  receivedAt?: string;
   unread: boolean;
   createdBy?: MessageAudienceMode;
   unreadByManager?: boolean;

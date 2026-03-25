@@ -11,7 +11,13 @@ import type {
   OverlayFocusTarget,
 } from './types/app';
 
-const SPLASH_MIN_DURATION_MS = 1800;
+const SPLASH_MIN_DURATION_MS = 5000;
+const SPLASH_MESSAGES = [
+  'Loading jobs...',
+  'Syncing parts...',
+  'Checking messages...',
+  'Preparing dashboard...',
+] as const;
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -27,8 +33,19 @@ function App() {
     version: '1.0.0',
     owner: 'Fernando Marin',
   });
+  const [splashMessageIndex, setSplashMessageIndex] = useState(0);
   const [overlayFocusTarget, setOverlayFocusTarget] =
     useState<OverlayFocusTarget | null>(null);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setSplashMessageIndex((current) => (current + 1) % SPLASH_MESSAGES.length);
+    }, 1100);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -174,7 +191,12 @@ function App() {
   };
 
   if (isLoading) {
-    return <StartupSplash appInfo={appInfo} />;
+    return (
+      <StartupSplash
+        appInfo={appInfo}
+        loadingMessage={SPLASH_MESSAGES[splashMessageIndex]}
+      />
+    );
   }
 
   if (!appMode) {
@@ -393,7 +415,13 @@ function ManagerPasswordDialog({
   );
 }
 
-function StartupSplash({ appInfo }: { appInfo: AppInfo }) {
+function StartupSplash({
+  appInfo,
+  loadingMessage,
+}: {
+  appInfo: AppInfo;
+  loadingMessage: string;
+}) {
   return (
     <div
       style={{
@@ -401,20 +429,30 @@ function StartupSplash({ appInfo }: { appInfo: AppInfo }) {
         display: 'grid',
         placeItems: 'center',
         background:
-          'radial-gradient(circle at top, rgba(14,165,233,0.22), transparent 32%), linear-gradient(160deg, #020617 0%, #08111f 55%, #020617 100%)',
-        color: '#e5e7eb',
+          'radial-gradient(circle at top, rgba(56,189,248,0.34), transparent 34%), radial-gradient(circle at 82% 18%, rgba(59,130,246,0.22), transparent 22%), linear-gradient(160deg, #08111f 0%, #101b2d 50%, #09111d 100%)',
+        color: '#eef4fb',
         fontFamily: 'Segoe UI, Inter, sans-serif',
         overflow: 'hidden',
       }}
     >
       <div
         style={{
+          position: 'absolute',
+          inset: 0,
+          background:
+            'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%)',
+          transform: 'translateX(-35%) skewX(-18deg)',
+          pointerEvents: 'none',
+        }}
+      />
+      <div
+        style={{
           width: 'min(640px, calc(100vw - 40px))',
-          borderRadius: 30,
-          padding: '34px 34px 30px',
-          background: 'linear-gradient(180deg, rgba(15,23,42,0.9), rgba(2,6,23,0.94))',
-          border: '1px solid rgba(56,189,248,0.2)',
-          boxShadow: '0 30px 100px rgba(0,0,0,0.4)',
+          borderRadius: 34,
+          padding: '40px 40px 34px',
+          background: 'linear-gradient(180deg, rgba(21,32,50,0.96), rgba(10,18,33,0.98))',
+          border: '1px solid rgba(125,211,252,0.28)',
+          boxShadow: '0 30px 100px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,255,255,0.04)',
           position: 'relative',
         }}
       >
@@ -423,7 +461,7 @@ function StartupSplash({ appInfo }: { appInfo: AppInfo }) {
             position: 'absolute',
             inset: 0,
             background:
-              'linear-gradient(120deg, rgba(34,211,238,0.08), transparent 26%, transparent 72%, rgba(59,130,246,0.08))',
+              'linear-gradient(120deg, rgba(34,211,238,0.12), transparent 26%, transparent 72%, rgba(59,130,246,0.12))',
             pointerEvents: 'none',
           }}
         />
@@ -462,7 +500,7 @@ function StartupSplash({ appInfo }: { appInfo: AppInfo }) {
 
             <span
               style={{
-                color: '#93c5fd',
+                color: '#bfdbfe',
                 fontSize: 13,
                 fontWeight: 800,
               }}
@@ -490,24 +528,85 @@ function StartupSplash({ appInfo }: { appInfo: AppInfo }) {
                 fontWeight: 900,
                 lineHeight: 0.94,
                 letterSpacing: -2.2,
-                color: '#67e8f9',
-                textTransform: 'uppercase',
-              }}
-            >
-              Keeper
-            </div>
+              color: '#7dd3fc',
+              textTransform: 'uppercase',
+            }}
+          >
+            Keeper
+          </div>
           </div>
 
           <div
             style={{
-              maxWidth: 460,
-              color: '#cbd5e1',
-              fontSize: 15,
+              maxWidth: 500,
+              color: '#dbe6f3',
+              fontSize: 16,
               lineHeight: 1.5,
               fontWeight: 600,
             }}
           >
             Live shop communication, priority tracking, parts flow, and updates in one desktop workspace.
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gap: 10,
+              marginTop: 2,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 900,
+                  color: '#d9f99d',
+                  textTransform: 'uppercase',
+                  letterSpacing: 1,
+                }}
+              >
+                {loadingMessage}
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 800,
+                  color: '#bfd0e4',
+                }}
+              >
+                Starting up...
+              </div>
+            </div>
+
+            <div
+              style={{
+                height: 12,
+                borderRadius: 999,
+                background: 'rgba(15,23,42,0.9)',
+                border: '1px solid rgba(148,163,184,0.22)',
+                overflow: 'hidden',
+                boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.28)',
+              }}
+            >
+              <div
+                style={{
+                  width: '68%',
+                  height: '100%',
+                  borderRadius: 999,
+                  background:
+                    'linear-gradient(90deg, rgba(34,197,94,0.92), rgba(125,211,252,0.95), rgba(59,130,246,0.92))',
+                  boxShadow: '0 0 20px rgba(125,211,252,0.32)',
+                }}
+              />
+            </div>
           </div>
 
           <div
@@ -539,15 +638,15 @@ function SplashInfoCard({
       style={{
         borderRadius: 18,
         padding: '14px 16px',
-        background: 'rgba(2,6,23,0.5)',
-        border: '1px solid rgba(148,163,184,0.14)',
+        background: 'rgba(12,19,34,0.62)',
+        border: '1px solid rgba(148,163,184,0.22)',
       }}
     >
       <div
         style={{
           fontSize: 11,
           fontWeight: 800,
-          color: '#94a3b8',
+          color: '#b8c7da',
           marginBottom: 6,
           textTransform: 'uppercase',
           letterSpacing: 0.7,

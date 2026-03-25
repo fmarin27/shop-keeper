@@ -235,8 +235,8 @@ function ActiveJobsSection({
       style={{
         borderRadius: compact ? 18 : 24,
         padding: compact ? 18 : 28,
-        background: 'rgba(58,74,97,0.94)',
-        border: '2px solid rgba(175,189,208,0.38)',
+        background: 'rgba(84,100,123,0.95)',
+        border: '2px solid rgba(196,207,223,0.42)',
         boxShadow: '0 18px 40px rgba(0,0,0,0.14), inset 0 0 0 1px rgba(255,255,255,0.05)',
       }}
     >
@@ -278,10 +278,10 @@ function ActiveJobsSection({
               ref={isFocused ? focusedJobRef : null}
               style={{
                 borderRadius: compact ? 16 : 20,
-                background: isEven ? 'rgba(39,53,73,0.98)' : 'rgba(47,62,84,0.98)',
+                background: isEven ? 'rgba(41,54,73,0.98)' : 'rgba(49,63,84,0.98)',
                 border: isFocused
                   ? '2px solid rgba(96,165,250,0.72)'
-                  : '2px solid rgba(175,189,208,0.32)',
+                  : '2px solid rgba(162,177,198,0.34)',
                 boxShadow: isFocused
                   ? '0 0 0 1px rgba(191,219,254,0.24), 0 0 28px rgba(96,165,250,0.18)'
                   : '0 10px 24px rgba(0,0,0,0.12)',
@@ -510,9 +510,9 @@ function ActiveJobsSection({
               {isOpen ? (
                 <div
                   style={{
-                    borderTop: '2px solid rgba(175,189,208,0.3)',
+                    borderTop: '2px solid rgba(192,204,220,0.32)',
                     padding: compact ? 14 : 18,
-                    background: 'rgba(67,84,108,0.96)',
+                    background: 'rgba(93,109,132,0.96)',
                     display: 'grid',
                     gap: compact ? 12 : 16,
                   }}

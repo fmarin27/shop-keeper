@@ -25,6 +25,8 @@ export type GeneralMessage = {
   type: 'text' | 'audio';
   text: string;
   createdAt: string;
+  closedAt?: string;
+  important?: boolean;
   unread: boolean;
   createdBy?: MessageAudienceMode;
   unreadByManager?: boolean;

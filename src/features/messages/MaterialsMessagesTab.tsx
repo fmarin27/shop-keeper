@@ -16,6 +16,9 @@ import {
 } from '../../services/firebase/materials';
 import {
   addAudioGeneralMessage,
+  archiveGeneralMessage,
+  reopenGeneralMessage,
+  setGeneralMessageImportant,
   markGeneralMessageRead,
   subscribeToGeneralMessages,
 } from '../../services/firebase/messages';
@@ -155,6 +158,18 @@ function MaterialsMessagesTab({
     await markGeneralMessageRead(id, appMode);
   };
 
+  const handleArchiveMessage = async (id: string) => {
+    await archiveGeneralMessage(id);
+  };
+
+  const handleReopenMessage = async (id: string) => {
+    await reopenGeneralMessage(id);
+  };
+
+  const handleSetMessageImportant = async (id: string, important: boolean) => {
+    await setGeneralMessageImportant(id, important);
+  };
+
   if (loadingMaterials || loadingMessages) {
     return (
       <div
@@ -272,6 +287,9 @@ function MaterialsMessagesTab({
         onAddTextMessage={handleAddTextMessage}
         onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
         onMarkMessageRead={handleMarkMessageRead}
+        onArchiveMessage={handleArchiveMessage}
+        onReopenMessage={handleReopenMessage}
+        onSetMessageImportant={handleSetMessageImportant}
       />
     </div>
   );

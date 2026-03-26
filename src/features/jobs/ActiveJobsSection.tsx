@@ -8,7 +8,6 @@ import type {
   JobStatus,
   UpdateJobDetailsInput,
 } from '../../types/app';
-import { reorderActiveJobs } from '../../services/firebase/jobs';
 
 type ActiveJobsSectionProps = {
   jobs: Job[];
@@ -35,7 +34,7 @@ type ActiveJobsSectionProps = {
   onMarkPartReceived: (jobId: string, partId: string) => void;
   onSavePartNote: (jobId: string, partId: string, note: string) => void;
   onClearLegacyPartsWaiting: (jobId: string) => void;
-  onSetPriority: (jobId: string, position: 'top' | 'bottom') => void;
+  onSetPriorityPosition: (jobId: string, position: number) => Promise<void> | void;
   onUpdateJobDetails: (
     jobId: string,
     input: UpdateJobDetailsInput,
@@ -59,7 +58,7 @@ function ActiveJobsSection({
   onMarkPartReceived,
   onSavePartNote,
   onClearLegacyPartsWaiting,
-  onSetPriority,
+  onSetPriorityPosition,
   onUpdateJobDetails,
 }: ActiveJobsSectionProps) {
   const [openJobIds, setOpenJobIds] = useState<string[]>([]);
@@ -84,11 +83,17 @@ function ActiveJobsSection({
   const [recordingJobId, setRecordingJobId] = useState<string | null>(null);
   const [savingAudioJobId, setSavingAudioJobId] = useState<string | null>(null);
   const [reorderingJobId, setReorderingJobId] = useState<string | null>(null);
+  const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
+  const [dragTarget, setDragTarget] = useState<{
+    jobId: string;
+    edge: 'before' | 'after';
+  } | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
+  const reorderInFlightRef = useRef(false);
 
   useEffect(() => {
     openJobIds.forEach((jobId) => {
@@ -192,15 +197,92 @@ function ActiveJobsSection({
     mediaRecorderRef.current = null;
   };
 
-  const handleMoveJob = async (jobId: string, direction: 'up' | 'down') => {
+  const handleSetPriorityPosition = async (jobId: string, position: number) => {
+    if (reorderInFlightRef.current) {
+      return;
+    }
+
     try {
+      reorderInFlightRef.current = true;
       setReorderingJobId(jobId);
-      await reorderActiveJobs(jobs, jobId, direction);
+      await onSetPriorityPosition(jobId, position);
     } catch (error) {
-      console.error(`Failed to move job ${direction}:`, error);
+      console.error('Failed to set job priority:', error);
     } finally {
+      reorderInFlightRef.current = false;
       setReorderingJobId(null);
     }
+  };
+
+  const clearDragState = () => {
+    setDraggedJobId(null);
+    setDragTarget(null);
+  };
+
+  const handleDragStart = (
+    event: React.DragEvent<HTMLElement>,
+    jobId: string,
+  ) => {
+    if (compact || !!reorderingJobId) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', jobId);
+    setDraggedJobId(jobId);
+    setDragTarget(null);
+  };
+
+  const handleDragOver = (
+    event: React.DragEvent<HTMLElement>,
+    jobId: string,
+  ) => {
+    if (!draggedJobId || draggedJobId === jobId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const midpoint = bounds.top + bounds.height / 2;
+    const edge = event.clientY < midpoint ? 'before' : 'after';
+
+    setDragTarget((current) =>
+      current?.jobId === jobId && current.edge === edge ? current : { jobId, edge },
+    );
+  };
+
+  const handleDrop = async (
+    event: React.DragEvent<HTMLElement>,
+    targetJobId: string,
+  ) => {
+    event.preventDefault();
+
+    const sourceJobId = draggedJobId || event.dataTransfer.getData('text/plain');
+    const currentTarget = dragTarget;
+    if (!sourceJobId || sourceJobId === targetJobId || !currentTarget) {
+      clearDragState();
+      return;
+    }
+
+    const orderedIds = jobs.map((job) => job.id);
+    const remainingIds = orderedIds.filter((jobId) => jobId !== sourceJobId);
+    const targetIndex = remainingIds.findIndex((jobId) => jobId === targetJobId);
+
+    if (targetIndex === -1) {
+      clearDragState();
+      return;
+    }
+
+    const insertIndex = currentTarget.edge === 'before' ? targetIndex : targetIndex + 1;
+    const reorderedIds = [...remainingIds];
+    reorderedIds.splice(insertIndex, 0, sourceJobId);
+    const nextPosition = reorderedIds.findIndex((jobId) => jobId === sourceJobId) + 1;
+
+    clearDragState();
+    await handleSetPriorityPosition(sourceJobId, nextPosition);
   };
 
   const handleSaveJobDetails = async (job: Job) => {
@@ -259,8 +341,6 @@ function ActiveJobsSection({
           const isRecordingThisJob = recordingJobId === job.id;
           const isSavingAudioThisJob = savingAudioJobId === job.id;
           const isReorderingThisJob = reorderingJobId === job.id;
-          const isFirst = index === 0;
-          const isLast = index === jobs.length - 1;
           const isFocused = focusedJobId === job.id;
           const isEven = index % 2 === 0;
           const hasPartsWaiting = getHasPartsWaiting(job);
@@ -276,27 +356,62 @@ function ActiveJobsSection({
             <div
               key={job.id}
               ref={isFocused ? focusedJobRef : null}
+              onDragOver={(event) => handleDragOver(event, job.id)}
+              onDrop={(event) => void handleDrop(event, job.id)}
+              onDragEnd={clearDragState}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDragTarget((current) => (current?.jobId === job.id ? null : current));
+                }
+              }}
               style={{
                 borderRadius: compact ? 16 : 20,
                 background: isEven ? 'rgba(41,54,73,0.98)' : 'rgba(49,63,84,0.98)',
-                border: isFocused
-                  ? '2px solid rgba(96,165,250,0.72)'
-                  : '2px solid rgba(162,177,198,0.34)',
+                border:
+                  dragTarget?.jobId === job.id
+                    ? dragTarget.edge === 'before'
+                      ? '2px solid rgba(56,189,248,0.88)'
+                      : '2px solid rgba(34,197,94,0.88)'
+                    : isFocused
+                    ? '2px solid rgba(96,165,250,0.72)'
+                    : '2px solid rgba(162,177,198,0.34)',
                 boxShadow: isFocused
                   ? '0 0 0 1px rgba(191,219,254,0.24), 0 0 28px rgba(96,165,250,0.18)'
                   : '0 10px 24px rgba(0,0,0,0.12)',
                 overflow: 'hidden',
+                opacity: draggedJobId === job.id ? 0.76 : 1,
+                position: 'relative',
               }}
             >
-              <button
-                onClick={() => toggleJob(job.id)}
+              {dragTarget?.jobId === job.id ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 14,
+                    right: 14,
+                    [dragTarget.edge === 'before' ? 'top' : 'bottom']: 8,
+                    height: 4,
+                    borderRadius: 999,
+                    background:
+                      dragTarget.edge === 'before'
+                        ? 'rgba(56,189,248,0.95)'
+                        : 'rgba(34,197,94,0.95)',
+                    boxShadow:
+                      dragTarget.edge === 'before'
+                        ? '0 0 0 3px rgba(56,189,248,0.14)'
+                        : '0 0 0 3px rgba(34,197,94,0.14)',
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                  }}
+                />
+              ) : null}
+
+              <div
                 style={{
                   width: '100%',
                   textAlign: 'left',
-                  border: 'none',
                   background: 'transparent',
                   color: 'inherit',
-                  cursor: 'pointer',
                   padding: compact ? 14 : 18,
                 }}
               >
@@ -340,16 +455,16 @@ function ActiveJobsSection({
                         <HeaderOrderButton
                           label="Move up"
                           compact={compact}
-                          disabled={isFirst || !!reorderingJobId}
-                          onClick={() => handleMoveJob(job.id, 'up')}
+                          disabled
+                          onClick={() => {}}
                         >
                           ↑
                         </HeaderOrderButton>
                         <HeaderOrderButton
                           label="Move down"
                           compact={compact}
-                          disabled={isLast || !!reorderingJobId}
-                          onClick={() => handleMoveJob(job.id, 'down')}
+                          disabled
+                          onClick={() => {}}
                         >
                           ↓
                         </HeaderOrderButton>
@@ -385,6 +500,10 @@ function ActiveJobsSection({
                     <div
                       style={{
                         marginTop: 6,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
                       }}
                     >
                       <span
@@ -407,6 +526,39 @@ function ActiveJobsSection({
                       >
                         {index === 0 ? 'Top Priority' : `Priority #${index + 1}`}
                       </span>
+                      <span
+                        draggable={!compact && !reorderingJobId}
+                        onDragStart={(event) => handleDragStart(event, job.id)}
+                        onDragEnd={clearDragState}
+                        onClick={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        style={{
+                          fontSize: compact ? 11 : 12,
+                          fontWeight: 800,
+                          color: '#cbd5e1',
+                          background: 'rgba(15,23,42,0.52)',
+                          border: '1px dashed rgba(148,163,184,0.34)',
+                          borderRadius: 999,
+                          padding: compact ? '5px 8px' : '6px 10px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          cursor: !compact && !reorderingJobId ? 'grab' : 'default',
+                          userSelect: 'none',
+                        }}
+                      >
+                        <span style={{ fontSize: compact ? 12 : 13 }}>⋮⋮</span>
+                        Drag
+                      </span>
+                      <PrioritySelect
+                        compact={compact}
+                        currentPosition={index + 1}
+                        totalJobs={jobs.length}
+                        disabled={!!reorderingJobId}
+                        onChange={(position) => {
+                          void handleSetPriorityPosition(job.id, position);
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -446,15 +598,29 @@ function ActiveJobsSection({
                       </button>
                     ) : null}
 
-                    <span
+                    <button
+                      type="button"
+                      aria-label={isOpen ? 'Collapse job' : 'Expand job'}
+                      onClick={() => toggleJob(job.id)}
                       style={{
+                        width: compact ? 28 : 32,
+                        height: compact ? 28 : 32,
+                        borderRadius: 999,
+                        border: '1px solid rgba(148,163,184,0.28)',
+                        background: 'rgba(15,23,42,0.68)',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        lineHeight: 1,
+                        flexShrink: 0,
                         fontSize: compact ? 16 : 18,
-                        color: '#c7d2e2',
-                        fontWeight: 700,
+                        color: '#e2e8f0',
+                        fontWeight: 900,
                       }}
                     >
                       {isOpen ? '−' : '+'}
-                    </span>
+                    </button>
                   </div>
                 </div>
 
@@ -505,7 +671,7 @@ function ActiveJobsSection({
                     {unreadNotes} unread {unreadNotes === 1 ? 'note' : 'notes'}
                   </div>
                 ) : null}
-              </button>
+              </div>
 
               {isOpen ? (
                 <div
@@ -767,22 +933,6 @@ function ActiveJobsSection({
                         </ActionButton>
                       )}
 
-                      <ActionButton
-                        compact={compact}
-                        disabled={isFirst || !!reorderingJobId}
-                        onClick={() => onSetPriority(job.id, 'top')}
-                      >
-                        Move To Top
-                      </ActionButton>
-
-                      <ActionButton
-                        compact={compact}
-                        disabled={isLast || !!reorderingJobId}
-                        onClick={() => onSetPriority(job.id, 'bottom')}
-                      >
-                        Move To Bottom
-                      </ActionButton>
-
                     </div>
                   </div>
                 </div>
@@ -837,33 +987,67 @@ function HeaderOrderButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  void children;
+  void label;
+  void compact;
+  void disabled;
+  void onClick;
+  return null;
+}
+
+function PrioritySelect({
+  compact,
+  currentPosition,
+  totalJobs,
+  disabled,
+  onChange,
+}: {
+  compact: boolean;
+  currentPosition: number;
+  totalJobs: number;
+  disabled: boolean;
+  onChange: (position: number) => void;
+}) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
+    <label
       style={{
-        width: compact ? 24 : 28,
-        height: compact ? 24 : 28,
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 999,
-        border: '1px solid rgba(148,163,184,0.2)',
-        background: 'rgba(15,23,42,0.84)',
+        gap: 6,
         color: '#dbeafe',
-        fontSize: compact ? 12 : 13,
-        fontWeight: 900,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.35 : 1,
+        fontSize: compact ? 11 : 12,
+        fontWeight: 800,
       }}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
     >
-      {children}
-    </button>
+      <span>Set</span>
+      <select
+        value={currentPosition}
+        disabled={disabled}
+        onClick={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        onChange={(event) => onChange(Number(event.target.value))}
+        style={{
+          borderRadius: 999,
+          border: '1px solid rgba(148,163,184,0.28)',
+          background: 'rgba(15,23,42,0.9)',
+          color: '#f8fafc',
+          padding: compact ? '4px 8px' : '5px 10px',
+          fontSize: compact ? 11 : 12,
+          fontWeight: 800,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}
+      >
+        {Array.from({ length: totalJobs }, (_, index) => index + 1).map((position) => (
+          <option key={position} value={position}>
+            #{position}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -1753,3 +1937,4 @@ function formatDateTime(value: string) {
 }
 
 export default ActiveJobsSection;
+

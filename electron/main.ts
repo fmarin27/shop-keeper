@@ -14,6 +14,8 @@ import { electronDb } from './firebase';
 import { SettingsStore } from './store';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const isPackagedApp = app.isPackaged;
+const updaterEnabled = isPackagedApp && !isDev;
 const settingsStore = new SettingsStore();
 let mainWindow: BrowserWindow | null = null;
 let updateCheckStarted = false;
@@ -295,7 +297,7 @@ function applyDisplayMode(window: BrowserWindow) {
 }
 
 function setupAutoUpdates() {
-  if (isDev || updateCheckStarted) {
+  if (!updaterEnabled || updateCheckStarted) {
     return;
   }
 
@@ -495,8 +497,11 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('updater:checkNow', async () => {
-    if (isDev) {
-      return { ok: false, message: 'Updater disabled in development mode.' };
+    if (!updaterEnabled) {
+      return {
+        ok: false,
+        message: 'Updater is only enabled in the installed app.',
+      };
     }
 
     try {

@@ -20,7 +20,7 @@ import {
   markJobNotesRead,
   requestPartForJob,
   saveJobPartNote,
-  setActiveJobPriority,
+  setActiveJobPosition,
   subscribeToJobs,
   undoJobDone,
   updateJobPartStatus,
@@ -85,6 +85,26 @@ function JobsTab({
   const [savingJob, setSavingJob] = useState(false);
   const [addJobError, setAddJobError] = useState<string | null>(null);
 
+  const applyOptimisticActiveOrder = (
+    sourceJobs: Job[],
+    orderedActiveIds: string[],
+  ) => {
+    const nextOrderMap = new Map(
+      orderedActiveIds.map((jobId, index) => [jobId, index + 1]),
+    );
+
+    setJobs(
+      sourceJobs.map((job) =>
+        !job.done && nextOrderMap.has(job.id)
+          ? {
+              ...job,
+              sortOrder: nextOrderMap.get(job.id),
+            }
+          : job,
+      ),
+    );
+  };
+
   useEffect(() => {
     const unsubscribe = subscribeToJobs((nextJobs) => {
       setJobs(nextJobs);
@@ -94,8 +114,32 @@ function JobsTab({
     return () => unsubscribe();
   }, []);
 
-  const activeJobs = useMemo(() => jobs.filter((job) => !job.done), [jobs]);
-  const completedJobs = useMemo(() => jobs.filter((job) => job.done), [jobs]);
+  const activeJobs = useMemo(
+    () =>
+      [...jobs]
+        .filter((job) => !job.done)
+        .sort((a, b) => {
+          const aOrder =
+            typeof a.sortOrder === 'number' ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+          const bOrder =
+            typeof b.sortOrder === 'number' ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+
+          if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+          }
+
+          return a.vehicle.localeCompare(b.vehicle);
+        }),
+    [jobs],
+  );
+
+  const completedJobs = useMemo(
+    () =>
+      [...jobs]
+        .filter((job) => job.done)
+        .sort((a, b) => a.vehicle.localeCompare(b.vehicle)),
+    [jobs],
+  );
 
   const visibleActiveJobs = useMemo(
     () => (compact ? activeJobs.slice(0, 1) : activeJobs),
@@ -189,11 +233,20 @@ function JobsTab({
     await clearLegacyPartsWaiting(jobId);
   };
 
-  const handleSetPriority = async (
-    jobId: string,
-    position: 'top' | 'bottom',
-  ) => {
-    await setActiveJobPriority(activeJobs, jobId, position);
+  const handleSetPriorityPosition = async (jobId: string, position: number) => {
+    const orderedActiveIds = activeJobs.map((job) => job.id);
+    const currentIndex = orderedActiveIds.findIndex((id) => id === jobId);
+    if (currentIndex === -1) return;
+
+    const nextIndex = Math.max(0, Math.min(position - 1, orderedActiveIds.length - 1));
+    if (currentIndex === nextIndex) return;
+
+    const reorderedIds = [...orderedActiveIds];
+    const [movedId] = reorderedIds.splice(currentIndex, 1);
+    reorderedIds.splice(nextIndex, 0, movedId);
+
+    applyOptimisticActiveOrder(jobs, reorderedIds);
+    await setActiveJobPosition(activeJobs, jobId, position);
   };
 
   const handleUpdateJobDetails = async (
@@ -362,7 +415,7 @@ function JobsTab({
           onMarkPartReceived={handleMarkPartReceived}
           onSavePartNote={handleSavePartNote}
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
-          onSetPriority={handleSetPriority}
+          onSetPriorityPosition={handleSetPriorityPosition}
           onUpdateJobDetails={handleUpdateJobDetails}
         />
 

@@ -165,20 +165,10 @@ export async function reorderActiveJobs(
 ) {
   if (activeJobs.length < 2) return;
 
-  const normalizedJobs = [...activeJobs]
-    .sort((a, b) => {
-      const aOrder =
-        typeof a.sortOrder === 'number' ? a.sortOrder : Number.MAX_SAFE_INTEGER;
-      const bOrder =
-        typeof b.sortOrder === 'number' ? b.sortOrder : Number.MAX_SAFE_INTEGER;
-
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return 0;
-    })
-    .map((job, index) => ({
-      ...job,
-      sortOrder: index + 1,
-    }));
+  const normalizedJobs = [...activeJobs].map((job, index) => ({
+    ...job,
+    sortOrder: index + 1,
+  }));
 
   const currentIndex = normalizedJobs.findIndex((job) => job.id === jobId);
   if (currentIndex === -1) return;
@@ -209,20 +199,10 @@ export async function setActiveJobPriority(
 ) {
   if (activeJobs.length < 2) return;
 
-  const normalizedJobs = [...activeJobs]
-    .sort((a, b) => {
-      const aOrder =
-        typeof a.sortOrder === 'number' ? a.sortOrder : Number.MAX_SAFE_INTEGER;
-      const bOrder =
-        typeof b.sortOrder === 'number' ? b.sortOrder : Number.MAX_SAFE_INTEGER;
-
-      if (aOrder !== bOrder) return aOrder - bOrder;
-      return 0;
-    })
-    .map((job, index) => ({
-      ...job,
-      sortOrder: index + 1,
-    }));
+  const normalizedJobs = [...activeJobs].map((job, index) => ({
+    ...job,
+    sortOrder: index + 1,
+  }));
 
   const currentIndex = normalizedJobs.findIndex((job) => job.id === jobId);
   if (currentIndex === -1) return;
@@ -235,6 +215,40 @@ export async function setActiveJobPriority(
   } else {
     reordered.push(movedJob);
   }
+
+  const batch = writeBatch(db);
+
+  reordered.forEach((job, index) => {
+    batch.update(doc(db, 'jobs', job.id), {
+      sortOrder: index + 1,
+      updatedAt: serverTimestamp(),
+    });
+  });
+
+  await batch.commit();
+}
+
+export async function setActiveJobPosition(
+  activeJobs: Job[],
+  jobId: string,
+  targetPosition: number,
+) {
+  if (activeJobs.length < 2) return;
+
+  const normalizedJobs = [...activeJobs].map((job, index) => ({
+    ...job,
+    sortOrder: index + 1,
+  }));
+
+  const currentIndex = normalizedJobs.findIndex((job) => job.id === jobId);
+  if (currentIndex === -1) return;
+
+  const nextIndex = Math.max(0, Math.min(targetPosition - 1, normalizedJobs.length - 1));
+  if (currentIndex === nextIndex) return;
+
+  const reordered = [...normalizedJobs];
+  const [movedJob] = reordered.splice(currentIndex, 1);
+  reordered.splice(nextIndex, 0, movedJob);
 
   const batch = writeBatch(db);
 

@@ -1,18 +1,26 @@
 {
   "name": "shop-floor-app-skeleton",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "main": "dist-electron/main.js",
   "description": "Shop floor desktop app skeleton with Manager/Tech modes and Normal/Compact/Overlay views.",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "build:web": "vite build",
     "build": "vite build && tsc -p electron/tsconfig.json",
     "start": "electron .",
+    "mobile:sync": "npm run build:web && npx cap sync",
+    "android:sync": "npm run build:web && npx cap sync android",
+    "android:open": "npx cap open android",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "publish:win": "npm run build && electron-builder --win --publish always"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "astral-regex": "^2.0.0",
     "electron-updater": "^6.8.3",
     "firebase": "^12.10.0",
     "imapflow": "^1.2.18",

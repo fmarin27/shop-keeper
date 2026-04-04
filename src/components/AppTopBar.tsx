@@ -3,13 +3,16 @@ import type { DisplayMode, Job, MainTab } from '../types/app';
 import TabBar from './TabBar';
 import ViewModeControl from './ViewModeControl';
 import { subscribeToJobs } from '../services/firebase/jobs';
+import { subscribeToLeads } from '../services/firebase/leads';
 import { subscribeToMaterials } from '../services/firebase/materials';
 import { subscribeToGeneralMessages } from '../services/firebase/messages';
+import { syncUnreadWidgetCount } from '../services/platform/widgetBridge';
 import type {
   GeneralMessage,
   MessageAudienceMode,
   MaterialRequest,
 } from '../features/messages/types';
+import type { Lead } from '../types/app';
 
 type AppTopBarProps = {
   modeLabel: 'Manager' | 'Tech';
@@ -22,6 +25,7 @@ type AppTopBarProps = {
   updateStatus: string | null;
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
+  mobile?: boolean;
   onOpenAttentionJob: (jobId: string) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
@@ -38,15 +42,17 @@ function AppTopBar({
   updateStatus,
   updateButtonLabel,
   updateButtonDisabled,
+  mobile = false,
   onOpenAttentionJob,
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
 }: AppTopBarProps) {
-  const isCompact = displayMode === 'compact';
+  const isCompact = displayMode === 'compact' || mobile;
   const appMode: MessageAudienceMode =
     modeLabel === 'Manager' ? 'manager' : 'tech';
 
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
   const [materials, setMaterials] = useState<MaterialRequest[]>([]);
   const [messages, setMessages] = useState<GeneralMessage[]>([]);
 
@@ -54,6 +60,13 @@ function AppTopBar({
     const unsubJobs = subscribeToJobs((items) => {
       setJobs(items);
     });
+
+    const unsubLeads =
+      modeLabel === 'Manager'
+        ? subscribeToLeads((items) => {
+            setLeads(items);
+          })
+        : () => undefined;
 
     const unsubMaterials = subscribeToMaterials(appMode, (items) => {
       setMaterials(items);
@@ -65,10 +78,11 @@ function AppTopBar({
 
     return () => {
       unsubJobs();
+      unsubLeads();
       unsubMaterials();
       unsubMessages();
     };
-  }, [appMode]);
+  }, [appMode, modeLabel]);
 
   const jobsUnreadCount = useMemo(
     () =>
@@ -152,10 +166,25 @@ function AppTopBar({
       .slice(0, 6);
   }, [jobs, materials, messages]);
 
+  const widgetUnreadCount = useMemo(() => {
+    const partsWaitingCount = jobs.filter(
+      (job) =>
+        !job.done &&
+        (job.partsWaiting ||
+          (job.partsRequests ?? []).some((part) => part.status !== 'received')),
+    ).length;
+
+    return jobsUnreadCount + materialsMessagesUnreadCount + partsWaitingCount;
+  }, [jobs, jobsUnreadCount, materialsMessagesUnreadCount]);
+
+  useEffect(() => {
+    void syncUnreadWidgetCount(widgetUnreadCount);
+  }, [widgetUnreadCount]);
+
   return (
     <header
       style={{
-        padding: isCompact ? 12 : 24,
+        padding: mobile ? 10 : isCompact ? 12 : 24,
         borderBottom: '2px solid rgba(148,163,184,0.36)',
         background: 'linear-gradient(180deg, rgba(44,60,82,0.98), rgba(33,46,65,0.98))',
         boxShadow: '0 14px 34px rgba(0,0,0,0.16)',
@@ -166,14 +195,14 @@ function AppTopBar({
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
-          gap: isCompact ? 8 : 18,
-          marginBottom: isCompact ? 10 : 18,
+          gap: mobile ? 6 : isCompact ? 8 : 18,
+          marginBottom: mobile ? 8 : isCompact ? 10 : 18,
         }}
       >
         <h1
           style={{
             margin: 0,
-            fontSize: isCompact ? 18 : 34,
+            fontSize: mobile ? 16 : isCompact ? 18 : 34,
             fontWeight: 800,
             lineHeight: 1.05,
           }}
@@ -187,7 +216,7 @@ function AppTopBar({
             borderRadius: 999,
             background: '#315aab',
             border: '1px solid #7fb0ff',
-            fontSize: isCompact ? 12 : 18,
+            fontSize: mobile ? 11 : isCompact ? 12 : 18,
             fontWeight: 700,
             color: '#eef6ff',
           }}
@@ -217,21 +246,25 @@ function AppTopBar({
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
-          gap: isCompact ? 10 : 18,
+          gap: mobile ? 8 : isCompact ? 10 : 18,
         }}
       >
         <TabBar
           selectedTab={selectedTab}
           onTabChange={onTabChange}
           compact={isCompact}
+          mobile={mobile}
+          showLeads={modeLabel === 'Manager'}
           jobsUnreadCount={jobsUnreadCount}
           materialsMessagesUnreadCount={materialsMessagesUnreadCount}
+          leadsCount={leads.filter((lead) => lead.status !== 'won' && lead.status !== 'lost').length}
         />
 
         <ViewModeControl
           value={displayMode}
           onChange={onDisplayModeChange}
           compact={isCompact}
+          mobile={mobile}
         />
 
         <button
@@ -242,8 +275,8 @@ function AppTopBar({
             background: updateButtonDisabled ? '#61748f' : '#3865bb',
             color: '#f7fbff',
             borderRadius: isCompact ? 12 : 16,
-            padding: isCompact ? '8px 12px' : '14px 20px',
-            fontSize: isCompact ? 12 : 16,
+            padding: mobile ? '8px 10px' : isCompact ? '8px 12px' : '14px 20px',
+            fontSize: mobile ? 11 : isCompact ? 12 : 16,
             fontWeight: 700,
             cursor: updateButtonDisabled ? 'not-allowed' : 'pointer',
             opacity: updateButtonDisabled ? 0.8 : 1,
@@ -259,8 +292,8 @@ function AppTopBar({
             background: '#435267',
             color: '#f8fbff',
             borderRadius: isCompact ? 12 : 16,
-            padding: isCompact ? '8px 12px' : '14px 26px',
-            fontSize: isCompact ? 12 : 16,
+            padding: mobile ? '8px 10px' : isCompact ? '8px 12px' : '14px 26px',
+            fontSize: mobile ? 11 : isCompact ? 12 : 16,
             fontWeight: 700,
             cursor: 'pointer',
           }}

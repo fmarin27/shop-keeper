@@ -16,6 +16,15 @@ import { SettingsStore } from './store';
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const isPackagedApp = app.isPackaged;
 const updaterEnabled = isPackagedApp && !isDev;
+const betaAppName = 'Shop Keeper Beta';
+const releaseAppName = 'Shop Keeper';
+const appDisplayName = isPackagedApp ? releaseAppName : betaAppName;
+
+if (!isPackagedApp) {
+  app.setName(betaAppName);
+  app.setPath('userData', path.join(app.getPath('appData'), betaAppName));
+}
+
 const settingsStore = new SettingsStore();
 let mainWindow: BrowserWindow | null = null;
 let updateCheckStarted = false;
@@ -246,7 +255,7 @@ function getWindowOptions(): Electron.BrowserWindowConstructorOptions {
     minWidth: 700,
     minHeight: 500,
     autoHideMenuBar: true,
-    title: 'Shop Keeper',
+    title: appDisplayName,
     alwaysOnTop: isOverlay,
     frame: true,
     transparent: false,
@@ -360,7 +369,7 @@ function setupAutoUpdates() {
           defaultId: 0,
           cancelId: 1,
           title: 'Update ready',
-          message: 'A new version of Shop Keeper has been downloaded.',
+          message: `A new version of ${releaseAppName} has been downloaded.`,
           detail: 'Restart the app to install the update.',
           noLink: true,
         })
@@ -370,7 +379,7 @@ function setupAutoUpdates() {
           defaultId: 0,
           cancelId: 1,
           title: 'Update ready',
-          message: 'A new version of Shop Keeper has been downloaded.',
+          message: `A new version of ${releaseAppName} has been downloaded.`,
           detail: 'Restart the app to install the update.',
           noLink: true,
         });
@@ -434,6 +443,9 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   installSafeConsole();
+  app.setAppUserModelId(
+    isPackagedApp ? 'com.shopkeeper.app' : 'com.shopkeeper.beta',
+  );
 
   session.defaultSession.setPermissionRequestHandler(
     (_webContents, permission, callback) => {
@@ -581,7 +593,7 @@ app.whenReady().then(async () => {
   );
 
   ipcMain.handle('app:getInfo', () => ({
-    name: app.getName(),
+    name: appDisplayName,
     version: app.getVersion(),
     owner: 'Fernando Marin',
   }));

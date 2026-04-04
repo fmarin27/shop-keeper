@@ -8,7 +8,6 @@ export type MaterialRequest = {
   quantity: string;
   note?: string;
   createdAt: string;
-  receivedAt?: string;
   unread: boolean;
   createdBy?: MessageAudienceMode;
   unreadByManager?: boolean;
@@ -25,8 +24,6 @@ export type GeneralMessage = {
   type: 'text' | 'audio';
   text: string;
   createdAt: string;
-  closedAt?: string;
-  important?: boolean;
   unread: boolean;
   createdBy?: MessageAudienceMode;
   unreadByManager?: boolean;

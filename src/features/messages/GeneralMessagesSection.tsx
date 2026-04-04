@@ -14,9 +14,6 @@ type GeneralMessagesSectionProps = {
   onAddTextMessage: (text: string) => void;
   onAddAudioMessage?: (file: Blob) => Promise<void> | void;
   onMarkMessageRead: (id: string) => void;
-  onArchiveMessage: (id: string) => void;
-  onReopenMessage: (id: string) => void;
-  onSetMessageImportant: (id: string, important: boolean) => void;
 };
 
 function GeneralMessagesSection({
@@ -28,12 +25,8 @@ function GeneralMessagesSection({
   onAddTextMessage,
   onAddAudioMessage,
   onMarkMessageRead,
-  onArchiveMessage,
-  onReopenMessage,
-  onSetMessageImportant,
 }: GeneralMessagesSectionProps) {
   const [showForm, setShowForm] = useState(false);
-  const [showClosedHistory, setShowClosedHistory] = useState(false);
   const [draft, setDraft] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isSavingAudio, setIsSavingAudio] = useState(false);
@@ -44,15 +37,7 @@ function GeneralMessagesSection({
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedMessageRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
-  const openMessages = messages.filter((message) => !message.closedAt);
-  const closedMessages = [...messages]
-    .filter((message) => !!message.closedAt)
-    .sort(
-      (a, b) =>
-        Date.parse(b.closedAt || b.createdAt || '1970-01-01') -
-        Date.parse(a.closedAt || a.createdAt || '1970-01-01'),
-    );
-  const importantMessages = openMessages.filter((message) => message.important);
+  const lastAutoFocusedMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -65,6 +50,7 @@ function GeneralMessagesSection({
 
   useEffect(() => {
     if (!focusedMessageId) return;
+    if (lastAutoFocusedMessageIdRef.current === focusedMessageId) return;
 
     const target = messages.find((message) => message.id === focusedMessageId);
     if (!target) return;
@@ -80,10 +66,17 @@ function GeneralMessagesSection({
       window.clearTimeout(focusTimeoutRef.current);
     }
 
+    lastAutoFocusedMessageIdRef.current = focusedMessageId;
     focusTimeoutRef.current = window.setTimeout(() => {
       onFocusedMessageHandled?.();
     }, 1200);
   }, [focusedMessageId, messages, onFocusedMessageHandled]);
+
+  useEffect(() => {
+    if (!focusedMessageId) {
+      lastAutoFocusedMessageIdRef.current = null;
+    }
+  }, [focusedMessageId]);
 
   const submit = () => {
     const trimmed = draft.trim();
@@ -275,13 +268,6 @@ function GeneralMessagesSection({
         {showComposer ? (
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button
-              onClick={() => setShowClosedHistory((value) => !value)}
-              disabled={isRecording || isSavingAudio}
-              style={buttonStyle(false, false, isRecording || isSavingAudio)}
-            >
-              {showClosedHistory ? 'Hide Closed History' : `Closed History (${closedMessages.length})`}
-            </button>
-            <button
               onClick={() => setShowForm((v) => !v)}
               disabled={isRecording || isSavingAudio}
               style={buttonStyle(false, false, isRecording || isSavingAudio)}
@@ -409,64 +395,9 @@ function GeneralMessagesSection({
         </div>
       ) : null}
 
-      {!compact && importantMessages.length ? (
-        <div
-          style={{
-            display: 'grid',
-            gap: 10,
-            marginBottom: 18,
-            padding: 14,
-            borderRadius: 16,
-            background: 'rgba(91,59,14,0.34)',
-            border: '2px solid rgba(251,191,36,0.3)',
-          }}
-        >
-          <div style={{ fontSize: 16, fontWeight: 900, color: '#fef3c7' }}>
-            Important Messages
-          </div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {importantMessages.map((message) => (
-              <div
-                key={`important-${message.id}`}
-                style={{
-                  borderRadius: 16,
-                  padding: 14,
-                  background: 'rgba(70,46,95,0.98)',
-                  border: '2px solid rgba(251,191,36,0.28)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                    marginBottom: 8,
-                  }}
-                >
-                  <div style={{ fontSize: 13, fontWeight: 900, color: '#fde68a' }}>
-                    Important
-                  </div>
-                  <button
-                    onClick={() => onSetMessageImportant(message.id, false)}
-                    style={buttonStyle(false, false, false)}
-                  >
-                    Unmark Important
-                  </button>
-                </div>
-                <div style={{ fontSize: 14, color: '#f8fafc', fontWeight: 700 }}>
-                  {message.type === 'audio' ? 'Audio message' : message.text}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
       <div style={{ display: 'grid', gap: compact ? 8 : 14 }}>
-        {openMessages.length ? (
-          openMessages.map((message, index) => (
+        {messages.length ? (
+          messages.map((message, index) => (
             <div
               key={message.id}
               ref={focusedMessageId === message.id ? focusedMessageRef : null}
@@ -525,32 +456,18 @@ function GeneralMessagesSection({
                   {message.type === 'audio' ? 'Audio' : 'Text'}
                 </span>
 
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {message.important ? (
-                    <div
-                      style={{
-                        fontSize: compact ? 11 : 13,
-                        fontWeight: 900,
-                        color: '#fde68a',
-                      }}
-                    >
-                      Important
-                    </div>
-                  ) : null}
-
-                  {message.unread ? (
-                    <div
-                      style={{
-                        fontSize: compact ? 11 : 13,
-                        fontWeight: 800,
-                        color: '#93c5fd',
-                        textShadow: '0 0 10px rgba(96,165,250,0.5)',
-                      }}
-                    >
-                      Unread
-                    </div>
-                  ) : null}
-                </div>
+                {message.unread ? (
+                  <div
+                    style={{
+                      fontSize: compact ? 11 : 13,
+                      fontWeight: 800,
+                      color: '#93c5fd',
+                      textShadow: '0 0 10px rgba(96,165,250,0.5)',
+                    }}
+                  >
+                    Unread
+                  </div>
+                ) : null}
               </div>
 
               <div
@@ -587,29 +504,6 @@ function GeneralMessagesSection({
                 >
                   {formatDateTime(message.createdAt)}
                 </div>
-
-                {!compact ? (
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onSetMessageImportant(message.id, !message.important);
-                      }}
-                      style={buttonStyle(false, false, false)}
-                    >
-                      {message.important ? 'Unmark Important' : 'Mark Important'}
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onArchiveMessage(message.id);
-                      }}
-                      style={buttonStyle(false, false, false)}
-                    >
-                      Move to History
-                    </button>
-                  </div>
-                ) : null}
               </div>
             </div>
           ))
@@ -625,153 +519,10 @@ function GeneralMessagesSection({
               fontWeight: 700,
             }}
           >
-            {compact ? 'No unread open messages.' : 'No open messages right now.'}
+            {compact ? 'No unread messages.' : 'No messages yet.'}
           </div>
         )}
       </div>
-
-      {!compact && showClosedHistory ? (
-        <div style={{ marginTop: 18, display: 'grid', gap: 12 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 900, color: '#f8fafc' }}>
-                Closed History
-              </div>
-              <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
-                Older general messages stay here so the active list does not get cluttered.
-              </div>
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: '#dbeafe',
-                background: 'rgba(37,99,235,0.22)',
-                border: '1px solid rgba(96,165,250,0.34)',
-                borderRadius: 999,
-                padding: '7px 11px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {closedMessages.length} archived
-            </div>
-          </div>
-
-          {closedMessages.length ? (
-            closedMessages.map((message, index) => (
-              <div
-                key={`closed-${message.id}`}
-                style={{
-                  borderRadius: 18,
-                  padding: 18,
-                  background: index % 2 === 0
-                    ? 'rgba(63,47,89,0.96)'
-                    : 'rgba(82,59,108,0.96)',
-                  border: '2px solid rgba(148,163,184,0.3)',
-                  boxShadow: '0 10px 24px rgba(0,0,0,0.14)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                    marginBottom: 8,
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 800,
-                        borderRadius: 999,
-                        padding: '7px 12px',
-                        background:
-                          message.type === 'audio'
-                            ? 'rgba(37,99,235,0.22)'
-                            : 'rgba(71,85,105,0.28)',
-                        border:
-                          message.type === 'audio'
-                            ? '1px solid rgba(96,165,250,0.34)'
-                            : '1px solid rgba(148,163,184,0.26)',
-                        color: message.type === 'audio' ? '#dbeafe' : '#e2e8f0',
-                      }}
-                    >
-                      {message.type === 'audio' ? 'Audio' : 'Text'}
-                    </span>
-                    {message.important ? (
-                      <span
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 900,
-                          color: '#fde68a',
-                        }}
-                      >
-                        Important
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <button
-                    onClick={() => onReopenMessage(message.id)}
-                    style={buttonStyle(false, false, false)}
-                  >
-                    Reopen
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    fontSize: 15,
-                    color: '#f8fafc',
-                    fontWeight: 600,
-                    marginBottom: 10,
-                  }}
-                >
-                  {message.type === 'audio' ? 'Audio message' : message.text}
-                </div>
-
-                {message.type === 'audio' && message.audioUrl ? (
-                  <audio
-                    controls
-                    src={message.audioUrl}
-                    style={{ width: '100%', maxWidth: 360, marginBottom: 10 }}
-                  />
-                ) : null}
-
-                <div style={{ fontSize: 12, color: '#b8c7da' }}>
-                  Sent: {formatDateTime(message.createdAt)}
-                  {message.closedAt ? ` | Archived: ${formatDateTime(message.closedAt)}` : ''}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div
-              style={{
-                borderRadius: 18,
-                padding: 16,
-                background: 'rgba(39,53,73,0.96)',
-                border: '2px solid rgba(175,189,208,0.3)',
-                color: '#b8c7da',
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              No closed messages in history yet.
-            </div>
-          )}
-        </div>
-      ) : null}
     </section>
   );
 }

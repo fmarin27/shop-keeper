@@ -2,7 +2,7 @@ export type AppMode = 'manager' | 'tech';
 
 export type DisplayMode = 'normal' | 'compact' | 'overlay';
 
-export type MainTab = 'jobs' | 'materialsMessages';
+export type MainTab = 'jobs' | 'materialsMessages' | 'leads';
 
 export type OverlayFocusTarget =
   | {
@@ -37,6 +37,16 @@ export type JobNote = {
   read: boolean;
 };
 
+export type JobPhoto = {
+  id: string;
+  url: string;
+  createdAt: string;
+  fileSize: number;
+  width: number;
+  height: number;
+  timestampIncluded: boolean;
+};
+
 export type JobPartStatus = 'requested' | 'ordered' | 'reorderNeeded' | 'received';
 
 export type JobPartRequest = {
@@ -64,6 +74,7 @@ export type Job = {
   partsWaiting: boolean;
   partsRequests: JobPartRequest[];
   textNotes: JobNote[];
+  photos: JobPhoto[];
   sortOrder?: number;
 };
 
@@ -89,4 +100,45 @@ export type UpdateJobDetailsInput = {
   amount: number;
   amountStatus: AmountStatus;
   promiseDate: string;
+};
+
+export type LeadStatus =
+  | 'new'
+  | 'contacted'
+  | 'estimateScheduled'
+  | 'won'
+  | 'lost';
+
+export type LeadUpdate = {
+  id: string;
+  text: string;
+  createdAt: string;
+};
+
+export type Lead = {
+  id: string;
+  customerName: string;
+  phoneNumber: string;
+  vehicle: string;
+  insuranceCompany: string;
+  source: string;
+  estimatedValue: number;
+  followUpDate: string;
+  status: LeadStatus;
+  notes: string;
+  updates: LeadUpdate[];
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type CreateLeadInput = {
+  customerName: string;
+  phoneNumber: string;
+  vehicle: string;
+  insuranceCompany: string;
+  source: string;
+  estimatedValue: number;
+  followUpDate: string;
+  status: LeadStatus;
+  notes: string;
 };

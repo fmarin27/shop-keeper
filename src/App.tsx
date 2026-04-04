@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import OverlayView from './components/OverlayView';
+import { useIsMobile } from './hooks/useIsMobile';
 import ManagerPage from './pages/ManagerPage';
 import ModeChooserPage from './pages/ModeChooserPage';
 import TechPage from './pages/TechPage';
+import { appBridge } from './services/platform/appBridge';
 import { MANAGER_MODE_PASSWORD } from './utils/constants';
 import type {
   AppMode,
@@ -20,6 +22,7 @@ const SPLASH_MESSAGES = [
 ] as const;
 
 function App() {
+  const isMobile = useIsMobile();
   const [isLoading, setIsLoading] = useState(true);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [displayMode, setDisplayMode] = useState<DisplayMode>('normal');
@@ -55,16 +58,12 @@ function App() {
       const startedAt = Date.now();
 
       try {
-        if (window.appBridge?.getAppInfo) {
-          const info = await window.appBridge.getAppInfo();
-          setAppInfo(info);
-        }
+        const info = await appBridge.getAppInfo();
+        setAppInfo(info);
 
-        if (window.appBridge?.getSettings) {
-          const settings = await window.appBridge.getSettings();
-          setAppMode(settings.appMode ?? null);
-          setDisplayMode(settings.displayMode ?? 'normal');
-        }
+        const settings = await appBridge.getSettings();
+        setAppMode(settings.appMode ?? null);
+        setDisplayMode(isMobile ? 'normal' : settings.displayMode ?? 'normal');
       } catch (error) {
         console.error('Failed to load local settings:', error);
       } finally {
@@ -78,16 +77,21 @@ function App() {
     };
 
     loadSettings();
-  }, []);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (displayMode !== 'normal') {
+      void handleDisplayModeChange('normal');
+    }
+  }, [displayMode, isMobile]);
 
   useEffect(() => {
     let isMounted = true;
 
     const loadUpdaterStatus = async () => {
-      if (!window.appBridge?.getUpdaterStatus) return;
-
       try {
-        const status = await window.appBridge.getUpdaterStatus();
+        const status = await appBridge.getUpdaterStatus();
         if (isMounted) {
           setUpdaterState(status);
           setUpdateStatus(status.message ?? null);
@@ -99,7 +103,7 @@ function App() {
 
     loadUpdaterStatus();
 
-    const unsubscribe = window.appBridge?.onUpdaterStatus?.((status) => {
+    const unsubscribe = appBridge.onUpdaterStatus((status) => {
       setUpdaterState(status);
       setUpdateStatus(status.message ?? null);
     });
@@ -112,12 +116,8 @@ function App() {
 
   const applyModeSelect = async (mode: AppMode) => {
     try {
-      if (window.appBridge?.setAppMode) {
-        const settings = await window.appBridge.setAppMode(mode);
-        setAppMode(settings.appMode ?? mode);
-      } else {
-        setAppMode(mode);
-      }
+      const settings = await appBridge.setAppMode(mode);
+      setAppMode(settings.appMode ?? mode);
     } catch (error) {
       console.error('Failed to save app mode:', error);
       setAppMode(mode);
@@ -133,24 +133,27 @@ function App() {
     }
 
     await applyModeSelect(mode);
+    if (mode === 'tech' && selectedTab === 'leads') {
+      setSelectedTab('jobs');
+    }
   };
 
   const handleDisplayModeChange = async (mode: DisplayMode) => {
+    const nextMode: DisplayMode = isMobile ? 'normal' : mode;
     try {
-      if (window.appBridge?.setDisplayMode) {
-        const settings = await window.appBridge.setDisplayMode(mode);
-        setDisplayMode(settings.displayMode ?? mode);
-      } else {
-        setDisplayMode(mode);
-      }
+      const settings = await appBridge.setDisplayMode(nextMode);
+      setDisplayMode(settings.displayMode ?? nextMode);
     } catch (error) {
       console.error('Failed to save display mode:', error);
-      setDisplayMode(mode);
+      setDisplayMode(nextMode);
     }
   };
 
   const handleSwitchMode = async () => {
     const nextMode: AppMode = appMode === 'manager' ? 'tech' : 'manager';
+    if (nextMode === 'tech' && selectedTab === 'leads') {
+      setSelectedTab('jobs');
+    }
     await handleModeSelect(nextMode);
   };
 
@@ -174,25 +177,15 @@ function App() {
 
   const handleCheckForUpdates = async () => {
     if (updaterState.phase === 'downloaded') {
-      if (!window.appBridge?.installUpdate) {
-        setUpdateStatus('Install action is unavailable in this build.');
-        return;
-      }
-
-      const result = await window.appBridge.installUpdate();
+      const result = await appBridge.installUpdate();
       if (!result.ok) {
         setUpdateStatus(result.message ?? 'Update install could not start.');
       }
       return;
     }
 
-    if (!window.appBridge?.checkForUpdates) {
-      setUpdateStatus('Update checks are unavailable in this build.');
-      return;
-    }
-
     try {
-      const result = await window.appBridge.checkForUpdates();
+      const result = await appBridge.checkForUpdates();
 
       if (!result.ok) {
         setUpdateStatus(result.message ?? 'Update check failed.');
@@ -259,7 +252,7 @@ function App() {
     );
   }
 
-  if (displayMode === 'overlay') {
+  if (!isMobile && displayMode === 'overlay') {
     return (
       <OverlayView
         appMode={appMode}
@@ -269,7 +262,7 @@ function App() {
         onOpenJob={(jobId) => openJobsView(jobId)}
         onOpenMaterial={(itemId) => openMaterialsMessagesView('material', itemId)}
         onOpenMessage={(itemId) => openMaterialsMessagesView('message', itemId)}
-        onClose={() => window.close()}
+        onClose={() => appBridge.closeWindow()}
       />
     );
   }
@@ -474,6 +467,8 @@ function StartupSplash({
   appInfo: AppInfo;
   loadingMessage: string;
 }) {
+  const isBetaBuild = appInfo.name.toLowerCase().includes('beta');
+
   return (
     <div
       style={{
@@ -538,16 +533,20 @@ function StartupSplash({
               style={{
                 borderRadius: 999,
                 padding: '8px 12px',
-                background: 'rgba(14,165,233,0.16)',
-                border: '1px solid rgba(34,211,238,0.24)',
-                color: '#cffafe',
+                background: isBetaBuild
+                  ? 'rgba(249,115,22,0.18)'
+                  : 'rgba(14,165,233,0.16)',
+                border: isBetaBuild
+                  ? '1px solid rgba(251,146,60,0.34)'
+                  : '1px solid rgba(34,211,238,0.24)',
+                color: isBetaBuild ? '#ffedd5' : '#cffafe',
                 fontSize: 12,
                 fontWeight: 800,
                 letterSpacing: 1.1,
                 textTransform: 'uppercase',
               }}
             >
-              Collision Workflow System
+              {isBetaBuild ? 'Beta Testing Build' : 'Collision Workflow System'}
             </span>
 
             <span
@@ -583,9 +582,9 @@ function StartupSplash({
               color: '#7dd3fc',
               textTransform: 'uppercase',
             }}
-          >
-            Keeper
-          </div>
+            >
+              {isBetaBuild ? 'Keeper Beta' : 'Keeper'}
+            </div>
           </div>
 
           <div
@@ -620,12 +619,12 @@ function StartupSplash({
                 style={{
                   fontSize: 13,
                   fontWeight: 900,
-                  color: '#d9f99d',
+                  color: isBetaBuild ? '#fdba74' : '#d9f99d',
                   textTransform: 'uppercase',
                   letterSpacing: 1,
                 }}
               >
-                {loadingMessage}
+                {isBetaBuild ? `${loadingMessage} [BETA]` : loadingMessage}
               </div>
               <div
                 style={{
@@ -670,6 +669,10 @@ function StartupSplash({
           >
             <SplashInfoCard label="Owner / Creator" value={appInfo.owner} />
             <SplashInfoCard label="Application" value={appInfo.name} />
+            <SplashInfoCard
+              label="Environment"
+              value={isBetaBuild ? 'Preview / Beta Build' : 'Production Build'}
+            />
             <SplashInfoCard label="Build" value={appInfo.version} />
           </div>
         </div>

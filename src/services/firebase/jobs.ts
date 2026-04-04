@@ -10,12 +10,13 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './config';
-import { uploadJobAudioNote } from './storage';
+import { uploadJobAudioNote, uploadJobPhoto } from './storage';
 import type {
   AppMode,
   CreateJobInput,
   Job,
   JobNote,
+  JobPhoto,
   JobPartRequest,
   JobStatus,
   UpdateJobDetailsInput,
@@ -64,6 +65,7 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
               ? (data.partsRequests as JobPartRequest[])
               : [],
             textNotes: (data.textNotes ?? []) as JobNote[],
+            photos: (data.photos ?? []) as JobPhoto[],
             sortOrder:
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
           },
@@ -152,6 +154,7 @@ export async function createJob(input: CreateJobInput) {
       partsRequests.some((part) => part.status !== 'received'),
     partsRequests: partsRequests.map(toFirestorePartRequest),
     textNotes: notes,
+    photos: [],
     sortOrder: Date.now() * -1,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -350,6 +353,37 @@ export async function markJobNotesRead(job: Job) {
 
   await updateDoc(doc(db, 'jobs', job.id), {
     textNotes: nextNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function addPhotoToJob(
+  job: Job,
+  input: {
+    file: Blob;
+    width: number;
+    height: number;
+    fileSize: number;
+    timestampIncluded: boolean;
+  },
+) {
+  const url = await uploadJobPhoto(job.id, input.file);
+
+  const nextPhotos: JobPhoto[] = [
+    {
+      id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      url,
+      createdAt: new Date().toISOString(),
+      fileSize: input.fileSize,
+      width: input.width,
+      height: input.height,
+      timestampIncluded: input.timestampIncluded,
+    },
+    ...(job.photos ?? []),
+  ];
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    photos: nextPhotos,
     updatedAt: serverTimestamp(),
   });
 }

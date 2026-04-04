@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { processJobImage } from '../../services/media/imageProcessor';
 import type {
   AppMode,
   AmountStatus,
   Job,
   JobNote,
+  JobPhoto,
   JobPartRequest,
   JobStatus,
   UpdateJobDetailsInput,
@@ -12,6 +14,7 @@ import type {
 type ActiveJobsSectionProps = {
   jobs: Job[];
   compact?: boolean;
+  mobile?: boolean;
   appMode: AppMode;
   focusedJobId?: string | null;
   onFocusedJobHandled?: () => void;
@@ -19,6 +22,16 @@ type ActiveJobsSectionProps = {
   onMarkDone: (jobId: string) => void;
   onAddTextNote: (jobId: string, text: string) => void;
   onAddAudioNote: (jobId: string, file: Blob) => Promise<void> | void;
+  onAddPhoto: (
+    jobId: string,
+    processed: {
+      file: Blob;
+      width: number;
+      height: number;
+      fileSize: number;
+      timestampIncluded: boolean;
+    },
+  ) => Promise<void> | void;
   onMarkNotesRead: (jobId: string) => void;
   onRequestPart: (
     jobId: string,
@@ -44,6 +57,7 @@ type ActiveJobsSectionProps = {
 function ActiveJobsSection({
   jobs,
   compact = false,
+  mobile = false,
   appMode,
   focusedJobId = null,
   onFocusedJobHandled,
@@ -51,6 +65,7 @@ function ActiveJobsSection({
   onMarkDone,
   onAddTextNote,
   onAddAudioNote,
+  onAddPhoto,
   onMarkNotesRead,
   onRequestPart,
   onSetPartOrdered,
@@ -61,6 +76,7 @@ function ActiveJobsSection({
   onSetPriorityPosition,
   onUpdateJobDetails,
 }: ActiveJobsSectionProps) {
+  const narrowLayout = compact || mobile;
   const [openJobIds, setOpenJobIds] = useState<string[]>([]);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [partDrafts, setPartDrafts] = useState<
@@ -82,7 +98,14 @@ function ActiveJobsSection({
   const [savingJobDetailsId, setSavingJobDetailsId] = useState<string | null>(null);
   const [recordingJobId, setRecordingJobId] = useState<string | null>(null);
   const [savingAudioJobId, setSavingAudioJobId] = useState<string | null>(null);
+  const [photoActionState, setPhotoActionState] = useState<{
+    jobId: string;
+    phase: 'processing' | 'uploading';
+  } | null>(null);
   const [reorderingJobId, setReorderingJobId] = useState<string | null>(null);
+  const [photoTimestampEnabled, setPhotoTimestampEnabled] = useState<Record<string, boolean>>({});
+  const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null);
+  const [photoZoom, setPhotoZoom] = useState(1);
   const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
   const [dragTarget, setDragTarget] = useState<{
     jobId: string;
@@ -90,9 +113,11 @@ function ActiveJobsSection({
   } | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const photoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
+  const lastAutoFocusedJobIdRef = useRef<string | null>(null);
   const reorderInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -111,6 +136,7 @@ function ActiveJobsSection({
 
   useEffect(() => {
     if (!focusedJobId) return;
+    if (lastAutoFocusedJobIdRef.current === focusedJobId) return;
 
     setOpenJobIds((current) =>
       current.includes(focusedJobId) ? current : [...current, focusedJobId],
@@ -130,10 +156,17 @@ function ActiveJobsSection({
       window.clearTimeout(focusTimeoutRef.current);
     }
 
+    lastAutoFocusedJobIdRef.current = focusedJobId;
     focusTimeoutRef.current = window.setTimeout(() => {
       onFocusedJobHandled?.();
     }, 1200);
   }, [focusedJobId, jobs, onFocusedJobHandled]);
+
+  useEffect(() => {
+    if (!focusedJobId) {
+      lastAutoFocusedJobIdRef.current = null;
+    }
+  }, [focusedJobId]);
 
   const toggleJob = (jobId: string) => {
     setOpenJobIds((current) =>
@@ -312,11 +345,44 @@ function ActiveJobsSection({
     }
   };
 
+  const handlePhotoFileSelected = async (jobId: string, file: File | null) => {
+    if (!file) return;
+
+    try {
+      setPhotoActionState({ jobId, phase: 'processing' });
+      const processed = await processJobImage(file, {
+        addTimestamp: photoTimestampEnabled[jobId] ?? false,
+      });
+      setPhotoActionState({ jobId, phase: 'uploading' });
+      await onAddPhoto(jobId, {
+        file: processed.blob,
+        width: processed.width,
+        height: processed.height,
+        fileSize: processed.fileSize,
+        timestampIncluded: processed.timestampIncluded,
+      });
+    } catch (error) {
+      console.error('Failed to add photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not upload photo.',
+      );
+    } finally {
+      setPhotoActionState(null);
+      const input = photoInputRefs.current[jobId];
+      if (input) {
+        input.value = '';
+      }
+    }
+  };
+
   return (
+    <>
     <section
       style={{
-        borderRadius: compact ? 18 : 24,
-        padding: compact ? 18 : 28,
+        borderRadius: narrowLayout ? 18 : 24,
+        padding: narrowLayout ? 14 : 28,
         background: 'rgba(84,100,123,0.95)',
         border: '2px solid rgba(196,207,223,0.42)',
         boxShadow: '0 18px 40px rgba(0,0,0,0.14), inset 0 0 0 1px rgba(255,255,255,0.05)',
@@ -325,8 +391,8 @@ function ActiveJobsSection({
       <h2
         style={{
           marginTop: 0,
-          marginBottom: compact ? 14 : 20,
-          fontSize: compact ? 20 : 28,
+          marginBottom: narrowLayout ? 12 : 20,
+          fontSize: narrowLayout ? 22 : 28,
           fontWeight: 800,
           color: '#f8fafc',
         }}
@@ -334,12 +400,15 @@ function ActiveJobsSection({
         Active Jobs
       </h2>
 
-      <div style={{ display: 'grid', gap: compact ? 12 : 16 }}>
+      <div style={{ display: 'grid', gap: narrowLayout ? 10 : 16 }}>
         {jobs.map((job, index) => {
           const isOpen = openJobIds.includes(job.id);
           const unreadNotes = unreadCount(job);
           const isRecordingThisJob = recordingJobId === job.id;
           const isSavingAudioThisJob = savingAudioJobId === job.id;
+          const photoPhase =
+            photoActionState?.jobId === job.id ? photoActionState.phase : null;
+          const isSavingPhotoThisJob = !!photoPhase;
           const isReorderingThisJob = reorderingJobId === job.id;
           const isFocused = focusedJobId === job.id;
           const isEven = index % 2 === 0;
@@ -365,7 +434,7 @@ function ActiveJobsSection({
                 }
               }}
               style={{
-                borderRadius: compact ? 16 : 20,
+                borderRadius: narrowLayout ? 16 : 20,
                 background: isEven ? 'rgba(41,54,73,0.98)' : 'rgba(49,63,84,0.98)',
                 border:
                   dragTarget?.jobId === job.id
@@ -412,7 +481,7 @@ function ActiveJobsSection({
                   textAlign: 'left',
                   background: 'transparent',
                   color: 'inherit',
-                  padding: compact ? 14 : 18,
+                  padding: narrowLayout ? 12 : 18,
                 }}
               >
                 <div
@@ -437,7 +506,7 @@ function ActiveJobsSection({
                     >
                       <div
                         style={{
-                          fontSize: compact ? 16 : 20,
+                          fontSize: narrowLayout ? 18 : 20,
                           fontWeight: 800,
                           color: '#f8fafc',
                         }}
@@ -445,6 +514,7 @@ function ActiveJobsSection({
                         {job.vehicle}
                       </div>
 
+                      {!mobile ? (
                       <div
                         style={{
                           display: 'flex',
@@ -469,6 +539,7 @@ function ActiveJobsSection({
                           ↓
                         </HeaderOrderButton>
                       </div>
+                      ) : null}
                     </div>
 
                     <div
@@ -527,7 +598,7 @@ function ActiveJobsSection({
                         {index === 0 ? 'Top Priority' : `Priority #${index + 1}`}
                       </span>
                       <span
-                        draggable={!compact && !reorderingJobId}
+                        draggable={!narrowLayout && !reorderingJobId}
                         onDragStart={(event) => handleDragStart(event, job.id)}
                         onDragEnd={clearDragState}
                         onClick={(event) => event.stopPropagation()}
@@ -543,7 +614,7 @@ function ActiveJobsSection({
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 8,
-                          cursor: !compact && !reorderingJobId ? 'grab' : 'default',
+                          cursor: !narrowLayout && !reorderingJobId ? 'grab' : 'default',
                           userSelect: 'none',
                         }}
                       >
@@ -574,7 +645,7 @@ function ActiveJobsSection({
                       {statusLabel(job.status)}
                     </span>
 
-                    {!compact ? (
+                    {!narrowLayout ? (
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
@@ -603,8 +674,8 @@ function ActiveJobsSection({
                       aria-label={isOpen ? 'Collapse job' : 'Expand job'}
                       onClick={() => toggleJob(job.id)}
                       style={{
-                        width: compact ? 28 : 32,
-                        height: compact ? 28 : 32,
+                        width: narrowLayout ? 30 : 32,
+                        height: narrowLayout ? 30 : 32,
                         borderRadius: 999,
                         border: '1px solid rgba(148,163,184,0.28)',
                         background: 'rgba(15,23,42,0.68)',
@@ -614,7 +685,7 @@ function ActiveJobsSection({
                         justifyContent: 'center',
                         lineHeight: 1,
                         flexShrink: 0,
-                        fontSize: compact ? 16 : 18,
+                        fontSize: narrowLayout ? 18 : 18,
                         color: '#e2e8f0',
                         fontWeight: 900,
                       }}
@@ -628,7 +699,7 @@ function ActiveJobsSection({
                   style={{
                     display: 'flex',
                     flexWrap: 'wrap',
-                    gap: compact ? 8 : 10,
+                    gap: narrowLayout ? 8 : 10,
                     marginBottom: unreadNotes > 0 ? 10 : 0,
                   }}
                 >
@@ -662,7 +733,7 @@ function ActiveJobsSection({
                   <div
                     style={{
                       marginTop: 2,
-                      fontSize: compact ? 12 : 13,
+                      fontSize: narrowLayout ? 12 : 13,
                       fontWeight: 800,
                       color: '#93c5fd',
                       textShadow: '0 0 10px rgba(96,165,250,0.55)',
@@ -677,59 +748,59 @@ function ActiveJobsSection({
                 <div
                   style={{
                     borderTop: '2px solid rgba(192,204,220,0.32)',
-                    padding: compact ? 14 : 18,
+                    padding: narrowLayout ? 12 : 18,
                     background: 'rgba(93,109,132,0.96)',
                     display: 'grid',
-                    gap: compact ? 12 : 16,
+                    gap: narrowLayout ? 12 : 16,
                   }}
                 >
                   <div
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: compact ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-                      gap: compact ? 10 : 14,
-                      paddingBottom: compact ? 2 : 4,
+                      gridTemplateColumns: narrowLayout ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                      gap: narrowLayout ? 10 : 14,
+                      paddingBottom: narrowLayout ? 2 : 4,
                       borderBottom: '2px solid rgba(148,163,184,0.18)',
                     }}
                   >
                     <DetailBox
                       label="Customer"
                       value={job.customerName}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                     <DetailBox
                       label="Paint Code"
                       value={job.paintCode || 'Not set'}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                     <DetailBox
                       label="Amount"
                       value={`${formatAmount(job.amount)} - ${
                         job.amountStatus === 'final' ? 'Final' : 'Not Final'
                       }`}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                     <DetailBox
                       label="Promise Date"
                       value={formatDate(job.promiseDate)}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                     <DetailBox
                       label="Parts Status"
                       value={getPartsWorkflowSummary(job)}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                     <DetailBox
                       label="Parts Received"
                       value={getPartsReceiptSummary(job)}
-                      compact={compact}
+                      compact={narrowLayout}
                     />
                   </div>
 
                   {appMode === 'manager' ? (
                     <>
                       <JobDetailsEditor
-                        compact={compact}
+                        compact={narrowLayout}
                         paintCode={detailDraft.paintCode}
                         amount={detailDraft.amount}
                         amountStatus={detailDraft.amountStatus}
@@ -781,7 +852,7 @@ function ActiveJobsSection({
                   <PartsPanel
                     job={job}
                     appMode={appMode}
-                    compact={compact}
+                    compact={narrowLayout}
                     draft={partDrafts[job.id] ?? { name: '', quantity: '', note: '' }}
                     noteDrafts={partNoteDrafts}
                     onDraftChange={(nextDraft) =>
@@ -835,7 +906,25 @@ function ActiveJobsSection({
 
                   <SectionDivider />
 
-                  <NotesPanel job={job} compact={compact} />
+                  <PhotosPanel
+                    job={job}
+                    compact={narrowLayout}
+                    addTimestamp={photoTimestampEnabled[job.id] ?? false}
+                    onToggleTimestamp={(checked) =>
+                      setPhotoTimestampEnabled((current) => ({
+                        ...current,
+                        [job.id]: checked,
+                      }))
+                    }
+                    onOpenPhoto={(photo) => {
+                      setSelectedPhoto(photo);
+                      setPhotoZoom(1);
+                    }}
+                  />
+
+                  <SectionDivider />
+
+                  <NotesPanel job={job} compact={narrowLayout} />
 
                   <SectionDivider />
 
@@ -843,8 +932,8 @@ function ActiveJobsSection({
                     style={{
                       display: 'grid',
                       gap: 10,
-                      borderRadius: compact ? 14 : 16,
-                      padding: compact ? 12 : 14,
+                      borderRadius: narrowLayout ? 14 : 16,
+                      padding: narrowLayout ? 12 : 14,
                       background: 'rgba(17,27,46,0.94)',
                       border: '2px solid rgba(148,163,184,0.24)',
                     }}
@@ -860,15 +949,15 @@ function ActiveJobsSection({
                       placeholder="Type a new note..."
                       style={{
                         width: '100%',
-                        minHeight: compact ? 72 : 86,
+                        minHeight: narrowLayout ? 72 : 86,
                         resize: 'vertical',
                         boxSizing: 'border-box',
-                        borderRadius: compact ? 12 : 14,
+                        borderRadius: narrowLayout ? 12 : 14,
                         border: '2px solid rgba(148,163,184,0.24)',
                         background: 'rgba(9,15,28,0.96)',
                         color: '#f8fafc',
-                        padding: compact ? 10 : 12,
-                        fontSize: compact ? 12 : 13,
+                        padding: narrowLayout ? 10 : 12,
+                        fontSize: narrowLayout ? 12 : 13,
                         fontFamily: 'inherit',
                         outline: 'none',
                       }}
@@ -877,7 +966,7 @@ function ActiveJobsSection({
                     {(isRecordingThisJob || isSavingAudioThisJob) && (
                       <div
                         style={{
-                          fontSize: compact ? 12 : 13,
+                          fontSize: narrowLayout ? 12 : 13,
                           fontWeight: 700,
                           color: '#93c5fd',
                         }}
@@ -888,10 +977,24 @@ function ActiveJobsSection({
                       </div>
                     )}
 
+                    {photoPhase ? (
+                      <div
+                        style={{
+                          fontSize: narrowLayout ? 12 : 13,
+                          fontWeight: 700,
+                          color: '#93c5fd',
+                        }}
+                      >
+                        {photoPhase === 'processing'
+                          ? 'Processing photo...'
+                          : 'Uploading photo...'}
+                      </div>
+                    ) : null}
+
                     {isReorderingThisJob ? (
                       <div
                         style={{
-                          fontSize: compact ? 12 : 13,
+                          fontSize: narrowLayout ? 12 : 13,
                           fontWeight: 700,
                           color: '#93c5fd',
                         }}
@@ -904,11 +1007,11 @@ function ActiveJobsSection({
                       style={{
                         display: 'flex',
                         flexWrap: 'wrap',
-                        gap: compact ? 8 : 10,
+                        gap: narrowLayout ? 8 : 10,
                       }}
                     >
                       <ActionButton
-                        compact={compact}
+                        compact={narrowLayout}
                         onClick={() => {
                           onAddTextNote(job.id, noteDrafts[job.id] ?? '');
                           setNoteDrafts((current) => ({
@@ -921,17 +1024,41 @@ function ActiveJobsSection({
                       </ActionButton>
 
                       {isRecordingThisJob ? (
-                        <ActionButton compact={compact} onClick={stopRecording}>
+                        <ActionButton compact={narrowLayout} onClick={stopRecording}>
                           Stop Recording
                         </ActionButton>
                       ) : (
                         <ActionButton
-                          compact={compact}
+                          compact={narrowLayout}
                           onClick={() => startRecording(job.id)}
                         >
                           Record Audio Note
                         </ActionButton>
                       )}
+
+                      <input
+                        ref={(element) => {
+                          photoInputRefs.current[job.id] = element;
+                        }}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        style={{ display: 'none' }}
+                        onChange={(event) =>
+                          void handlePhotoFileSelected(
+                            job.id,
+                            event.target.files?.[0] ?? null,
+                          )
+                        }
+                      />
+
+                      <ActionButton
+                        compact={narrowLayout}
+                        onClick={() => photoInputRefs.current[job.id]?.click()}
+                        disabled={isSavingPhotoThisJob}
+                      >
+                        {mobile ? 'Add Photo' : 'Add / Take Photo'}
+                      </ActionButton>
 
                     </div>
                   </div>
@@ -942,6 +1069,18 @@ function ActiveJobsSection({
         })}
       </div>
     </section>
+    {selectedPhoto ? (
+      <PhotoViewerModal
+        photo={selectedPhoto}
+        zoom={photoZoom}
+        onClose={() => {
+          setSelectedPhoto(null);
+          setPhotoZoom(1);
+        }}
+        onZoomChange={setPhotoZoom}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -1488,6 +1627,139 @@ function PartsPanel({
   );
 }
 
+function PhotosPanel({
+  job,
+  compact,
+  addTimestamp,
+  onToggleTimestamp,
+  onOpenPhoto,
+}: {
+  job: Job;
+  compact: boolean;
+  addTimestamp: boolean;
+  onToggleTimestamp: (checked: boolean) => void;
+  onOpenPhoto: (photo: JobPhoto) => void;
+}) {
+  return (
+    <div
+      style={{
+        borderRadius: compact ? 14 : 16,
+        padding: compact ? 12 : 14,
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <SectionLabel title="Photos" tone="blue" compact={compact} />
+
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            color: '#dbeafe',
+            fontSize: compact ? 11 : 12,
+            fontWeight: 700,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={addTimestamp}
+            onChange={(event) => onToggleTimestamp(event.target.checked)}
+          />
+          Add timestamp
+        </label>
+      </div>
+
+      {job.photos.length ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 10,
+          }}
+        >
+          {job.photos.map((photo) => (
+            <button
+              key={photo.id}
+              onClick={() => onOpenPhoto(photo)}
+              style={{
+                borderRadius: 14,
+                border: '2px solid rgba(148,163,184,0.28)',
+                background: 'rgba(15,24,42,0.98)',
+                overflow: 'hidden',
+                padding: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <img
+                src={photo.url}
+                alt="Job upload"
+                style={{
+                  width: '100%',
+                  aspectRatio: '1 / 1',
+                  objectFit: 'cover',
+                  display: 'block',
+                }}
+              />
+              <div style={{ padding: '8px 10px', display: 'grid', gap: 4 }}>
+                <div
+                  style={{
+                    fontSize: compact ? 10 : 11,
+                    fontWeight: 800,
+                    color: '#f8fafc',
+                  }}
+                >
+                  {formatDateTime(photo.createdAt)}
+                </div>
+                <div
+                  style={{
+                    fontSize: compact ? 10 : 11,
+                    color: '#b8c7da',
+                  }}
+                >
+                  {photo.width}x{photo.height} • {formatFileSize(photo.fileSize)}
+                </div>
+                {photo.timestampIncluded ? (
+                  <div
+                    style={{
+                      fontSize: compact ? 10 : 11,
+                      color: '#93c5fd',
+                      fontWeight: 700,
+                    }}
+                  >
+                    Timestamp included
+                  </div>
+                ) : null}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div
+          style={{
+            fontSize: compact ? 12 : 13,
+            color: '#b8c7da',
+          }}
+        >
+          No photos yet. Uploaded photos are resized and compressed for quick mobile uploads, but still open in a larger viewer.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NotesPanel({
   job,
   compact = false,
@@ -1530,6 +1802,96 @@ function NotesPanel({
           No notes yet.
         </div>
       )}
+    </div>
+  );
+}
+
+function PhotoViewerModal({
+  photo,
+  zoom,
+  onClose,
+  onZoomChange,
+}: {
+  photo: JobPhoto;
+  zoom: number;
+  onClose: () => void;
+  onZoomChange: (value: number) => void;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(2, 6, 23, 0.86)',
+        zIndex: 1100,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 18,
+      }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: 'min(1100px, 100%)',
+          maxHeight: '100%',
+          display: 'grid',
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 800,
+              color: '#e2e8f0',
+            }}
+          >
+            {formatDateTime(photo.createdAt)} • {photo.width}x{photo.height} • {formatFileSize(photo.fileSize)}
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <ActionButton onClick={() => onZoomChange(Math.max(1, zoom - 0.25))}>
+              Zoom Out
+            </ActionButton>
+            <ActionButton onClick={() => onZoomChange(Math.min(4, zoom + 0.25))}>
+              Zoom In
+            </ActionButton>
+            <ActionButton onClick={onClose}>Close</ActionButton>
+          </div>
+        </div>
+
+        <div
+          style={{
+            overflow: 'auto',
+            borderRadius: 18,
+            border: '2px solid rgba(148,163,184,0.28)',
+            background: 'rgba(15,23,42,0.96)',
+            padding: 16,
+            maxHeight: 'calc(100vh - 120px)',
+          }}
+        >
+          <img
+            src={photo.url}
+            alt="Job photo"
+            style={{
+              display: 'block',
+              margin: '0 auto',
+              maxWidth: '100%',
+              transform: `scale(${zoom})`,
+              transformOrigin: 'top center',
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1934,6 +2296,18 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 export default ActiveJobsSection;

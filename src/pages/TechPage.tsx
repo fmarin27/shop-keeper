@@ -2,6 +2,7 @@ import type { DisplayMode, MainTab, OverlayFocusTarget } from '../types/app';
 import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 type TechPageProps = {
   selectedTab: MainTab;
@@ -36,12 +37,16 @@ function TechPage({
   overlayFocusTarget,
   onOverlayFocusHandled,
 }: TechPageProps) {
+  const isMobile = useIsMobile();
   const isCompact = displayMode === 'compact';
 
   return (
     <div
       style={{
         minHeight: '100vh',
+        height: '100vh',
+        overflowY: 'auto',
+        overflowX: 'hidden',
         background:
           'linear-gradient(180deg, #263447 0%, #1d2a3b 38%, #172233 100%)',
         color: '#f4f7fb',
@@ -59,16 +64,18 @@ function TechPage({
         updateStatus={updateStatus}
         updateButtonLabel={updateButtonLabel}
         updateButtonDisabled={updateButtonDisabled}
+        mobile={isMobile}
         onOpenAttentionJob={onOpenAttentionJob}
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
       />
 
-      <main style={{ padding: isCompact ? 14 : 24 }}>
+      <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
         {selectedTab === 'jobs' ? (
           <JobsTab
             showAddJob={false}
             compact={isCompact}
+            mobile={isMobile}
             appMode="tech"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
             onFocusedJobHandled={onOverlayFocusHandled}
@@ -76,7 +83,7 @@ function TechPage({
         ) : (
           <MaterialsMessagesTab
             appMode="tech"
-            compact={isCompact}
+            compact={isCompact || isMobile}
             focusedMaterialId={
               overlayFocusTarget?.tab === 'materialsMessages' &&
               overlayFocusTarget.itemType === 'material'

@@ -40,11 +40,6 @@ export function subscribeToGeneralMessages(
           typeof data.createdAt === 'string'
             ? data.createdAt
             : data.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
-        closedAt:
-          typeof data.closedAt === 'string'
-            ? data.closedAt
-            : data.closedAt?.toDate?.()?.toISOString?.() ?? '',
-        important: data.important ?? false,
         unread:
           appMode === 'manager'
             ? data.unreadByManager ?? data.unread ?? false
@@ -111,28 +106,4 @@ export async function markGeneralMessageRead(
         unreadByTech: false,
         updatedAt: serverTimestamp(),
       });
-}
-
-export async function archiveGeneralMessage(id: string) {
-  await updateDoc(doc(db, 'generalMessages', id), {
-    closedAt: serverTimestamp(),
-    unread: false,
-    unreadByManager: false,
-    unreadByTech: false,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function reopenGeneralMessage(id: string) {
-  await updateDoc(doc(db, 'generalMessages', id), {
-    closedAt: null,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function setGeneralMessageImportant(id: string, important: boolean) {
-  await updateDoc(doc(db, 'generalMessages', id), {
-    important,
-    updatedAt: serverTimestamp(),
-  });
 }

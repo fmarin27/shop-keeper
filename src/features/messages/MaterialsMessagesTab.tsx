@@ -16,12 +16,10 @@ import {
 } from '../../services/firebase/materials';
 import {
   addAudioGeneralMessage,
-  archiveGeneralMessage,
-  reopenGeneralMessage,
-  setGeneralMessageImportant,
   markGeneralMessageRead,
   subscribeToGeneralMessages,
 } from '../../services/firebase/messages';
+import { appBridge } from '../../services/platform/appBridge';
 
 type MaterialsMessagesTabProps = {
   appMode: MessageAudienceMode;
@@ -100,7 +98,7 @@ function MaterialsMessagesTab({
       let emailMessage = 'Material request saved.';
 
       if (appMode === 'tech') {
-        const emailResult = await window.appBridge.sendMaterialRequestEmail({
+        const emailResult = await appBridge.sendMaterialRequestEmail({
           materialId,
           itemName: itemName.trim(),
           quantity: quantity.trim(),
@@ -156,18 +154,6 @@ function MaterialsMessagesTab({
 
   const handleMarkMessageRead = async (id: string) => {
     await markGeneralMessageRead(id, appMode);
-  };
-
-  const handleArchiveMessage = async (id: string) => {
-    await archiveGeneralMessage(id);
-  };
-
-  const handleReopenMessage = async (id: string) => {
-    await reopenGeneralMessage(id);
-  };
-
-  const handleSetMessageImportant = async (id: string, important: boolean) => {
-    await setGeneralMessageImportant(id, important);
   };
 
   if (loadingMaterials || loadingMessages) {
@@ -287,9 +273,6 @@ function MaterialsMessagesTab({
         onAddTextMessage={handleAddTextMessage}
         onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
         onMarkMessageRead={handleMarkMessageRead}
-        onArchiveMessage={handleArchiveMessage}
-        onReopenMessage={handleReopenMessage}
-        onSetMessageImportant={handleSetMessageImportant}
       />
     </div>
   );

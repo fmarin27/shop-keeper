@@ -41,18 +41,9 @@ function MaterialsNeededSection({
     message: string;
   } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showClosedHistory, setShowClosedHistory] = useState(false);
   const focusedMaterialRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
-
-  const openMaterials = materials.filter((item) => item.status !== 'received');
-  const closedMaterials = [...materials]
-    .filter((item) => item.status === 'received')
-    .sort(
-      (a, b) =>
-        Date.parse(b.receivedAt || b.createdAt || '1970-01-01') -
-        Date.parse(a.receivedAt || a.createdAt || '1970-01-01'),
-    );
+  const lastAutoFocusedMaterialIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -64,6 +55,7 @@ function MaterialsNeededSection({
 
   useEffect(() => {
     if (!focusedMaterialId) return;
+    if (lastAutoFocusedMaterialIdRef.current === focusedMaterialId) return;
 
     const target = materials.find((item) => item.id === focusedMaterialId);
     if (!target) return;
@@ -79,10 +71,17 @@ function MaterialsNeededSection({
       window.clearTimeout(focusTimeoutRef.current);
     }
 
+    lastAutoFocusedMaterialIdRef.current = focusedMaterialId;
     focusTimeoutRef.current = window.setTimeout(() => {
       onFocusedMaterialHandled?.();
     }, 1200);
   }, [focusedMaterialId, materials, onFocusedMaterialHandled]);
+
+  useEffect(() => {
+    if (!focusedMaterialId) {
+      lastAutoFocusedMaterialIdRef.current = null;
+    }
+  }, [focusedMaterialId]);
 
   const submit = async () => {
     if (isSubmitting) return;
@@ -192,39 +191,22 @@ function MaterialsNeededSection({
         </div>
 
         {showComposer ? (
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setShowClosedHistory((value) => !value)}
-              style={{
-                border: '1px solid rgba(148,163,184,0.38)',
-                background: 'rgba(51,65,85,0.92)',
-                color: '#f8fafc',
-                borderRadius: 18,
-                padding: '14px 18px',
-                fontSize: 15,
-                fontWeight: 800,
-                cursor: 'pointer',
-              }}
-            >
-              {showClosedHistory ? 'Hide Closed History' : `Closed History (${closedMaterials.length})`}
-            </button>
-            <button
-              onClick={() => setShowForm((v) => !v)}
-              style={{
-                border: '1px solid rgba(96,165,250,0.5)',
-                background:
-                  'linear-gradient(180deg, rgba(37,99,235,0.9) 0%, rgba(29,78,216,0.9) 100%)',
-                color: '#eff6ff',
-                borderRadius: 18,
-                padding: '14px 22px',
-                fontSize: 16,
-                fontWeight: 800,
-                cursor: 'pointer',
-              }}
-            >
-              {showForm ? 'Close' : 'Add Material Request'}
-            </button>
-          </div>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            style={{
+              border: '1px solid rgba(96,165,250,0.5)',
+              background:
+                'linear-gradient(180deg, rgba(37,99,235,0.9) 0%, rgba(29,78,216,0.9) 100%)',
+              color: '#eff6ff',
+              borderRadius: 18,
+              padding: '14px 22px',
+              fontSize: 16,
+              fontWeight: 800,
+              cursor: 'pointer',
+            }}
+          >
+            {showForm ? 'Close' : 'Add Material Request'}
+          </button>
         ) : null}
       </div>
 
@@ -306,8 +288,8 @@ function MaterialsNeededSection({
       ) : null}
 
       <div style={{ display: 'grid', gap: compact ? 8 : 14 }}>
-        {openMaterials.length ? (
-          openMaterials.map((item, index) => (
+        {materials.length ? (
+          materials.map((item, index) => (
             <div
               key={item.id}
               ref={focusedMaterialId === item.id ? focusedMaterialRef : null}
@@ -495,143 +477,10 @@ function MaterialsNeededSection({
               fontWeight: 700,
             }}
           >
-            {compact ? 'No unread open material requests.' : 'No open material requests right now.'}
+            {compact ? 'No unread material requests.' : 'No material requests yet.'}
           </div>
         )}
       </div>
-
-      {!compact && showClosedHistory ? (
-        <div style={{ marginTop: 18, display: 'grid', gap: 12 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 900, color: '#f8fafc' }}>
-                Closed History
-              </div>
-              <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 4 }}>
-                Received materials stay here so you can always pull them back up.
-              </div>
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                color: '#dbeafe',
-                background: 'rgba(37,99,235,0.22)',
-                border: '1px solid rgba(96,165,250,0.34)',
-                borderRadius: 999,
-                padding: '7px 11px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {closedMaterials.length} received
-            </div>
-          </div>
-
-          {closedMaterials.length ? (
-            closedMaterials.map((item, index) => (
-              <div
-                key={`closed-${item.id}`}
-                style={{
-                  borderRadius: 18,
-                  padding: 18,
-                  background: index % 2 === 0
-                    ? 'rgba(43,79,55,0.96)'
-                    : 'rgba(51,93,64,0.96)',
-                  border: '2px solid rgba(74,222,128,0.24)',
-                  boxShadow: '0 10px 24px rgba(0,0,0,0.14)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                    marginBottom: 8,
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 19,
-                        fontWeight: 800,
-                        color: '#f8fafc',
-                        marginBottom: 4,
-                      }}
-                    >
-                      {item.itemName}
-                    </div>
-                    <div style={{ fontSize: 14, color: '#d7e6db' }}>
-                      Qty: {item.quantity}
-                    </div>
-                  </div>
-
-                  <span style={statusBadgeStyle('received', false)}>
-                    Received
-                  </span>
-                </div>
-
-                {item.note ? (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: '#d9e9de',
-                      marginBottom: 10,
-                    }}
-                  >
-                    {item.note}
-                  </div>
-                ) : null}
-
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <div style={{ fontSize: 12, color: '#d7e6db' }}>
-                    Requested: {formatDateTime(item.createdAt)}
-                    {item.receivedAt ? ` | Received: ${formatDateTime(item.receivedAt)}` : ''}
-                  </div>
-
-                  <button
-                    onClick={() => onSetMaterialStatus(item.id, 'requested')}
-                    style={miniButtonStyle(false)}
-                  >
-                    Reopen
-                  </button>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div
-              style={{
-                borderRadius: 18,
-                padding: 16,
-                background: 'rgba(39,53,73,0.96)',
-                border: '2px solid rgba(175,189,208,0.3)',
-                color: '#b8c7da',
-                fontSize: 13,
-                fontWeight: 700,
-              }}
-            >
-              No received materials in history yet.
-            </div>
-          )}
-        </div>
-      ) : null}
     </section>
   );
 }

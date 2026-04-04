@@ -37,10 +37,6 @@ export function subscribeToMaterials(
           typeof data.createdAt === 'string'
             ? data.createdAt
             : data.createdAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
-        receivedAt:
-          typeof data.receivedAt === 'string'
-            ? data.receivedAt
-            : data.receivedAt?.toDate?.()?.toISOString?.() ?? '',
         unread:
           appMode === 'manager'
             ? data.unreadByManager ?? data.unread ?? false
@@ -99,7 +95,6 @@ export async function updateMaterialStatus(
 ) {
   await updateDoc(doc(db, 'materials', id), {
     status,
-    receivedAt: status === 'received' ? serverTimestamp() : null,
     unread: false,
     unreadByManager: false,
     unreadByTech: false,

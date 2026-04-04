@@ -25,6 +25,17 @@ export async function uploadGeneralMessageAudio(file: Blob) {
   return getDownloadURL(fileRef);
 }
 
+export async function uploadJobPhoto(jobId: string, file: Blob) {
+  const fileName = `photo-${Date.now()}.jpg`;
+  const fileRef = ref(storage, `jobs/${jobId}/photos/${fileName}`);
+
+  await uploadBytes(fileRef, file, {
+    contentType: 'image/jpeg',
+  });
+
+  return getDownloadURL(fileRef);
+}
+
 function getAudioExtension(contentType: string) {
   const normalized = contentType.toLowerCase();
 

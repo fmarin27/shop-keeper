@@ -3,6 +3,31 @@
 import type { AppMode, DisplayMode, LocalAppSettings } from './types/app';
 
 declare global {
+  interface AppBridge {
+    getSettings: () => Promise<LocalAppSettings>;
+    setAppMode: (mode: AppMode) => Promise<LocalAppSettings>;
+    setDisplayMode: (mode: DisplayMode) => Promise<LocalAppSettings>;
+    setOverlayBounds: (bounds: {
+      width: number;
+      height: number;
+      x: number | null;
+      y: number | null;
+    }) => Promise<LocalAppSettings>;
+    switchToNormalWindow: () => Promise<void>;
+    checkForUpdates: () => Promise<UpdateCheckResult>;
+    getUpdaterStatus: () => Promise<UpdaterStatus>;
+    installUpdate: () => Promise<UpdateInstallResult>;
+    sendMaterialRequestEmail: (payload: {
+      materialId: string;
+      itemName: string;
+      quantity: string;
+      note?: string;
+      requestedBy: AppMode;
+    }) => Promise<SendMaterialEmailResult>;
+    onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
+    getAppInfo: () => Promise<AppInfo>;
+  }
+
   type AppInfo = {
     name: string;
     version: string;
@@ -64,30 +89,7 @@ declare global {
   };
 
   interface Window {
-    appBridge: {
-      getSettings: () => Promise<LocalAppSettings>;
-      setAppMode: (mode: AppMode) => Promise<LocalAppSettings>;
-      setDisplayMode: (mode: DisplayMode) => Promise<LocalAppSettings>;
-      setOverlayBounds: (bounds: {
-        width: number;
-        height: number;
-        x: number | null;
-        y: number | null;
-      }) => Promise<LocalAppSettings>;
-      switchToNormalWindow: () => Promise<void>;
-      checkForUpdates: () => Promise<UpdateCheckResult>;
-      getUpdaterStatus: () => Promise<UpdaterStatus>;
-      installUpdate: () => Promise<UpdateInstallResult>;
-      sendMaterialRequestEmail: (payload: {
-        materialId: string;
-        itemName: string;
-        quantity: string;
-        note?: string;
-        requestedBy: AppMode;
-      }) => Promise<SendMaterialEmailResult>;
-      onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
-      getAppInfo: () => Promise<AppInfo>;
-    };
+    appBridge?: AppBridge;
   }
 }
 

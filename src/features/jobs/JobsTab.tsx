@@ -12,6 +12,7 @@ import type {
 } from '../../types/app';
 import {
   addAudioNoteToJob,
+  addPhotoToJob,
   clearLegacyPartsWaiting,
   markJobPartReceived,
   addTextNoteToJob,
@@ -31,6 +32,7 @@ import {
 type JobsTabProps = {
   showAddJob?: boolean;
   compact?: boolean;
+  mobile?: boolean;
   appMode: AppMode;
   focusedJobId?: string | null;
   onFocusedJobHandled?: () => void;
@@ -73,6 +75,7 @@ const initialFormState: AddJobFormState = {
 function JobsTab({
   showAddJob = false,
   compact = false,
+  mobile = false,
   appMode,
   focusedJobId = null,
   onFocusedJobHandled,
@@ -175,6 +178,22 @@ function JobsTab({
     if (!job) return;
 
     await addAudioNoteToJob(job, file);
+  };
+
+  const handleAddPhoto = async (
+    jobId: string,
+    processed: {
+      file: Blob;
+      width: number;
+      height: number;
+      fileSize: number;
+      timestampIncluded: boolean;
+    },
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await addPhotoToJob(job, processed);
   };
 
   const handleMarkNotesRead = async (jobId: string) => {
@@ -358,7 +377,7 @@ function JobsTab({
   return (
     <>
       <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
-        {showAddJob && !compact ? (
+        {showAddJob ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
               type="button"
@@ -368,11 +387,12 @@ function JobsTab({
                 background: 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
                 color: '#eff6ff',
                 fontWeight: 800,
-                fontSize: 14,
-                padding: '12px 18px',
+                fontSize: mobile ? 13 : 14,
+                padding: mobile ? '12px 14px' : '12px 18px',
                 borderRadius: 14,
                 cursor: 'pointer',
                 boxShadow: '0 10px 30px rgba(37,99,235,0.24)',
+                width: mobile ? '100%' : 'auto',
               }}
             >
               + Add Job
@@ -401,6 +421,7 @@ function JobsTab({
         <ActiveJobsSection
           jobs={visibleActiveJobs}
           compact={compact}
+          mobile={mobile}
           appMode={appMode}
           focusedJobId={focusedJobId}
           onFocusedJobHandled={onFocusedJobHandled}
@@ -408,6 +429,7 @@ function JobsTab({
           onMarkDone={handleMarkDone}
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
+          onAddPhoto={handleAddPhoto}
           onMarkNotesRead={handleMarkNotesRead}
           onRequestPart={handleRequestPart}
           onSetPartOrdered={handleSetPartOrdered}
@@ -422,7 +444,7 @@ function JobsTab({
         {!compact ? (
           <CompletedJobsSection
             jobs={completedJobs}
-            compact={compact}
+            compact={compact || mobile}
             onUndoDone={handleUndoDone}
           />
         ) : null}
@@ -447,8 +469,8 @@ function JobsTab({
           <div
             onClick={(event) => event.stopPropagation()}
             style={{
-              width: 'min(860px, 100%)',
-              maxHeight: 'calc(100vh - 40px)',
+              width: mobile ? '100%' : 'min(860px, 100%)',
+              maxHeight: mobile ? '100vh' : 'calc(100vh - 40px)',
               borderRadius: 24,
               background:
                 'linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))',
@@ -461,7 +483,7 @@ function JobsTab({
           >
             <div
               style={{
-                padding: '20px 24px',
+                padding: mobile ? '16px' : '20px 24px',
                 borderBottom: '1px solid rgba(148,163,184,0.14)',
                 display: 'flex',
                 alignItems: 'center',
@@ -474,7 +496,7 @@ function JobsTab({
                   style={{
                     color: '#f8fafc',
                     fontWeight: 900,
-                    fontSize: 22,
+                    fontSize: mobile ? 20 : 22,
                     lineHeight: 1.1,
                   }}
                 >
@@ -514,7 +536,7 @@ function JobsTab({
 
             <div
               style={{
-                padding: 24,
+                padding: mobile ? 16 : 24,
                 display: 'grid',
                 gap: 18,
                 overflowY: 'auto',
@@ -524,7 +546,7 @@ function JobsTab({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
+                  gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
                   gap: 18,
                 }}
               >

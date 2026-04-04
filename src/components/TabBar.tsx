@@ -4,8 +4,11 @@ type TabBarProps = {
   selectedTab: MainTab;
   onTabChange: (tab: MainTab) => void;
   compact?: boolean;
+  mobile?: boolean;
+  showLeads?: boolean;
   jobsUnreadCount?: number;
   materialsMessagesUnreadCount?: number;
+  leadsCount?: number;
 };
 
 function tabStyle(
@@ -39,24 +42,30 @@ function TabBar({
   selectedTab,
   onTabChange,
   compact = false,
+  mobile = false,
+  showLeads = false,
   jobsUnreadCount = 0,
   materialsMessagesUnreadCount = 0,
+  leadsCount = 0,
 }: TabBarProps) {
   return (
     <div
       style={{
         display: 'flex',
+        flexWrap: mobile ? 'wrap' : 'nowrap',
         gap: compact ? 8 : 14,
         padding: compact ? 8 : 12,
         borderRadius: compact ? 18 : 28,
         background: '#0f172a',
         border: '1px solid #334155',
+        width: mobile ? '100%' : 'auto',
       }}
     >
       <TabButton
         label="Jobs"
         active={selectedTab === 'jobs'}
         compact={compact}
+        mobile={mobile}
         unreadCount={jobsUnreadCount}
         onClick={() => onTabChange('jobs')}
       />
@@ -65,9 +74,21 @@ function TabBar({
         label="Materials & Messages"
         active={selectedTab === 'materialsMessages'}
         compact={compact}
+        mobile={mobile}
         unreadCount={materialsMessagesUnreadCount}
         onClick={() => onTabChange('materialsMessages')}
       />
+
+      {showLeads ? (
+        <TabButton
+          label="Leads"
+          active={selectedTab === 'leads'}
+          compact={compact}
+          mobile={mobile}
+          unreadCount={leadsCount}
+          onClick={() => onTabChange('leads')}
+        />
+      ) : null}
     </div>
   );
 }
@@ -76,25 +97,35 @@ function TabButton({
   label,
   active,
   compact,
+  mobile,
   unreadCount,
   onClick,
 }: {
   label: string;
   active: boolean;
   compact: boolean;
+  mobile: boolean;
   unreadCount: number;
   onClick: () => void;
 }) {
   const hasUnread = unreadCount > 0;
 
   return (
-    <button onClick={onClick} style={tabStyle(active, compact, hasUnread)}>
+    <button
+      onClick={onClick}
+      style={{
+        ...tabStyle(active, compact, hasUnread),
+        flex: mobile ? '1 1 100%' : '0 0 auto',
+        width: mobile ? '100%' : 'auto',
+        textAlign: 'left',
+      }}
+    >
       <span
         style={{
           display: 'inline-flex',
           alignItems: 'center',
           gap: compact ? 8 : 10,
-          whiteSpace: 'nowrap',
+          whiteSpace: mobile ? 'normal' : 'nowrap',
         }}
       >
         <span>{label}</span>

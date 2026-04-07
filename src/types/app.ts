@@ -115,6 +115,16 @@ export type LeadUpdate = {
   createdAt: string;
 };
 
+export type LeadPhoto = {
+  id: string;
+  url: string;
+  createdAt: string;
+  fileSize: number;
+  width: number;
+  height: number;
+  timestampIncluded: boolean;
+};
+
 export type Lead = {
   id: string;
   customerName: string;
@@ -127,6 +137,7 @@ export type Lead = {
   status: LeadStatus;
   notes: string;
   updates: LeadUpdate[];
+  photos: LeadPhoto[];
   createdAt: string;
   updatedAt?: string;
 };

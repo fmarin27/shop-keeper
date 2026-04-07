@@ -1,12 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { CreateLeadInput, Lead, LeadStatus } from '../../types/app';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
+import type { CreateLeadInput, Lead, LeadPhoto, LeadStatus } from '../../types/app';
 import {
   addLeadUpdate,
+  addPhotoToLead,
   createLead,
   subscribeToLeads,
   updateLeadDetails,
   updateLeadStatus,
 } from '../../services/firebase/leads';
+import {
+  processJobImage,
+  type ProcessedJobImage,
+} from '../../services/media/imageProcessor';
+
+type DraftLeadPhoto = ProcessedJobImage & {
+  id: string;
+  previewUrl: string;
+};
 
 const initialForm: CreateLeadInput = {
   customerName: '',
@@ -30,6 +41,17 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
   const [updateDrafts, setUpdateDrafts] = useState<Record<string, string>>({});
   const [leadDrafts, setLeadDrafts] = useState<Record<string, CreateLeadInput>>({});
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
+  const [formPhotos, setFormPhotos] = useState<DraftLeadPhoto[]>([]);
+  const [formPhotoTimestampEnabled, setFormPhotoTimestampEnabled] = useState(true);
+  const [leadPhotoTimestampEnabled, setLeadPhotoTimestampEnabled] = useState<Record<string, boolean>>({});
+  const [selectedPhoto, setSelectedPhoto] = useState<LeadPhoto | null>(null);
+  const [photoZoom, setPhotoZoom] = useState(1);
+  const [photoActionState, setPhotoActionState] = useState<{
+    leadId: string | null;
+    phase: 'processing' | 'uploading';
+  } | null>(null);
+  const createPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const leadPhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     const unsubscribe = subscribeToLeads((items) => {
@@ -59,8 +81,26 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     try {
       setSaving(true);
       setFormError(null);
-      await createLead(form);
+      const leadId = await createLead(form);
+      if (formPhotos.length) {
+        for (const photo of formPhotos) {
+          await addPhotoToLead(
+            { id: leadId, photos: [] },
+            {
+              blob: photo.blob,
+              width: photo.width,
+              height: photo.height,
+              fileSize: photo.fileSize,
+              timestampIncluded: photo.timestampIncluded,
+            },
+          );
+        }
+
+        formPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+        setFormPhotos([]);
+      }
       setForm(initialForm);
+      setFormPhotoTimestampEnabled(true);
     } finally {
       setSaving(false);
     }
@@ -89,6 +129,64 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     } finally {
       setSavingLeadId(null);
     }
+  };
+
+  const handleDraftPhotoSelection = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      setPhotoActionState({ leadId: null, phase: 'processing' });
+      const processed = await processJobImage(file, {
+        addTimestamp: formPhotoTimestampEnabled,
+      });
+      const previewUrl = URL.createObjectURL(processed.blob);
+      setFormPhotos((current) => [
+        {
+          ...processed,
+          id: `draft-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          previewUrl,
+        },
+        ...current,
+      ]);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not prepare the selected photo.');
+    } finally {
+      setPhotoActionState(null);
+    }
+  };
+
+  const handleExistingLeadPhotoSelection = async (
+    lead: Lead,
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      setPhotoActionState({ leadId: lead.id, phase: 'processing' });
+      const processed = await processJobImage(file, {
+        addTimestamp: leadPhotoTimestampEnabled[lead.id] ?? true,
+      });
+      setPhotoActionState({ leadId: lead.id, phase: 'uploading' });
+      await addPhotoToLead(lead, processed);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not add the selected photo.');
+    } finally {
+      setPhotoActionState(null);
+    }
+  };
+
+  const photoActionLabel = (leadId: string | null) => {
+    if (!photoActionState || photoActionState.leadId !== leadId) {
+      return null;
+    }
+
+    return photoActionState.phase === 'processing'
+      ? 'Processing photo...'
+      : 'Uploading photo...';
   };
 
   if (loading) {
@@ -200,6 +298,79 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
               style={textAreaStyle(compact)}
             />
           </label>
+
+          <div style={innerPanelStyle(compact)}>
+            <div style={innerTitleStyle(compact)}>Photos</div>
+            <div style={photoControlRowStyle(compact)}>
+              <label style={checkboxRowStyle(compact)}>
+                <input
+                  type="checkbox"
+                  checked={formPhotoTimestampEnabled}
+                  onChange={(event) => setFormPhotoTimestampEnabled(event.target.checked)}
+                />
+                <span>Add timestamp</span>
+              </label>
+              <button
+                onClick={() => createPhotoInputRef.current?.click()}
+                style={secondaryButtonStyle(compact)}
+                type="button"
+              >
+                Add / Take Photo
+              </button>
+              <input
+                ref={createPhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleDraftPhotoSelection}
+                style={{ display: 'none' }}
+              />
+            </div>
+            {photoActionLabel(null) ? (
+              <div style={photoStatusStyle(compact)}>{photoActionLabel(null)}</div>
+            ) : null}
+            {formPhotos.length ? (
+              <div style={photoGridStyle}>
+                {formPhotos.map((photo) => (
+                  <div key={photo.id} style={photoCardStyle(compact)}>
+                    <button
+                      onClick={() => {
+                        setSelectedPhoto({
+                          id: photo.id,
+                          url: photo.previewUrl,
+                          createdAt: new Date().toISOString(),
+                          fileSize: photo.fileSize,
+                          width: photo.width,
+                          height: photo.height,
+                          timestampIncluded: photo.timestampIncluded,
+                        });
+                        setPhotoZoom(1);
+                      }}
+                      style={photoPreviewButtonStyle}
+                      type="button"
+                    >
+                      <img src={photo.previewUrl} alt="Draft lead photo" style={photoImageStyle} />
+                    </button>
+                    <div style={photoMetaStyle(compact)}>
+                      {photo.width}x{photo.height} • {formatFileSize(photo.fileSize)}
+                    </div>
+                    <button
+                      onClick={() => {
+                        URL.revokeObjectURL(photo.previewUrl);
+                        setFormPhotos((current) => current.filter((item) => item.id !== photo.id));
+                      }}
+                      style={dangerButtonStyle(compact)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={photoEmptyStateStyle(compact)}>No photos staged yet.</div>
+            )}
+          </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={() => void handleCreateLead()} style={primaryButtonStyle(compact)}>
@@ -404,6 +575,67 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                         </div>
                       </div>
 
+                      <div style={innerPanelStyle(compact)}>
+                        <div style={innerTitleStyle(compact)}>Photos</div>
+                        <div style={photoControlRowStyle(compact)}>
+                          <label style={checkboxRowStyle(compact)}>
+                            <input
+                              type="checkbox"
+                              checked={leadPhotoTimestampEnabled[lead.id] ?? true}
+                              onChange={(event) =>
+                                setLeadPhotoTimestampEnabled((current) => ({
+                                  ...current,
+                                  [lead.id]: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>Add timestamp</span>
+                          </label>
+                          <button
+                            onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                            style={secondaryButtonStyle(compact)}
+                            type="button"
+                          >
+                            Add / Take Photo
+                          </button>
+                          <input
+                            ref={(node) => {
+                              leadPhotoInputRefs.current[lead.id] = node;
+                            }}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(event) => void handleExistingLeadPhotoSelection(lead, event)}
+                            style={{ display: 'none' }}
+                          />
+                        </div>
+                        {photoActionLabel(lead.id) ? (
+                          <div style={photoStatusStyle(compact)}>{photoActionLabel(lead.id)}</div>
+                        ) : null}
+                        {lead.photos.length ? (
+                          <div style={photoGridStyle}>
+                            {lead.photos.map((photo) => (
+                              <button
+                                key={photo.id}
+                                onClick={() => {
+                                  setSelectedPhoto(photo);
+                                  setPhotoZoom(1);
+                                }}
+                                style={photoThumbButtonStyle(compact)}
+                                type="button"
+                              >
+                                <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
+                                <span style={photoMetaStyle(compact)}>
+                                  {formatDateTime(photo.createdAt)}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={photoEmptyStateStyle(compact)}>No photos yet.</div>
+                        )}
+                      </div>
+
                       {isOpen ? (
                         <div style={innerPanelStyle(compact)}>
                           <div style={innerTitleStyle(compact)}>Updates</div>
@@ -478,6 +710,54 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
           )}
         </div>
       </section>
+
+      {selectedPhoto ? (
+        <div style={photoViewerOverlayStyle}>
+          <div style={photoViewerCardStyle(compact)}>
+            <div style={photoViewerToolbarStyle}>
+              <div style={{ color: '#dbeafe', fontWeight: 800, fontSize: compact ? 12 : 13 }}>
+                {formatDateTime(selectedPhoto.createdAt)}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setPhotoZoom((current) => Math.max(0.5, current - 0.25))}
+                  style={secondaryButtonStyle(compact)}
+                  type="button"
+                >
+                  Zoom Out
+                </button>
+                <button
+                  onClick={() => setPhotoZoom((current) => Math.min(3, current + 0.25))}
+                  style={secondaryButtonStyle(compact)}
+                  type="button"
+                >
+                  Zoom In
+                </button>
+                <button
+                  onClick={() => setSelectedPhoto(null)}
+                  style={primaryButtonStyle(compact)}
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={photoViewerCanvasStyle}>
+              <img
+                src={selectedPhoto.url}
+                alt="Lead full size"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '70vh',
+                  transform: `scale(${photoZoom})`,
+                  transformOrigin: 'center center',
+                  transition: 'transform 140ms ease',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -661,6 +941,19 @@ function secondaryButtonStyle(compact: boolean): React.CSSProperties {
   };
 }
 
+function dangerButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(248,113,113,0.34)',
+    background: 'rgba(127,29,29,0.36)',
+    color: '#fee2e2',
+    borderRadius: compact ? 10 : 12,
+    padding: compact ? '7px 10px' : '8px 11px',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    cursor: 'pointer',
+  };
+}
+
 function updateRowStyle(compact: boolean): React.CSSProperties {
   return {
     borderRadius: compact ? 12 : 14,
@@ -696,6 +989,137 @@ function loadingCardStyle(compact: boolean): React.CSSProperties {
   };
 }
 
+const photoGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(116px, 1fr))',
+  gap: 10,
+  marginTop: 12,
+};
+
+function photoCardStyle(compact: boolean): React.CSSProperties {
+  return {
+    display: 'grid',
+    gap: 8,
+    borderRadius: compact ? 12 : 14,
+    padding: compact ? 10 : 12,
+    background: 'rgba(15,24,42,0.98)',
+    border: '2px solid rgba(148,163,184,0.22)',
+  };
+}
+
+function photoThumbButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    ...photoCardStyle(compact),
+    cursor: 'pointer',
+    textAlign: 'left',
+    width: '100%',
+  };
+}
+
+const photoPreviewButtonStyle: React.CSSProperties = {
+  border: 'none',
+  padding: 0,
+  background: 'transparent',
+  cursor: 'pointer',
+};
+
+const photoImageStyle: React.CSSProperties = {
+  width: '100%',
+  aspectRatio: '1 / 1',
+  objectFit: 'cover',
+  borderRadius: 12,
+  display: 'block',
+};
+
+function photoMetaStyle(compact: boolean): React.CSSProperties {
+  return {
+    color: '#b8c7da',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 700,
+    lineHeight: 1.35,
+  };
+}
+
+function photoEmptyStateStyle(compact: boolean): React.CSSProperties {
+  return {
+    marginTop: 12,
+    color: '#c9d5e4',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 700,
+  };
+}
+
+function photoStatusStyle(compact: boolean): React.CSSProperties {
+  return {
+    marginTop: 10,
+    color: '#dbeafe',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 800,
+  };
+}
+
+function photoControlRowStyle(compact: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
+    marginTop: 4,
+    fontSize: compact ? 12 : 13,
+  };
+}
+
+function checkboxRowStyle(compact: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    color: '#dbeafe',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 700,
+  };
+}
+
+const photoViewerOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(5, 10, 18, 0.76)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 20,
+  zIndex: 1000,
+};
+
+function photoViewerCardStyle(compact: boolean): React.CSSProperties {
+  return {
+    width: 'min(960px, 100%)',
+    borderRadius: compact ? 18 : 22,
+    padding: compact ? 14 : 18,
+    background: 'rgba(15,23,42,0.98)',
+    border: '2px solid rgba(148,163,184,0.26)',
+    boxShadow: '0 24px 60px rgba(0,0,0,0.34)',
+  };
+}
+
+const photoViewerToolbarStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: 12,
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  marginBottom: 14,
+};
+
+const photoViewerCanvasStyle: React.CSSProperties = {
+  minHeight: '40vh',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  overflow: 'auto',
+};
+
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -712,6 +1136,16 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function formatFileSize(bytes: number) {
+  if (!bytes) return '0 KB';
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${Math.round(kb)} KB`;
+  }
+
+  return `${(kb / 1024).toFixed(1)} MB`;
 }
 
 export default LeadsTab;

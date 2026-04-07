@@ -9,7 +9,8 @@ import {
   doc,
 } from 'firebase/firestore';
 import { db } from './config';
-import type { CreateLeadInput, Lead, LeadStatus, LeadUpdate } from '../../types/app';
+import { uploadLeadPhoto } from './storage';
+import type { CreateLeadInput, Lead, LeadPhoto, LeadStatus, LeadUpdate } from '../../types/app';
 
 const leadsCollection = collection(db, 'leads');
 
@@ -33,6 +34,7 @@ export function subscribeToLeads(callback: (leads: Lead[]) => void) {
           status: data.status ?? 'new',
           notes: data.notes ?? '',
           updates: Array.isArray(data.updates) ? (data.updates as LeadUpdate[]) : [],
+          photos: Array.isArray(data.photos) ? (data.photos as LeadPhoto[]) : [],
           createdAt: data.createdAt?.toDate
             ? data.createdAt.toDate().toISOString()
             : data.createdAt ?? new Date().toISOString(),
@@ -46,7 +48,7 @@ export function subscribeToLeads(callback: (leads: Lead[]) => void) {
 }
 
 export async function createLead(input: CreateLeadInput) {
-  await addDoc(leadsCollection, {
+  const leadRef = await addDoc(leadsCollection, {
     customerName: input.customerName.trim(),
     phoneNumber: input.phoneNumber.trim(),
     vehicle: input.vehicle.trim(),
@@ -57,9 +59,12 @@ export async function createLead(input: CreateLeadInput) {
     status: input.status,
     notes: input.notes.trim(),
     updates: [],
+    photos: [],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  return leadRef.id;
 }
 
 export async function updateLeadStatus(leadId: string, status: LeadStatus) {
@@ -102,6 +107,37 @@ export async function addLeadUpdate(lead: Lead, text: string) {
 
   await updateDoc(doc(db, 'leads', lead.id), {
     updates: nextUpdates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function addPhotoToLead(
+  lead: Pick<Lead, 'id' | 'photos'>,
+  input: {
+    blob: Blob;
+    width: number;
+    height: number;
+    fileSize: number;
+    timestampIncluded: boolean;
+  },
+) {
+  const url = await uploadLeadPhoto(lead.id, input.blob);
+
+  const nextPhotos: LeadPhoto[] = [
+    {
+      id: `lead-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      url,
+      createdAt: new Date().toISOString(),
+      fileSize: input.fileSize,
+      width: input.width,
+      height: input.height,
+      timestampIncluded: input.timestampIncluded,
+    },
+    ...(lead.photos ?? []),
+  ];
+
+  await updateDoc(doc(db, 'leads', lead.id), {
+    photos: nextPhotos,
     updatedAt: serverTimestamp(),
   });
 }

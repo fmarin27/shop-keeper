@@ -3,6 +3,8 @@
 import type { AppMode, DisplayMode, LocalAppSettings } from './types/app';
 
 declare global {
+  const __APP_VERSION__: string;
+
   interface AppBridge {
     getSettings: () => Promise<LocalAppSettings>;
     setAppMode: (mode: AppMode) => Promise<LocalAppSettings>;
@@ -39,6 +41,7 @@ declare global {
     message?: string;
     updateInfo?: {
       version: string;
+      url?: string;
     } | null;
     status?: UpdaterStatus;
   };

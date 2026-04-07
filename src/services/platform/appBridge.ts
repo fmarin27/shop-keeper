@@ -1,6 +1,10 @@
 import type { AppMode, DisplayMode, LocalAppSettings } from '../../types/app';
 
 const WEB_SETTINGS_KEY = 'shop-keeper:web-settings';
+const MOBILE_RELEASE_API =
+  'https://api.github.com/repos/fmarin27/shop-keeper/releases/latest';
+const MOBILE_RELEASE_PAGE = 'https://github.com/fmarin27/shop-keeper/releases/latest';
+const APP_VERSION = __APP_VERSION__;
 
 const DEFAULT_SETTINGS: LocalAppSettings = {
   appMode: null,
@@ -22,6 +26,7 @@ type UpdateCheckResult = {
   message?: string;
   updateInfo?: {
     version: string;
+    url?: string;
   } | null;
   status?: UpdaterStatus;
 };
@@ -117,6 +122,81 @@ const unavailableStatus: UpdaterStatus = {
   message: 'Updates are only available in the desktop app.',
 };
 
+type MobileReleaseInfo = {
+  version: string;
+  url: string;
+};
+
+let cachedMobileReleaseInfo: MobileReleaseInfo | null = null;
+
+function getPlatform() {
+  return Capacitor.getPlatform();
+}
+
+function isMobilePlatform() {
+  const platform = getPlatform();
+  return platform === 'android' || platform === 'ios';
+}
+
+function normalizeVersion(version: string) {
+  return version.trim().replace(/^v/i, '');
+}
+
+function compareVersions(left: string, right: string) {
+  const leftParts = normalizeVersion(left).split('.').map((part) => Number(part) || 0);
+  const rightParts = normalizeVersion(right).split('.').map((part) => Number(part) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const a = leftParts[index] ?? 0;
+    const b = rightParts[index] ?? 0;
+
+    if (a > b) return 1;
+    if (a < b) return -1;
+  }
+
+  return 0;
+}
+
+async function fetchLatestMobileRelease(): Promise<MobileReleaseInfo> {
+  const response = await fetch(MOBILE_RELEASE_API, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Could not reach the latest mobile release.');
+  }
+
+  const data = (await response.json()) as {
+    tag_name?: string;
+    html_url?: string;
+    assets?: Array<{ browser_download_url?: string; name?: string }>;
+  };
+
+  const version = normalizeVersion(data.tag_name ?? '');
+  const apkAsset = data.assets?.find((asset) =>
+    (asset.name ?? '').toLowerCase().endsWith('.apk'),
+  );
+
+  return {
+    version: version || APP_VERSION,
+    url: apkAsset?.browser_download_url ?? data.html_url ?? MOBILE_RELEASE_PAGE,
+  };
+}
+
+function openExternalUrl(url: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const openedWindow = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!openedWindow) {
+    window.location.assign(url);
+  }
+}
+
 export const appBridge = {
   isDesktop() {
     return getDesktopBridge() !== null;
@@ -194,6 +274,54 @@ export const appBridge = {
       return desktopBridge.checkForUpdates();
     }
 
+    if (isMobilePlatform()) {
+      try {
+        const latestRelease = await fetchLatestMobileRelease();
+        cachedMobileReleaseInfo = latestRelease;
+        const hasUpdate = compareVersions(latestRelease.version, APP_VERSION) > 0;
+
+        if (!hasUpdate) {
+          return {
+            ok: true,
+            message: `You're on the latest mobile build (${APP_VERSION}).`,
+            updateInfo: {
+              version: APP_VERSION,
+            },
+            status: {
+              phase: 'not-available',
+              version: APP_VERSION,
+              message: `You're on the latest mobile build (${APP_VERSION}).`,
+            },
+          };
+        }
+
+        return {
+          ok: true,
+          message: `Update ${latestRelease.version} is ready. Tap to download.`,
+          updateInfo: latestRelease,
+          status: {
+            phase: 'available',
+            version: latestRelease.version,
+            message: `Update ${latestRelease.version} is ready. Tap to download.`,
+          },
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Could not check for the latest mobile release.';
+
+        return {
+          ok: false,
+          message,
+          status: {
+            phase: 'error',
+            message,
+          },
+        };
+      }
+    }
+
     return {
       ok: false,
       message: unavailableStatus.message,
@@ -207,6 +335,13 @@ export const appBridge = {
       return desktopBridge.getUpdaterStatus();
     }
 
+    if (isMobilePlatform()) {
+      return {
+        phase: 'idle',
+        message: `Mobile build ${APP_VERSION}`,
+      } satisfies UpdaterStatus;
+    }
+
     return unavailableStatus;
   },
 
@@ -214,6 +349,29 @@ export const appBridge = {
     const desktopBridge = getDesktopBridge();
     if (desktopBridge) {
       return desktopBridge.installUpdate();
+    }
+
+    if (isMobilePlatform()) {
+      try {
+        if (!cachedMobileReleaseInfo) {
+          cachedMobileReleaseInfo = await fetchLatestMobileRelease();
+        }
+
+        openExternalUrl(cachedMobileReleaseInfo.url);
+
+        return {
+          ok: true,
+          message: `Opening ${cachedMobileReleaseInfo.version} download...`,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Could not open the latest mobile release.',
+        };
+      }
     }
 
     return {
@@ -246,7 +404,14 @@ export const appBridge = {
       return desktopBridge.onUpdaterStatus(listener);
     }
 
-    listener(unavailableStatus);
+    listener(
+      isMobilePlatform()
+        ? {
+            phase: 'idle',
+            message: `Mobile build ${APP_VERSION}`,
+          }
+        : unavailableStatus,
+    );
     return () => undefined;
   },
 
@@ -257,8 +422,8 @@ export const appBridge = {
     }
 
     return {
-      name: 'Shop Keeper Web',
-      version: 'web-preview',
+      name: isMobilePlatform() ? 'Shop Keeper Mobile' : 'Shop Keeper Web',
+      version: APP_VERSION,
       owner: 'Fernando Marin',
     };
   },

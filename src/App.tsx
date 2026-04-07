@@ -176,10 +176,12 @@ function App() {
   };
 
   const handleCheckForUpdates = async () => {
-    if (updaterState.phase === 'downloaded') {
+    if (updaterState.phase === 'downloaded' || (isMobile && updaterState.phase === 'available')) {
       const result = await appBridge.installUpdate();
       if (!result.ok) {
         setUpdateStatus(result.message ?? 'Update install could not start.');
+      } else {
+        setUpdateStatus(result.message ?? null);
       }
       return;
     }
@@ -278,6 +280,8 @@ function App() {
     updateButtonLabel:
       updaterState.phase === 'downloaded'
         ? 'Restart to Update'
+        : isMobile && updaterState.phase === 'available'
+        ? 'Download Update'
         : updaterState.phase === 'checking'
         ? 'Checking...'
         : updaterState.phase === 'available' || updaterState.phase === 'downloading'

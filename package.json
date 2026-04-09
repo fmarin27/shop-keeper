@@ -1,6 +1,6 @@
 {
   "name": "shop-floor-app-skeleton",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": true,
   "main": "dist-electron/main.js",
   "description": "Shop floor desktop app skeleton with Manager/Tech modes and Normal/Compact/Overlay views.",

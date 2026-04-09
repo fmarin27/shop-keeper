@@ -19,6 +19,8 @@ type DraftLeadPhoto = ProcessedJobImage & {
   previewUrl: string;
 };
 
+type LeadPanelKey = 'details' | 'notes' | 'photos' | 'updates';
+
 const initialForm: CreateLeadInput = {
   customerName: '',
   phoneNumber: '',
@@ -37,7 +39,9 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
   const [form, setForm] = useState<CreateLeadInput>(initialForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [openLeadIds, setOpenLeadIds] = useState<string[]>([]);
+  const [expandedLeadPanels, setExpandedLeadPanels] = useState<
+    Record<string, LeadPanelKey[]>
+  >({});
   const [updateDrafts, setUpdateDrafts] = useState<Record<string, string>>({});
   const [leadDrafts, setLeadDrafts] = useState<Record<string, CreateLeadInput>>({});
   const [savingLeadId, setSavingLeadId] = useState<string | null>(null);
@@ -187,6 +191,23 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     return photoActionState.phase === 'processing'
       ? 'Processing photo...'
       : 'Uploading photo...';
+  };
+
+  const isLeadPanelExpanded = (leadId: string, panel: LeadPanelKey) =>
+    expandedLeadPanels[leadId]?.includes(panel) ?? false;
+
+  const toggleLeadPanel = (leadId: string, panel: LeadPanelKey) => {
+    setExpandedLeadPanels((current) => {
+      const panels = current[leadId] ?? [];
+      const nextPanels = panels.includes(panel)
+        ? panels.filter((item) => item !== panel)
+        : [...panels, panel];
+
+      return {
+        ...current,
+        [leadId]: nextPanels,
+      };
+    });
   };
 
   if (loading) {
@@ -389,7 +410,10 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
         <div style={{ display: 'grid', gap: 12 }}>
           {activeLeads.length ? (
             activeLeads.map((lead) => {
-              const isOpen = openLeadIds.includes(lead.id);
+              const detailsExpanded = isLeadPanelExpanded(lead.id, 'details');
+              const notesExpanded = isLeadPanelExpanded(lead.id, 'notes');
+              const photosExpanded = isLeadPanelExpanded(lead.id, 'photos');
+              const updatesExpanded = isLeadPanelExpanded(lead.id, 'updates');
               const leadDraft = leadDrafts[lead.id] ?? {
                 customerName: lead.customerName,
                 phoneNumber: lead.phoneNumber,
@@ -436,16 +460,29 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                         <option value="lost">Lost</option>
                       </select>
                       <button
-                        onClick={() =>
-                          setOpenLeadIds((current) =>
-                            current.includes(lead.id)
-                              ? current.filter((id) => id !== lead.id)
-                              : [...current, lead.id],
-                          )
-                        }
+                        onClick={() => {
+                          const nextState =
+                            detailsExpanded &&
+                            notesExpanded &&
+                            photosExpanded &&
+                            updatesExpanded;
+
+                          setExpandedLeadPanels((current) => ({
+                            ...current,
+                            [lead.id]: nextState
+                              ? []
+                              : ['details', 'notes', 'photos', 'updates'],
+                          }));
+                        }}
                         style={secondaryButtonStyle(compact)}
+                        type="button"
                       >
-                        {isOpen ? 'Hide' : 'Open'}
+                        {detailsExpanded &&
+                        notesExpanded &&
+                        photosExpanded &&
+                        updatesExpanded
+                          ? 'Collapse All'
+                          : 'Expand All'}
                       </button>
                     </div>
                   </div>
@@ -459,12 +496,24 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
 
                   <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
                       <div style={innerPanelStyle(compact)}>
-                        <div style={innerTitleStyle(compact)}>Lead Details</div>
+                        <button
+                          onClick={() => toggleLeadPanel(lead.id, 'details')}
+                          style={sectionToggleButtonStyle}
+                          type="button"
+                        >
+                          <div style={innerTitleStyle(compact)}>Lead Details</div>
+                          <span style={sectionToggleLabelStyle(compact)}>
+                            {detailsExpanded ? 'Collapse' : 'Expand'}
+                          </span>
+                        </button>
+                        {detailsExpanded ? (
+                          <>
                         <div
                           style={{
                             display: 'grid',
                             gridTemplateColumns: compact ? '1fr' : 'repeat(3, minmax(0, 1fr))',
                             gap: 12,
+                            marginTop: 12,
                           }}
                         >
                           <Field
@@ -566,18 +615,42 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                             {savingLeadId === lead.id ? 'Saving...' : 'Save Lead Details'}
                           </button>
                         </div>
+                          </>
+                        ) : null}
                       </div>
 
                       <div style={innerPanelStyle(compact)}>
-                        <div style={innerTitleStyle(compact)}>Notes</div>
-                        <div style={{ color: '#eef4fb', lineHeight: 1.5 }}>
-                          {lead.notes || 'No notes yet.'}
-                        </div>
+                        <button
+                          onClick={() => toggleLeadPanel(lead.id, 'notes')}
+                          style={sectionToggleButtonStyle}
+                          type="button"
+                        >
+                          <div style={innerTitleStyle(compact)}>Notes</div>
+                          <span style={sectionToggleLabelStyle(compact)}>
+                            {notesExpanded ? 'Collapse' : 'Expand'}
+                          </span>
+                        </button>
+                        {notesExpanded ? (
+                          <div style={{ color: '#eef4fb', lineHeight: 1.5, marginTop: 12 }}>
+                            {lead.notes || 'No notes yet.'}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div style={innerPanelStyle(compact)}>
-                        <div style={innerTitleStyle(compact)}>Photos</div>
-                        <div style={photoControlRowStyle(compact)}>
+                        <button
+                          onClick={() => toggleLeadPanel(lead.id, 'photos')}
+                          style={sectionToggleButtonStyle}
+                          type="button"
+                        >
+                          <div style={innerTitleStyle(compact)}>Photos</div>
+                          <span style={sectionToggleLabelStyle(compact)}>
+                            {photosExpanded ? 'Collapse' : 'Expand'}
+                          </span>
+                        </button>
+                        {photosExpanded ? (
+                          <>
+                        <div style={{ ...photoControlRowStyle(compact), marginTop: 12 }}>
                           <label style={checkboxRowStyle(compact)}>
                             <input
                               type="checkbox"
@@ -634,12 +707,23 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                         ) : (
                           <div style={photoEmptyStateStyle(compact)}>No photos yet.</div>
                         )}
+                          </>
+                        ) : null}
                       </div>
 
-                      {isOpen ? (
-                        <div style={innerPanelStyle(compact)}>
+                      <div style={innerPanelStyle(compact)}>
+                        <button
+                          onClick={() => toggleLeadPanel(lead.id, 'updates')}
+                          style={sectionToggleButtonStyle}
+                          type="button"
+                        >
                           <div style={innerTitleStyle(compact)}>Updates</div>
-                          <div style={{ display: 'grid', gap: 10 }}>
+                          <span style={sectionToggleLabelStyle(compact)}>
+                            {updatesExpanded ? 'Collapse' : 'Expand'}
+                          </span>
+                        </button>
+                        {updatesExpanded ? (
+                          <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
                             <textarea
                               value={updateDrafts[lead.id] ?? ''}
                               onChange={(event) =>
@@ -677,8 +761,8 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                               <div style={{ color: '#c9d5e4' }}>No updates yet.</div>
                             )}
                           </div>
-                        </div>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </div>
                 </div>
               );
@@ -878,7 +962,29 @@ function innerTitleStyle(compact: boolean): React.CSSProperties {
     color: '#cbd5e1',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    marginBottom: 8,
+    marginBottom: 0,
+  };
+}
+
+const sectionToggleButtonStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  width: '100%',
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  textAlign: 'left',
+};
+
+function sectionToggleLabelStyle(compact: boolean): React.CSSProperties {
+  return {
+    color: '#93c5fd',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
   };
 }
 

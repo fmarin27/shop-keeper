@@ -39,6 +39,8 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
   const [form, setForm] = useState<CreateLeadInput>(initialForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [createLeadExpanded, setCreateLeadExpanded] = useState(false);
+  const [expandedLeadIds, setExpandedLeadIds] = useState<string[]>([]);
   const [expandedLeadPanels, setExpandedLeadPanels] = useState<
     Record<string, LeadPanelKey[]>
   >({});
@@ -210,6 +212,16 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     });
   };
 
+  const isLeadExpanded = (leadId: string) => expandedLeadIds.includes(leadId);
+
+  const toggleLeadExpanded = (leadId: string) => {
+    setExpandedLeadIds((current) =>
+      current.includes(leadId)
+        ? current.filter((id) => id !== leadId)
+        : [...current, leadId],
+    );
+  };
+
   if (loading) {
     return (
       <div style={loadingCardStyle(compact)}>
@@ -222,15 +234,26 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
       <section style={panelStyle(compact)}>
         <div style={{ display: 'grid', gap: 16 }}>
-          <div>
-            <div style={{ fontSize: compact ? 20 : 28, fontWeight: 900, color: '#f8fafc' }}>
-              Leads
+          <button
+            onClick={() => setCreateLeadExpanded((current) => !current)}
+            style={sectionToggleButtonStyle}
+            type="button"
+          >
+            <div>
+              <div style={{ fontSize: compact ? 20 : 28, fontWeight: 900, color: '#f8fafc' }}>
+                Leads
+              </div>
+              <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14, marginTop: 6 }}>
+                Manager-only lead tracking for follow-up, estimates, and sales progress.
+              </div>
             </div>
-            <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14, marginTop: 6 }}>
-              Manager-only lead tracking for follow-up, estimates, and sales progress.
-            </div>
-          </div>
+            <span style={sectionToggleLabelStyle(compact)}>
+              {createLeadExpanded ? 'Collapse' : 'Expand'}
+            </span>
+          </button>
 
+          {createLeadExpanded ? (
+            <>
           <div
             style={{
               display: 'grid',
@@ -398,6 +421,8 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
               {saving ? 'Saving...' : 'Add Lead'}
             </button>
           </div>
+            </>
+          ) : null}
         </div>
       </section>
 
@@ -410,6 +435,7 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
         <div style={{ display: 'grid', gap: 12 }}>
           {activeLeads.length ? (
             activeLeads.map((lead) => {
+              const leadExpanded = isLeadExpanded(lead.id);
               const detailsExpanded = isLeadPanelExpanded(lead.id, 'details');
               const notesExpanded = isLeadPanelExpanded(lead.id, 'notes');
               const photosExpanded = isLeadPanelExpanded(lead.id, 'photos');
@@ -460,33 +486,17 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                         <option value="lost">Lost</option>
                       </select>
                       <button
-                        onClick={() => {
-                          const nextState =
-                            detailsExpanded &&
-                            notesExpanded &&
-                            photosExpanded &&
-                            updatesExpanded;
-
-                          setExpandedLeadPanels((current) => ({
-                            ...current,
-                            [lead.id]: nextState
-                              ? []
-                              : ['details', 'notes', 'photos', 'updates'],
-                          }));
-                        }}
+                        onClick={() => toggleLeadExpanded(lead.id)}
                         style={secondaryButtonStyle(compact)}
                         type="button"
                       >
-                        {detailsExpanded &&
-                        notesExpanded &&
-                        photosExpanded &&
-                        updatesExpanded
-                          ? 'Collapse All'
-                          : 'Expand All'}
+                        {leadExpanded ? 'Collapse Lead' : 'Expand Lead'}
                       </button>
                     </div>
                   </div>
 
+                  {leadExpanded ? (
+                    <>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
                     <Pill compact={compact}>Source: {lead.source || '—'}</Pill>
                     <Pill compact={compact}>Insurance: {lead.insuranceCompany || '—'}</Pill>
@@ -764,6 +774,8 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                         ) : null}
                       </div>
                     </div>
+                    </>
+                  ) : null}
                 </div>
               );
             })

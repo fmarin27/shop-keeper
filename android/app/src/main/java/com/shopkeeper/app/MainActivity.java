@@ -1,4 +1,4 @@
-package com.shopkeeper.mobile;
+package com.shopkeeper.app;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;

@@ -1,9 +1,12 @@
+import { Capacitor } from '@capacitor/core';
 import type { AppMode, DisplayMode, LocalAppSettings } from '../../types/app';
 
 const WEB_SETTINGS_KEY = 'shop-keeper:web-settings';
 const MOBILE_RELEASE_API =
   'https://api.github.com/repos/fmarin27/shop-keeper/releases/latest';
 const MOBILE_RELEASE_PAGE = 'https://github.com/fmarin27/shop-keeper/releases/latest';
+const PLAY_STORE_URL =
+  'https://play.google.com/store/apps/details?id=com.shopkeeper.app';
 const APP_VERSION = __APP_VERSION__;
 
 const DEFAULT_SETTINGS: LocalAppSettings = {
@@ -130,12 +133,48 @@ type MobileReleaseInfo = {
 let cachedMobileReleaseInfo: MobileReleaseInfo | null = null;
 
 function getPlatform() {
-  return Capacitor.getPlatform();
+  try {
+    return Capacitor.getPlatform();
+  } catch (error) {
+    console.warn('Falling back to web platform detection:', error);
+    return 'web';
+  }
+}
+
+function isNativePlatform() {
+  try {
+    return Capacitor.isNativePlatform();
+  } catch (error) {
+    console.warn('Falling back to browser runtime detection:', error);
+    return false;
+  }
 }
 
 function isMobilePlatform() {
   const platform = getPlatform();
-  return platform === 'android' || platform === 'ios';
+  if (platform === 'android' || platform === 'ios') {
+    return true;
+  }
+
+  if (isNativePlatform()) {
+    return true;
+  }
+
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  return /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+function getMobileStoreUrl() {
+  return getPlatform() === 'android' ? PLAY_STORE_URL : null;
+}
+
+function getMobileUpdateMessage() {
+  return getPlatform() === 'android'
+    ? 'Updates for the Android app are handled through Google Play.'
+    : `Mobile build ${APP_VERSION}`;
 }
 
 function normalizeVersion(version: string) {
@@ -276,6 +315,24 @@ export const appBridge = {
 
     if (isMobilePlatform()) {
       try {
+        const storeUrl = getMobileStoreUrl();
+        if (storeUrl) {
+          openExternalUrl(storeUrl);
+
+          return {
+            ok: true,
+            message: 'Opening Google Play to check for updates...',
+            updateInfo: {
+              version: APP_VERSION,
+              url: storeUrl,
+            },
+            status: {
+              phase: 'idle',
+              message: getMobileUpdateMessage(),
+            },
+          };
+        }
+
         const latestRelease = await fetchLatestMobileRelease();
         cachedMobileReleaseInfo = latestRelease;
         const hasUpdate = compareVersions(latestRelease.version, APP_VERSION) > 0;
@@ -338,7 +395,7 @@ export const appBridge = {
     if (isMobilePlatform()) {
       return {
         phase: 'idle',
-        message: `Mobile build ${APP_VERSION}`,
+        message: getMobileUpdateMessage(),
       } satisfies UpdaterStatus;
     }
 
@@ -353,6 +410,16 @@ export const appBridge = {
 
     if (isMobilePlatform()) {
       try {
+        const storeUrl = getMobileStoreUrl();
+        if (storeUrl) {
+          openExternalUrl(storeUrl);
+
+          return {
+            ok: true,
+            message: 'Opening Google Play...',
+          };
+        }
+
         if (!cachedMobileReleaseInfo) {
           cachedMobileReleaseInfo = await fetchLatestMobileRelease();
         }
@@ -408,7 +475,7 @@ export const appBridge = {
       isMobilePlatform()
         ? {
             phase: 'idle',
-            message: `Mobile build ${APP_VERSION}`,
+            message: getMobileUpdateMessage(),
           }
         : unavailableStatus,
     );

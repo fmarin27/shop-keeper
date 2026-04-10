@@ -4,3 +4,6 @@ dist-electron/
 .vite/
 release/
 *.log
+android/keystore.properties
+android/app/*.jks
+android/app/*.keystore

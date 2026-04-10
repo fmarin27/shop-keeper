@@ -1,4 +1,4 @@
-package com.shopkeeper.mobile;
+package com.shopkeeper.app;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;

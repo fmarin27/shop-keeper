@@ -1,4 +1,4 @@
-package com.shopkeeper.mobile;
+package com.shopkeeper.app;
 
 import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;

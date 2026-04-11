@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -20,6 +21,10 @@ const betaAppName = 'Shop Keeper Beta';
 const releaseAppName = 'Shop Keeper';
 const appDisplayName = isPackagedApp ? releaseAppName : betaAppName;
 
+// This office PC was showing intermittent black Electron windows.
+// Disabling GPU acceleration is a reliable fallback for that class of issue.
+app.disableHardwareAcceleration();
+
 if (!isPackagedApp) {
   app.setName(betaAppName);
   app.setPath('userData', path.join(app.getPath('appData'), betaAppName));
@@ -36,6 +41,15 @@ const MATERIALS_EMAIL_CC = 'fernandomarin27@gmail.com, repecueso@hotmail.com';
 const MATERIAL_REPLY_CHECK_INTERVAL_MS = 1000 * 60 * 2;
 const MATERIAL_REQUEST_TOKEN_PREFIX = 'SK-MAT';
 let materialReplyCheckStarted = false;
+const MITCHELL_JOBS_CSV_PATH = path.join(
+  app.getPath('home'),
+  'Mitchell EMS',
+  'Mitchell Data',
+  'jobs.csv',
+);
+const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
+const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
+const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
 
 type UpdaterStatus =
   | {
@@ -76,31 +90,571 @@ let updaterStatus: UpdaterStatus = {
   phase: 'idle',
 };
 
-function installSafeConsole() {
-  const wrap = <T extends (...args: any[]) => void>(fn: T) => {
-    return (...args: Parameters<T>) => {
-      try {
-        fn(...args);
-      } catch (error) {
-        if (
-          error &&
-          typeof error === 'object' &&
-          'code' in error &&
-          (error as { code?: string }).code === 'EPIPE'
-        ) {
-          return;
+function getMainLogPath() {
+  try {
+    return path.join(app.getPath('userData'), 'main-process.log');
+  } catch {
+    return path.join(process.cwd(), 'shop-keeper-main.log');
+  }
+}
+
+function writeMainLog(level: 'INFO' | 'WARN' | 'ERROR', args: unknown[]) {
+  try {
+    const message = args
+      .map((value) => {
+        if (value instanceof Error) {
+          return value.stack || value.message;
         }
 
-        throw error;
-      }
-    };
-  };
+        if (typeof value === 'string') {
+          return value;
+        }
 
-  console.log = wrap(console.log.bind(console));
-  console.error = wrap(console.error.bind(console));
-  console.warn = wrap(console.warn.bind(console));
-  console.info = wrap(console.info.bind(console));
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      })
+      .join(' ');
+
+    fs.appendFileSync(
+      getMainLogPath(),
+      `[${new Date().toISOString()}] [${level}] ${message}\r\n`,
+      'utf8',
+    );
+  } catch {
+    // Never let logging crash the main process.
+  }
 }
+
+type MitchellJobImport = {
+  jobUid: string;
+  roNumber: string;
+  customerName: string;
+  vehicle: string;
+  amount: number;
+  promiseDate: string;
+  partsWaiting: boolean;
+  status: 'notStarted' | 'inProgress' | 'waiting';
+  estimatorName: string;
+  insuranceCompany: string;
+  claimNumber: string;
+  departmentName: string;
+  leadTechName: string;
+  productionStatus: string;
+  estimateId: string;
+  opportunityNumber: string;
+  lastModifiedAt: string;
+};
+
+type MitchellJobsSnapshot = {
+  sourcePath: string;
+  lastModifiedAt: string;
+  jobs: MitchellJobImport[];
+};
+
+type RoFolderJobRecord = {
+  id: string;
+  vehicle: string;
+  roNumber: string;
+  customerName: string;
+  paintCode: string;
+  amount: number;
+  amountStatus: string;
+  status: string;
+  done: boolean;
+  promiseDate: string;
+  partsWaiting: boolean;
+  partsRequests: Array<{
+    id: string;
+    name: string;
+    quantity: string;
+    requestedBy: string;
+    status: string;
+    note?: string;
+    createdAt: string;
+    receivedAt?: string;
+  }>;
+  textNotes: Array<{
+    id: string;
+    type: 'text' | 'audio';
+    text?: string;
+    audioUrl?: string;
+    createdAt: string;
+    read: boolean;
+  }>;
+  photos: Array<{
+    id: string;
+    url: string;
+    createdAt: string;
+    fileSize: number;
+    width: number;
+    height: number;
+    timestampIncluded: boolean;
+  }>;
+  sortOrder?: number;
+};
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === '"') {
+      const nextChar = line[index + 1];
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current);
+  return values.map((value) => value.trim());
+}
+
+function parseMitchellDate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseMitchellNumber(value: string) {
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseMitchellBoolean(value: string) {
+  return value.trim().toLowerCase() === 'true';
+}
+
+function buildMitchellVehicle(row: Record<string, string>) {
+  return [
+    row.VehicleYear?.trim(),
+    row.VehicleMake?.trim(),
+    row.VehicleModel?.trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function buildMitchellCustomerName(row: Record<string, string>) {
+  return [row.CustomerFirstName?.trim(), row.CustomerLastOrCompanyName?.trim()]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getMitchellJobStatus(
+  row: Record<string, string>,
+): MitchellJobImport['status'] {
+  const productionStatus = row.ProductionStatus?.trim().toLowerCase() ?? '';
+  const partsStatus = row.PartsStatus?.trim().toLowerCase() ?? '';
+  const hasTasks = parseMitchellBoolean(row.HasTasks ?? '');
+  const laborCompletedPercent = parseMitchellNumber(row.LaborCompletedPercent ?? '');
+  const isPartsOrdered = parseMitchellBoolean(row.IsPartsOrdered ?? '');
+  const partsReceivedPercent = parseMitchellNumber(row.PartsReceivedPercent ?? '');
+
+  if (
+    productionStatus.includes('wait') ||
+    partsStatus.includes('wait') ||
+    (isPartsOrdered && partsReceivedPercent < 100)
+  ) {
+    return 'waiting';
+  }
+
+  if (productionStatus.includes('progress') || hasTasks || laborCompletedPercent > 0) {
+    return 'inProgress';
+  }
+
+  return 'notStarted';
+}
+
+function parseMitchellJobsCsv(csvText: string, lastModifiedAt: string): MitchellJobImport[] {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return [];
+  }
+
+  const headers = parseCsvLine(lines[0]);
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = headers.reduce<Record<string, string>>((result, header, index) => {
+      result[header] = values[index] ?? '';
+      return result;
+    }, {});
+
+    const partsReceivedPercent = parseMitchellNumber(row.PartsReceivedPercent ?? '');
+    const isPartsOrdered = parseMitchellBoolean(row.IsPartsOrdered ?? '');
+
+    return {
+      jobUid: row.JobUid?.trim() ?? '',
+      roNumber: row.RONumber?.trim() ?? '',
+      customerName: buildMitchellCustomerName(row),
+      vehicle: buildMitchellVehicle(row),
+      amount: parseMitchellNumber(row.TotalAmount ?? ''),
+      promiseDate: parseMitchellDate(row.DueOutDate ?? ''),
+      partsWaiting: isPartsOrdered && partsReceivedPercent < 100,
+      status: getMitchellJobStatus(row),
+      estimatorName: row.EstimatorFullName?.trim() ?? '',
+      insuranceCompany: row.InsuranceCompanyName?.trim() ?? '',
+      claimNumber: row.ClaimNumber?.trim() ?? '',
+      departmentName: row.DepartmentName?.trim() ?? '',
+      leadTechName: row.LeadTechName?.trim() ?? '',
+      productionStatus: row.ProductionStatus?.trim() ?? '',
+      estimateId: row.EstimateId?.trim() ?? '',
+      opportunityNumber: row.OpportunityNumber?.trim() ?? '',
+      lastModifiedAt,
+    };
+  }).filter((job) => job.roNumber && job.vehicle);
+}
+
+function getMitchellJobsSnapshot(): MitchellJobsSnapshot {
+  const stats = fs.statSync(MITCHELL_JOBS_CSV_PATH);
+  const csvText = fs.readFileSync(MITCHELL_JOBS_CSV_PATH, 'utf8');
+  const lastModifiedAt = stats.mtime.toISOString();
+
+  return {
+    sourcePath: MITCHELL_JOBS_CSV_PATH,
+    lastModifiedAt,
+    jobs: parseMitchellJobsCsv(csvText, lastModifiedAt),
+  };
+}
+
+function sanitizeFolderSegment(value: string) {
+  return value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ensureRoRoots() {
+  fs.mkdirSync(ACTIVE_RO_ROOT_PATH, { recursive: true });
+  fs.mkdirSync(CLOSED_RO_ROOT_PATH, { recursive: true });
+}
+
+function getFolderNameForRo(roNumber: string, customerName: string) {
+  return customerName.trim()
+    ? `${roNumber.trim()} - ${sanitizeFolderSegment(customerName)}`
+    : roNumber.trim();
+}
+
+function findRoFolder(
+  rootPath: string,
+  roNumber: string,
+) {
+  if (!fs.existsSync(rootPath)) {
+    return null;
+  }
+
+  const folderPrefix = `${roNumber.trim()} - `;
+  const existingFolder = fs
+    .readdirSync(rootPath, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && (entry.name === roNumber.trim() || entry.name.startsWith(folderPrefix)));
+
+  return existingFolder ? path.join(rootPath, existingFolder.name) : null;
+}
+
+function moveFolderIfNeeded(sourcePath: string, destinationPath: string) {
+  if (sourcePath === destinationPath) {
+    return destinationPath;
+  }
+
+  if (fs.existsSync(destinationPath)) {
+    const sourceEntries = fs.readdirSync(sourcePath, { withFileTypes: true });
+    sourceEntries.forEach((entry) => {
+      const from = path.join(sourcePath, entry.name);
+      const to = path.join(destinationPath, entry.name);
+      fs.renameSync(from, to);
+    });
+    fs.rmdirSync(sourcePath);
+    return destinationPath;
+  }
+
+  fs.renameSync(sourcePath, destinationPath);
+  return destinationPath;
+}
+
+function resolveRoFolderPath(
+  roNumber: string,
+  customerName: string,
+  done = false,
+) {
+  const trimmedRo = roNumber.trim();
+  if (!trimmedRo) {
+    throw new Error('RO number is required to save the photo.');
+  }
+
+  if (!fs.existsSync(UAB_ROOT_PATH)) {
+    throw new Error(`UAB folder not found at ${UAB_ROOT_PATH}.`);
+  }
+
+  ensureRoRoots();
+
+  const targetRoot = done ? CLOSED_RO_ROOT_PATH : ACTIVE_RO_ROOT_PATH;
+  const destinationPath = path.join(targetRoot, getFolderNameForRo(trimmedRo, customerName));
+
+  const existingTarget = findRoFolder(targetRoot, trimmedRo);
+  if (existingTarget) {
+    return existingTarget;
+  }
+
+  const legacyRootFolder = findRoFolder(UAB_ROOT_PATH, trimmedRo);
+  if (legacyRootFolder) {
+    return moveFolderIfNeeded(legacyRootFolder, destinationPath);
+  }
+
+  const alternateRoot = done ? ACTIVE_RO_ROOT_PATH : CLOSED_RO_ROOT_PATH;
+  const existingAlternate = findRoFolder(alternateRoot, trimmedRo);
+  if (existingAlternate) {
+    return moveFolderIfNeeded(existingAlternate, destinationPath);
+  }
+
+  fs.mkdirSync(destinationPath, { recursive: true });
+  return destinationPath;
+}
+
+function saveJobPhotoToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  bytes: number[];
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const fileName = `shop-keeper-photo-${new Date()
+    .toISOString()
+    .replace(/[:.]/g, '-')}.jpg`;
+  const savedPath = path.join(folderPath, fileName);
+
+  fs.writeFileSync(savedPath, Buffer.from(payload.bytes));
+
+  return {
+    savedPath,
+  };
+}
+
+function saveJobAudioToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  bytes: number[];
+  extension: string;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const audioFolderPath = path.join(folderPath, 'Audio Notes');
+  fs.mkdirSync(audioFolderPath, { recursive: true });
+
+  const safeExtension = sanitizeFolderSegment(payload.extension).replace(/\./g, '') || 'webm';
+  const fileName = `audio-note-${new Date().toISOString().replace(/[:.]/g, '-')}.${safeExtension}`;
+  const savedPath = path.join(audioFolderPath, fileName);
+
+  fs.writeFileSync(savedPath, Buffer.from(payload.bytes));
+
+  return {
+    savedPath,
+  };
+}
+
+function saveJobTextNoteToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  text: string;
+  createdAt?: string;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const notesFolderPath = path.join(folderPath, 'Notes');
+  fs.mkdirSync(notesFolderPath, { recursive: true });
+
+  const timestamp = payload.createdAt
+    ? new Date(payload.createdAt).toISOString()
+    : new Date().toISOString();
+  const fileName = `note-${timestamp.replace(/[:.]/g, '-')}.txt`;
+  const savedPath = path.join(notesFolderPath, fileName);
+
+  fs.writeFileSync(savedPath, payload.text, 'utf8');
+
+  return {
+    savedPath,
+  };
+}
+
+function moveRoFolderForJob(payload: {
+  roNumber: string;
+  customerName: string;
+  done: boolean;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done,
+  );
+
+  return {
+    folderPath,
+  };
+}
+
+function ensureRoFolderForJob(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+
+  return {
+    folderPath,
+  };
+}
+
+function buildJobNotesText(job: RoFolderJobRecord) {
+  const lines: string[] = [
+    `RO: ${job.roNumber}`,
+    `Customer: ${job.customerName}`,
+    `Vehicle: ${job.vehicle}`,
+    `Status: ${job.done ? 'Closed' : 'Active'} / ${job.status}`,
+    `Promise Date: ${job.promiseDate || 'Not set'}`,
+    `Amount: ${job.amount}`,
+    '',
+    'Notes',
+    '-----',
+  ];
+
+  if (!job.textNotes.length) {
+    lines.push('No notes yet.');
+  } else {
+    job.textNotes.forEach((note, index) => {
+      lines.push(`[${index + 1}] ${new Date(note.createdAt).toLocaleString()}`);
+      lines.push(`Type: ${note.type}`);
+      lines.push(`Read: ${note.read ? 'Yes' : 'No'}`);
+      lines.push(note.type === 'text' ? `Text: ${note.text ?? ''}` : `Audio URL: ${note.audioUrl ?? ''}`);
+      lines.push('');
+    });
+  }
+
+  lines.push('Parts');
+  lines.push('-----');
+
+  if (!job.partsRequests.length) {
+    lines.push('No parts requests.');
+  } else {
+    job.partsRequests.forEach((part, index) => {
+      lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.status} | ${part.requestedBy}`);
+      if (part.note?.trim()) {
+        lines.push(`Note: ${part.note.trim()}`);
+      }
+      lines.push(`Created: ${new Date(part.createdAt).toLocaleString()}`);
+      if (part.receivedAt) {
+        lines.push(`Received: ${new Date(part.receivedAt).toLocaleString()}`);
+      }
+      lines.push('');
+    });
+  }
+
+  lines.push('Photos');
+  lines.push('------');
+
+  if (!job.photos.length) {
+    lines.push('No photos yet.');
+  } else {
+    job.photos.forEach((photo, index) => {
+      lines.push(`[${index + 1}] ${new Date(photo.createdAt).toLocaleString()} | ${photo.width}x${photo.height} | ${photo.fileSize} bytes`);
+      lines.push(`URL: ${photo.url}`);
+      lines.push('');
+    });
+  }
+
+  return lines.join('\r\n');
+}
+
+function saveJobRecordToRoFolder(payload: { job: RoFolderJobRecord }) {
+  const { job } = payload;
+  const folderPath = resolveRoFolderPath(job.roNumber, job.customerName, job.done);
+  const summaryPath = path.join(folderPath, 'shop-keeper-summary.txt');
+
+  fs.writeFileSync(summaryPath, buildJobNotesText(job), 'utf8');
+
+  return {
+    folderPath,
+    summaryPath,
+  };
+}
+
+function installSafeConsole() {
+  const isBrokenPipeError = (error: unknown) =>
+    !!(
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'EPIPE'
+    );
+
+  console.log = (...args: unknown[]) => writeMainLog('INFO', args);
+  console.info = (...args: unknown[]) => writeMainLog('INFO', args);
+  console.warn = (...args: unknown[]) => writeMainLog('WARN', args);
+  console.error = (...args: unknown[]) => writeMainLog('ERROR', args);
+
+  process.on('uncaughtException', (error) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
+    console.error('[main] Uncaught exception:', error);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    if (isBrokenPipeError(reason)) {
+      return;
+    }
+
+    console.error('[main] Unhandled rejection:', reason);
+  });
+}
+
+installSafeConsole();
 
 function publishUpdaterStatus(nextStatus: UpdaterStatus) {
   updaterStatus = nextStatus;
@@ -220,7 +774,7 @@ async function checkMaterialReplyConfirmations() {
       }
     }
   } catch (error) {
-    console.error('[mail] Failed to check material reply confirmations:', error);
+    writeMainLog('ERROR', ['[mail] Failed to check material reply confirmations:', error]);
   } finally {
     await client.logout().catch(() => undefined);
   }
@@ -442,7 +996,6 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  installSafeConsole();
   app.setAppUserModelId(
     isPackagedApp ? 'com.shopkeeper.app' : 'com.shopkeeper.beta',
   );
@@ -588,6 +1141,160 @@ app.whenReady().then(async () => {
               ? error.message
               : 'Could not send material request email.',
         };
+      }
+    },
+  );
+
+  ipcMain.handle('mitchell:getJobsSnapshot', async () => {
+    try {
+      return getMitchellJobsSnapshot();
+    } catch (error) {
+      console.error('[mitchell] Failed to load jobs snapshot:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not read Mitchell jobs data.',
+      );
+    }
+  });
+
+  ipcMain.handle(
+    'jobs:savePhotoToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        bytes: number[];
+      },
+    ) => {
+      try {
+        return saveJobPhotoToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save photo to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save photo to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveAudioToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        bytes: number[];
+        extension: string;
+      },
+    ) => {
+      try {
+        return saveJobAudioToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save audio to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save audio to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveTextNoteToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        text: string;
+        createdAt?: string;
+      },
+    ) => {
+      try {
+        return saveJobTextNoteToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save text note to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save text note to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:moveRoFolderForJob',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done: boolean;
+      },
+    ) => {
+      try {
+        return moveRoFolderForJob(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to move RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not move the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:ensureRoFolderForJob',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+      },
+    ) => {
+      try {
+        return ensureRoFolderForJob(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to ensure RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not ensure the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveJobRecordToRoFolder',
+    async (
+      _event,
+      payload: {
+        job: RoFolderJobRecord;
+      },
+    ) => {
+      try {
+        return saveJobRecordToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save job record to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save the job record to the RO folder.',
+        );
       }
     },
   );

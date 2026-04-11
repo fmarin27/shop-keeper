@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRef } from 'react';
 import ActiveJobsSection from './ActiveJobsSection';
 import CompletedJobsSection from './CompletedJobsSection';
+import { appBridge } from '../../services/platform/appBridge';
 import type {
   AppMode,
   AmountStatus,
@@ -23,6 +25,7 @@ import {
   saveJobPartNote,
   setActiveJobPosition,
   subscribeToJobs,
+  syncJobsFromMitchell,
   undoJobDone,
   updateJobPartStatus,
   updateJobDetails,
@@ -35,6 +38,7 @@ type JobsTabProps = {
   mobile?: boolean;
   appMode: AppMode;
   focusedJobId?: string | null;
+  focusedJobDone?: boolean;
   onFocusedJobHandled?: () => void;
 };
 
@@ -72,21 +76,31 @@ const initialFormState: AddJobFormState = {
   initialNote: '',
 };
 
+const MITCHELL_SYNC_INTERVAL_MS = 1000 * 30;
+
 function JobsTab({
   showAddJob = false,
   compact = false,
   mobile = false,
   appMode,
   focusedJobId = null,
+  focusedJobDone = false,
   onFocusedJobHandled,
 }: JobsTabProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const desktopFolderSyncRef = useRef<Record<string, string>>({});
+  const desktopJobRecordSyncRef = useRef<Record<string, string>>({});
 
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [addJobForm, setAddJobForm] = useState<AddJobFormState>(initialFormState);
   const [savingJob, setSavingJob] = useState(false);
   const [addJobError, setAddJobError] = useState<string | null>(null);
+  const [mitchellSyncMessage, setMitchellSyncMessage] = useState<string | null>(null);
+  const [mitchellSyncError, setMitchellSyncError] = useState<string | null>(null);
+  const [lastMitchellSyncAt, setLastMitchellSyncAt] = useState<string | null>(null);
+  const [isMitchellSyncing, setIsMitchellSyncing] = useState(false);
+  const runMitchellSyncRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
 
   const applyOptimisticActiveOrder = (
     sourceJobs: Job[],
@@ -115,6 +129,152 @@ function JobsTab({
     });
 
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!appBridge.isDesktop()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncDesktopRoFolders = async () => {
+      for (const job of jobs) {
+        if (!job.roNumber.trim()) {
+          continue;
+        }
+
+        const nextSignature = [
+          job.customerName.trim(),
+          job.done ? 'closed' : 'active',
+        ].join('|');
+
+        if (desktopFolderSyncRef.current[job.id] === nextSignature) {
+          continue;
+        }
+
+        try {
+          if (job.done) {
+            await appBridge.moveRoFolderForJob({
+              roNumber: job.roNumber,
+              customerName: job.customerName,
+              done: true,
+            });
+          } else {
+            await appBridge.ensureRoFolderForJob({
+              roNumber: job.roNumber,
+              customerName: job.customerName,
+              done: false,
+            });
+          }
+
+          if (cancelled) {
+            return;
+          }
+
+          desktopFolderSyncRef.current[job.id] = nextSignature;
+        } catch (error) {
+          console.error('Failed to sync RO folder from job state:', error);
+        }
+
+        const jobRecordSignature = JSON.stringify(job);
+        if (desktopJobRecordSyncRef.current[job.id] === jobRecordSignature) {
+          continue;
+        }
+
+        try {
+          await appBridge.saveJobRecordToRoFolder({ job });
+
+          if (cancelled) {
+            return;
+          }
+
+          desktopJobRecordSyncRef.current[job.id] = jobRecordSignature;
+        } catch (error) {
+          console.error('Failed to save job record into RO folder:', error);
+        }
+      }
+    };
+
+    void syncDesktopRoFolders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [jobs]);
+
+  useEffect(() => {
+    if (!appBridge.isDesktop()) {
+      return;
+    }
+
+    let mounted = true;
+    let syncing = false;
+    let lastSourceModifiedAt: string | null = null;
+
+    const runMitchellSync = async (force = false) => {
+      if (syncing) {
+        return;
+      }
+
+      try {
+        syncing = true;
+        if (mounted) {
+          setIsMitchellSyncing(true);
+        }
+        if (force && mounted) {
+          setMitchellSyncMessage('Syncing Mitchell active jobs...');
+        }
+
+        const snapshot = await appBridge.getMitchellJobsSnapshot();
+        if (!force && snapshot.lastModifiedAt === lastSourceModifiedAt) {
+          if (mounted) {
+            setMitchellSyncMessage(
+              `Mitchell sync active. Last checked ${formatDateTime(new Date().toISOString())}.`,
+            );
+            setMitchellSyncError(null);
+          }
+          return;
+        }
+
+        await syncJobsFromMitchell(snapshot);
+        lastSourceModifiedAt = snapshot.lastModifiedAt;
+
+        if (mounted) {
+          const now = new Date().toISOString();
+          setLastMitchellSyncAt(now);
+          setMitchellSyncError(null);
+          setMitchellSyncMessage(
+            `Mitchell sync active. ${snapshot.jobs.length} jobs checked from ${snapshot.sourcePath}.`,
+          );
+        }
+      } catch (error) {
+        if (mounted) {
+          setMitchellSyncError(
+            error instanceof Error
+              ? error.message
+              : 'Mitchell sync failed.',
+          );
+        }
+      } finally {
+        syncing = false;
+        if (mounted) {
+          setIsMitchellSyncing(false);
+        }
+      }
+    };
+
+    runMitchellSyncRef.current = runMitchellSync;
+
+    void runMitchellSync(true);
+    const timer = window.setInterval(() => {
+      void runMitchellSync(false);
+    }, MITCHELL_SYNC_INTERVAL_MS);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   const activeJobs = useMemo(
@@ -275,6 +435,10 @@ function JobsTab({
     await updateJobDetails(jobId, input);
   };
 
+  const handleManualMitchellSync = async () => {
+    await runMitchellSyncRef.current(true);
+  };
+
   const openAddJobModal = () => {
     setAddJobForm(initialFormState);
     setAddJobError(null);
@@ -377,6 +541,65 @@ function JobsTab({
   return (
     <>
       <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
+        {appBridge.isDesktop() ? (
+          <div
+            style={{
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            <div
+              style={{
+                borderRadius: compact ? 14 : 18,
+                padding: compact ? '10px 12px' : '12px 16px',
+                background: mitchellSyncError
+                  ? 'rgba(127,29,29,0.32)'
+                  : 'rgba(22,163,74,0.14)',
+                border: mitchellSyncError
+                  ? '1px solid rgba(248,113,113,0.34)'
+                  : '1px solid rgba(74,222,128,0.24)',
+                color: mitchellSyncError ? '#fecaca' : '#dcfce7',
+                fontSize: compact ? 12 : 13,
+                fontWeight: 800,
+                lineHeight: 1.5,
+              }}
+            >
+              {mitchellSyncError
+                ? `Mitchell sync error: ${mitchellSyncError}`
+                : mitchellSyncMessage ?? 'Mitchell sync is starting...'}
+              {lastMitchellSyncAt && !mitchellSyncError
+                ? ` Last synced ${formatDateTime(lastMitchellSyncAt)}.`
+                : ''}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleManualMitchellSync();
+                }}
+                disabled={isMitchellSyncing}
+                style={{
+                  border: '1px solid rgba(96,165,250,0.45)',
+                  background: isMitchellSyncing
+                    ? 'rgba(51,65,85,0.92)'
+                    : 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
+                  color: '#eff6ff',
+                  fontWeight: 800,
+                  fontSize: mobile ? 13 : 14,
+                  padding: mobile ? '10px 14px' : '10px 16px',
+                  borderRadius: 12,
+                  cursor: isMitchellSyncing ? 'not-allowed' : 'pointer',
+                  opacity: isMitchellSyncing ? 0.75 : 1,
+                  width: mobile ? '100%' : 'auto',
+                }}
+              >
+                {isMitchellSyncing ? 'Syncing Repair Center...' : 'Sync Repair Center Now'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {showAddJob ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -423,8 +646,8 @@ function JobsTab({
           compact={compact}
           mobile={mobile}
           appMode={appMode}
-          focusedJobId={focusedJobId}
-          onFocusedJobHandled={onFocusedJobHandled}
+          focusedJobId={focusedJobDone ? null : focusedJobId}
+          onFocusedJobHandled={focusedJobDone ? undefined : onFocusedJobHandled}
           onChangeStatus={handleChangeStatus}
           onMarkDone={handleMarkDone}
           onAddTextNote={handleAddTextNote}
@@ -441,10 +664,20 @@ function JobsTab({
           onUpdateJobDetails={handleUpdateJobDetails}
         />
 
-        {!compact ? (
+        {!compact || mobile ? (
           <CompletedJobsSection
             jobs={completedJobs}
-            compact={compact || mobile}
+            compact={compact}
+            focusedJobId={focusedJobDone ? focusedJobId : null}
+            onFocusedJobHandled={focusedJobDone ? onFocusedJobHandled : undefined}
+            onAddTextNote={handleAddTextNote}
+            onMarkNotesRead={handleMarkNotesRead}
+            onSetPartOrdered={handleSetPartOrdered}
+            onSetPartReorderNeeded={handleSetPartReorderNeeded}
+            onMarkPartReceived={handleMarkPartReceived}
+            onSavePartNote={handleSavePartNote}
+            onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
+            onUpdateJobDetails={handleUpdateJobDetails}
             onUndoDone={handleUndoDone}
           />
         ) : null}
@@ -926,6 +1159,18 @@ function inputStyle(compact: boolean): React.CSSProperties {
     outline: 'none',
     boxSizing: 'border-box',
   };
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    year: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function getNextStatus(status: JobStatus): JobStatus {

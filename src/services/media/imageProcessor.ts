@@ -14,7 +14,7 @@ export type ProcessedJobImage = {
 
 const DEFAULT_MAX_DIMENSION = 1280;
 const DEFAULT_QUALITY = 0.68;
-const MIN_QUALITY = 0.46;
+const MIN_QUALITY = 0.38;
 const TARGET_MAX_BYTES = 300 * 1024;
 const PROCESS_TIMEOUT_MS = 15000;
 
@@ -54,12 +54,34 @@ async function processJobImageInternal(
   await nextFrame();
 
   let currentQuality = quality;
+  let currentWidth = canvas.width;
+  let currentHeight = canvas.height;
   let blob = await canvasToJpegBlob(canvas, currentQuality);
 
   let attempts = 0;
-  while (blob.size > TARGET_MAX_BYTES && currentQuality > MIN_QUALITY && attempts < 2) {
+  while (blob.size > TARGET_MAX_BYTES && attempts < 6) {
     attempts += 1;
-    currentQuality = Math.max(MIN_QUALITY, currentQuality - 0.08);
+
+    if (currentQuality > MIN_QUALITY) {
+      currentQuality = Math.max(MIN_QUALITY, currentQuality - 0.07);
+      await nextFrame();
+      blob = await canvasToJpegBlob(canvas, currentQuality);
+      continue;
+    }
+
+    currentWidth = Math.max(960, Math.round(currentWidth * 0.88));
+    currentHeight = Math.max(960, Math.round(currentHeight * 0.88));
+
+    canvas.width = currentWidth;
+    canvas.height = currentHeight;
+    context.fillStyle = '#0b1421';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+    if (options.addTimestamp) {
+      drawTimestamp(context, canvas.width, canvas.height);
+    }
+
     await nextFrame();
     blob = await canvasToJpegBlob(canvas, currentQuality);
   }

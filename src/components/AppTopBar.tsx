@@ -26,7 +26,7 @@ type AppTopBarProps = {
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
   mobile?: boolean;
-  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
 };
@@ -47,7 +47,7 @@ function AppTopBar({
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
 }: AppTopBarProps) {
-  const isCompact = displayMode === 'compact' || mobile;
+  const isCompact = displayMode === 'compact';
   const appMode: MessageAudienceMode =
     modeLabel === 'Manager' ? 'manager' : 'tech';
 
@@ -107,6 +107,7 @@ function AppTopBar({
           id: note.id,
           type: 'job' as const,
           itemId: job.id,
+          jobDone: job.done,
           label: 'Unread Job Note',
           title: job.vehicle,
           description: note.text ?? 'Unread audio note',
@@ -128,6 +129,7 @@ function AppTopBar({
           id: `${job.id}-parts`,
           type: 'job' as const,
           itemId: job.id,
+          jobDone: job.done,
           label: nextPart?.status === 'ordered' ? 'Part Ordered' : 'Part Waiting',
           title: job.vehicle,
           description: nextPart
@@ -282,7 +284,7 @@ function AppTopBar({
             opacity: updateButtonDisabled ? 0.8 : 1,
           }}
         >
-          {updateButtonLabel}
+          {mobile ? 'Play Store' : updateButtonLabel}
         </button>
 
         <button
@@ -316,7 +318,7 @@ function AppTopBar({
       ) : null}
 
       {!isCompact ? (
-        <AttentionPanel
+    <AttentionPanel
           items={attentionItems}
           onOpenJob={onOpenAttentionJob}
           onOpenMaterial={onOpenAttentionMaterial}
@@ -337,11 +339,12 @@ function AttentionPanel({
     id: string;
     type: 'job' | 'material' | 'message';
     itemId: string;
+    jobDone?: boolean;
     label: string;
     title: string;
     description: string;
   }>;
-  onOpenJob: (jobId: string) => void;
+  onOpenJob: (jobId: string, done?: boolean) => void;
   onOpenMaterial: (itemId: string) => void;
   onOpenMessage: (itemId: string) => void;
 }) {
@@ -407,7 +410,7 @@ function AttentionPanel({
               key={item.id}
               onClick={() => {
                 if (item.type === 'job') {
-                  onOpenJob(item.itemId);
+                  onOpenJob(item.itemId, item.jobDone);
                   return;
                 }
 

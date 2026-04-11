@@ -203,8 +203,8 @@ function App() {
     }
   };
 
-  const openJobsView = async (jobId?: string) => {
-    setOverlayFocusTarget(jobId ? { tab: 'jobs', itemId: jobId } : null);
+  const openJobsView = async (jobId?: string, done?: boolean) => {
+    setOverlayFocusTarget(jobId ? { tab: 'jobs', itemId: jobId, done } : null);
     setSelectedTab('jobs');
     await handleDisplayModeChange('normal');
   };
@@ -290,8 +290,8 @@ function App() {
         ? 'Check Again'
         : 'Check for Updates',
     updateButtonDisabled: updaterState.phase === 'checking',
-    onOpenAttentionJob: (jobId: string) => {
-      void openJobsView(jobId);
+    onOpenAttentionJob: (jobId: string, done?: boolean) => {
+      void openJobsView(jobId, done);
     },
     onOpenAttentionMaterial: (itemId: string) => {
       void openMaterialsMessagesView('material', itemId);

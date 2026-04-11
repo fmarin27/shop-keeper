@@ -8,6 +8,7 @@ export type OverlayFocusTarget =
   | {
       tab: 'jobs';
       itemId: string;
+      done?: boolean;
     }
   | {
       tab: 'materialsMessages';
@@ -100,6 +101,32 @@ export type UpdateJobDetailsInput = {
   amount: number;
   amountStatus: AmountStatus;
   promiseDate: string;
+};
+
+export type MitchellJobImport = {
+  jobUid: string;
+  roNumber: string;
+  customerName: string;
+  vehicle: string;
+  amount: number;
+  promiseDate: string;
+  partsWaiting: boolean;
+  status: Exclude<JobStatus, 'done'>;
+  estimatorName: string;
+  insuranceCompany: string;
+  claimNumber: string;
+  departmentName: string;
+  leadTechName: string;
+  productionStatus: string;
+  estimateId: string;
+  opportunityNumber: string;
+  lastModifiedAt: string;
+};
+
+export type MitchellJobsSnapshot = {
+  sourcePath: string;
+  lastModifiedAt: string;
+  jobs: MitchellJobImport[];
 };
 
 export type LeadStatus =

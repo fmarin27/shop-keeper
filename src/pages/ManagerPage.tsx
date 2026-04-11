@@ -15,7 +15,7 @@ type ManagerPageProps = {
   updateStatus: string | null;
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
-  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
   overlayFocusTarget: OverlayFocusTarget | null;
@@ -79,14 +79,16 @@ function ManagerPage({
             mobile={isMobile}
             appMode="manager"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
+            focusedJobDone={overlayFocusTarget?.tab === 'jobs' ? !!overlayFocusTarget.done : false}
             onFocusedJobHandled={onOverlayFocusHandled}
           />
         ) : selectedTab === 'leads' ? (
-          <LeadsTab compact={isCompact || isMobile} />
+          <LeadsTab compact={isCompact} mobile={isMobile} />
         ) : (
           <MaterialsMessagesTab
             appMode="manager"
-            compact={isCompact || isMobile}
+            compact={isCompact}
+            mobile={isMobile}
             focusedMaterialId={
               overlayFocusTarget?.tab === 'materialsMessages' &&
               overlayFocusTarget.itemType === 'material'

@@ -16,6 +16,7 @@ import {
 } from '../../services/firebase/materials';
 import {
   addAudioGeneralMessage,
+  addTextGeneralMessage,
   markGeneralMessageRead,
   subscribeToGeneralMessages,
 } from '../../services/firebase/messages';
@@ -24,6 +25,7 @@ import { appBridge } from '../../services/platform/appBridge';
 type MaterialsMessagesTabProps = {
   appMode: MessageAudienceMode;
   compact?: boolean;
+  mobile?: boolean;
   focusedMaterialId?: string | null;
   focusedMessageId?: string | null;
   onFocusHandled?: () => void;
@@ -32,6 +34,7 @@ type MaterialsMessagesTabProps = {
 function MaterialsMessagesTab({
   appMode,
   compact = false,
+  mobile = false,
   focusedMaterialId = null,
   focusedMessageId = null,
   onFocusHandled,
@@ -69,15 +72,16 @@ function MaterialsMessagesTab({
   );
 
   const totalUnreadCount = unreadMaterialsCount + unreadMessagesCount;
+  const useUnreadOnlyView = compact && !mobile;
 
   const visibleMaterials = useMemo(
-    () => (compact ? materials.filter((item) => item.unread) : materials),
-    [compact, materials],
+    () => (useUnreadOnlyView ? materials.filter((item) => item.unread) : materials),
+    [materials, useUnreadOnlyView],
   );
 
   const visibleMessages = useMemo(
-    () => (compact ? messages.filter((item) => item.unread) : messages),
-    [compact, messages],
+    () => (useUnreadOnlyView ? messages.filter((item) => item.unread) : messages),
+    [messages, useUnreadOnlyView],
   );
 
   const handleAddMaterial = async (
@@ -256,6 +260,7 @@ function MaterialsMessagesTab({
         materials={visibleMaterials}
         appMode={appMode}
         compact={compact}
+        mobile={mobile}
         unreadCount={unreadMaterialsCount}
         focusedMaterialId={focusedMaterialId}
         onFocusedMaterialHandled={onFocusHandled}
@@ -267,6 +272,7 @@ function MaterialsMessagesTab({
       <GeneralMessagesSection
         messages={visibleMessages}
         compact={compact}
+        mobile={mobile}
         unreadCount={unreadMessagesCount}
         focusedMessageId={focusedMessageId}
         onFocusedMessageHandled={onFocusHandled}

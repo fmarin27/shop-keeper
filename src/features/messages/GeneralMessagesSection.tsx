@@ -8,6 +8,7 @@ type GeneralMessageWithAudio = GeneralMessage & {
 type GeneralMessagesSectionProps = {
   messages: GeneralMessageWithAudio[];
   compact?: boolean;
+  mobile?: boolean;
   unreadCount?: number;
   focusedMessageId?: string | null;
   onFocusedMessageHandled?: () => void;
@@ -19,6 +20,7 @@ type GeneralMessagesSectionProps = {
 function GeneralMessagesSection({
   messages,
   compact = false,
+  mobile = false,
   unreadCount = 0,
   focusedMessageId = null,
   onFocusedMessageHandled,
@@ -54,6 +56,10 @@ function GeneralMessagesSection({
 
     const target = messages.find((message) => message.id === focusedMessageId);
     if (!target) return;
+
+    if (target.unread) {
+      onMarkMessageRead(target.id);
+    }
 
     window.requestAnimationFrame(() => {
       focusedMessageRef.current?.scrollIntoView({
@@ -190,7 +196,7 @@ function GeneralMessagesSection({
     recorder.stop();
   };
 
-  const showComposer = !compact;
+  const showComposer = !compact || mobile;
 
   return (
     <section

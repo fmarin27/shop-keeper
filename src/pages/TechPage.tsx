@@ -14,7 +14,7 @@ type TechPageProps = {
   updateStatus: string | null;
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
-  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
   overlayFocusTarget: OverlayFocusTarget | null;
@@ -78,12 +78,14 @@ function TechPage({
             mobile={isMobile}
             appMode="tech"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
+            focusedJobDone={overlayFocusTarget?.tab === 'jobs' ? !!overlayFocusTarget.done : false}
             onFocusedJobHandled={onOverlayFocusHandled}
           />
         ) : (
           <MaterialsMessagesTab
             appMode="tech"
-            compact={isCompact || isMobile}
+            compact={isCompact}
+            mobile={isMobile}
             focusedMaterialId={
               overlayFocusTarget?.tab === 'materialsMessages' &&
               overlayFocusTarget.itemType === 'material'

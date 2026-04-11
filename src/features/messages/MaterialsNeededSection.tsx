@@ -9,6 +9,7 @@ type MaterialsNeededSectionProps = {
   materials: MaterialRequest[];
   appMode: MessageAudienceMode;
   compact?: boolean;
+  mobile?: boolean;
   unreadCount?: number;
   focusedMaterialId?: string | null;
   onFocusedMaterialHandled?: () => void;
@@ -25,6 +26,7 @@ function MaterialsNeededSection({
   materials,
   appMode,
   compact = false,
+  mobile = false,
   unreadCount = 0,
   focusedMaterialId = null,
   onFocusedMaterialHandled,
@@ -59,6 +61,10 @@ function MaterialsNeededSection({
 
     const target = materials.find((item) => item.id === focusedMaterialId);
     if (!target) return;
+
+    if (target.unread) {
+      onMarkMaterialRead(target.id);
+    }
 
     window.requestAnimationFrame(() => {
       focusedMaterialRef.current?.scrollIntoView({
@@ -115,7 +121,7 @@ function MaterialsNeededSection({
     setIsSubmitting(false);
   };
 
-  const showComposer = !compact;
+  const showComposer = !compact || mobile;
 
   return (
     <section
@@ -450,7 +456,7 @@ function MaterialsNeededSection({
                     </div>
                   ) : null}
 
-                  {!compact ? (
+                  {(!compact || mobile) ? (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

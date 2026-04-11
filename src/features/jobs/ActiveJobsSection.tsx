@@ -114,6 +114,7 @@ function ActiveJobsSection({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const photoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const galleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
@@ -413,6 +414,7 @@ function ActiveJobsSection({
           const isFocused = focusedJobId === job.id;
           const isEven = index % 2 === 0;
           const hasPartsWaiting = getHasPartsWaiting(job);
+          const showCompactMobileSummary = mobile && !isOpen;
           const detailDraft = jobDetailDrafts[job.id] ?? {
             paintCode: job.paintCode,
             amount: String(job.amount),
@@ -550,7 +552,19 @@ function ActiveJobsSection({
                     >
                       RO {job.roNumber}
                     </div>
-                    {job.paintCode ? (
+                    {showCompactMobileSummary ? (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontSize: 13,
+                          color: '#dbe7f5',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {job.customerName}
+                      </div>
+                    ) : null}
+                    {!showCompactMobileSummary && job.paintCode ? (
                       <div style={{ marginTop: 8 }}>
                         <span
                           style={{
@@ -568,6 +582,7 @@ function ActiveJobsSection({
                         </span>
                       </div>
                     ) : null}
+                    {!showCompactMobileSummary ? (
                     <div
                       style={{
                         marginTop: 6,
@@ -631,6 +646,7 @@ function ActiveJobsSection({
                         }}
                       />
                     </div>
+                    ) : null}
                   </div>
 
                   <div
@@ -657,7 +673,7 @@ function ActiveJobsSection({
                       </button>
                     ) : null}
 
-                    {job.status !== 'done' ? (
+                    {!showCompactMobileSummary && job.status !== 'done' ? (
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
@@ -695,6 +711,29 @@ function ActiveJobsSection({
                   </div>
                 </div>
 
+                {showCompactMobileSummary ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: narrowLayout ? 8 : 10,
+                      marginBottom: unreadNotes > 0 ? 10 : 0,
+                    }}
+                  >
+                    {job.promiseDate ? (
+                      <InfoPill compact={compact}>
+                        Promise: {formatDate(job.promiseDate)}
+                      </InfoPill>
+                    ) : null}
+                    {hasPartsWaiting ? (
+                      <InfoPill compact={compact} highlight>
+                        {getPartsWorkflowSummary(job)}
+                      </InfoPill>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {!showCompactMobileSummary ? (
                 <div
                   style={{
                     display: 'flex',
@@ -728,6 +767,7 @@ function ActiveJobsSection({
                     {getPartsReceiptSummary(job)}
                   </InfoPill>
                 </div>
+                ) : null}
 
                 {unreadNotes > 0 ? (
                   <div
@@ -1051,14 +1091,47 @@ function ActiveJobsSection({
                           )
                         }
                       />
+                      <input
+                        ref={(element) => {
+                          galleryInputRefs.current[job.id] = element;
+                        }}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={(event) =>
+                          void handlePhotoFileSelected(
+                            job.id,
+                            event.target.files?.[0] ?? null,
+                          )
+                        }
+                      />
 
-                      <ActionButton
-                        compact={narrowLayout}
-                        onClick={() => photoInputRefs.current[job.id]?.click()}
-                        disabled={isSavingPhotoThisJob}
-                      >
-                        {mobile ? 'Add Photo' : 'Add / Take Photo'}
-                      </ActionButton>
+                      {mobile ? (
+                        <>
+                          <ActionButton
+                            compact={narrowLayout}
+                            onClick={() => photoInputRefs.current[job.id]?.click()}
+                            disabled={isSavingPhotoThisJob}
+                          >
+                            Take Photo
+                          </ActionButton>
+                          <ActionButton
+                            compact={narrowLayout}
+                            onClick={() => galleryInputRefs.current[job.id]?.click()}
+                            disabled={isSavingPhotoThisJob}
+                          >
+                            From Gallery
+                          </ActionButton>
+                        </>
+                      ) : (
+                        <ActionButton
+                          compact={narrowLayout}
+                          onClick={() => photoInputRefs.current[job.id]?.click()}
+                          disabled={isSavingPhotoThisJob}
+                        >
+                          Add / Take Photo
+                        </ActionButton>
+                      )}
 
                     </div>
                   </div>

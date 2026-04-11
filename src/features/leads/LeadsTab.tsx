@@ -33,14 +33,23 @@ const initialForm: CreateLeadInput = {
   notes: '',
 };
 
-function LeadsTab({ compact = false }: { compact?: boolean }) {
+function LeadsTab({
+  compact = false,
+  mobile = false,
+}: {
+  compact?: boolean;
+  mobile?: boolean;
+}) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<CreateLeadInput>(initialForm);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [createLeadExpanded, setCreateLeadExpanded] = useState(false);
+  const [activeLeadsExpanded, setActiveLeadsExpanded] = useState(true);
   const [expandedLeadIds, setExpandedLeadIds] = useState<string[]>([]);
+  const [closedLeadsExpanded, setClosedLeadsExpanded] = useState(false);
+  const [expandedClosedLeadIds, setExpandedClosedLeadIds] = useState<string[]>([]);
   const [expandedLeadPanels, setExpandedLeadPanels] = useState<
     Record<string, LeadPanelKey[]>
   >({});
@@ -57,7 +66,9 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     phase: 'processing' | 'uploading';
   } | null>(null);
   const createPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const createGalleryInputRef = useRef<HTMLInputElement | null>(null);
   const leadPhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const leadGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     const unsubscribe = subscribeToLeads((items) => {
@@ -222,6 +233,16 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
     );
   };
 
+  const isClosedLeadExpanded = (leadId: string) => expandedClosedLeadIds.includes(leadId);
+
+  const toggleClosedLeadExpanded = (leadId: string) => {
+    setExpandedClosedLeadIds((current) =>
+      current.includes(leadId)
+        ? current.filter((id) => id !== leadId)
+        : [...current, leadId],
+    );
+  };
+
   if (loading) {
     return (
       <div style={loadingCardStyle(compact)}>
@@ -232,20 +253,31 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
 
   return (
     <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
-      <section style={panelStyle(compact)}>
+      <section style={panelStyle(compact || (mobile && !createLeadExpanded))}>
         <div style={{ display: 'grid', gap: 16 }}>
           <button
             onClick={() => setCreateLeadExpanded((current) => !current)}
-            style={sectionToggleButtonStyle}
+            style={{
+              ...sectionToggleButtonStyle,
+              padding: mobile && !createLeadExpanded ? '10px 12px' : sectionToggleButtonStyle.padding,
+            }}
             type="button"
           >
             <div>
-              <div style={{ fontSize: compact ? 20 : 28, fontWeight: 900, color: '#f8fafc' }}>
-                Leads
+              <div
+                style={{
+                  fontSize: mobile && !createLeadExpanded ? 18 : compact ? 20 : 28,
+                  fontWeight: 900,
+                  color: '#f8fafc',
+                }}
+              >
+                New Lead
               </div>
-              <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14, marginTop: 6 }}>
-                Manager-only lead tracking for follow-up, estimates, and sales progress.
-              </div>
+              {!(mobile && !createLeadExpanded) ? (
+                <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14, marginTop: 6 }}>
+                  Manager-only lead tracking for follow-up, estimates, and sales progress.
+                </div>
+              ) : null}
             </div>
             <span style={sectionToggleLabelStyle(compact)}>
               {createLeadExpanded ? 'Collapse' : 'Expand'}
@@ -354,18 +386,44 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                 />
                 <span>Add timestamp</span>
               </label>
-              <button
-                onClick={() => createPhotoInputRef.current?.click()}
-                style={secondaryButtonStyle(compact)}
-                type="button"
-              >
-                Add / Take Photo
-              </button>
+              {mobile ? (
+                <>
+                  <button
+                    onClick={() => createPhotoInputRef.current?.click()}
+                    style={secondaryButtonStyle(compact)}
+                    type="button"
+                  >
+                    Take Photo
+                  </button>
+                  <button
+                    onClick={() => createGalleryInputRef.current?.click()}
+                    style={secondaryButtonStyle(compact)}
+                    type="button"
+                  >
+                    From Gallery
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => createPhotoInputRef.current?.click()}
+                  style={secondaryButtonStyle(compact)}
+                  type="button"
+                >
+                  Add / Take Photo
+                </button>
+              )}
               <input
                 ref={createPhotoInputRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
+                onChange={handleDraftPhotoSelection}
+                style={{ display: 'none' }}
+              />
+              <input
+                ref={createGalleryInputRef}
+                type="file"
+                accept="image/*"
                 onChange={handleDraftPhotoSelection}
                 style={{ display: 'none' }}
               />
@@ -426,13 +484,24 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
         </div>
       </section>
 
-      <section style={panelStyle(compact)}>
-        <SectionHeading
-          title="Active Leads"
-          subtitle={`${activeLeads.length} open`}
-          compact={compact}
-        />
-        <div style={{ display: 'grid', gap: 12 }}>
+      <section style={panelStyle(compact || (mobile && !activeLeadsExpanded))}>
+        <button
+          onClick={() => setActiveLeadsExpanded((current) => !current)}
+          style={sectionToggleButtonStyle}
+          type="button"
+        >
+          <SectionHeading
+            title="Active Leads"
+            subtitle={`${activeLeads.length} open`}
+            compact={compact}
+            noMargin
+          />
+          <span style={sectionToggleLabelStyle(compact)}>
+            {activeLeadsExpanded ? 'Collapse' : 'Expand'}
+          </span>
+        </button>
+        {activeLeadsExpanded ? (
+        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
           {activeLeads.length ? (
             activeLeads.map((lead) => {
               const leadExpanded = isLeadExpanded(lead.id);
@@ -463,12 +532,20 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                     }}
                   >
                     <div>
-                      <div style={{ fontSize: compact ? 16 : 20, fontWeight: 900 }}>
+                      <div style={{ fontSize: mobile && !leadExpanded ? 18 : compact ? 16 : 20, fontWeight: 900 }}>
                         {lead.customerName}
                       </div>
                       <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14 }}>
                         {lead.vehicle} • {lead.phoneNumber}
                       </div>
+                      {mobile && !leadExpanded ? (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                          <Pill compact={compact}>Status: {labelLeadStatus(lead.status)}</Pill>
+                          {lead.followUpDate ? (
+                            <Pill compact={compact}>Follow Up: {lead.followUpDate}</Pill>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -674,13 +751,32 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                             />
                             <span>Add timestamp</span>
                           </label>
-                          <button
-                            onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
-                            style={secondaryButtonStyle(compact)}
-                            type="button"
-                          >
-                            Add / Take Photo
-                          </button>
+                          {mobile ? (
+                            <>
+                              <button
+                                onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                style={secondaryButtonStyle(compact)}
+                                type="button"
+                              >
+                                Take Photo
+                              </button>
+                              <button
+                                onClick={() => leadGalleryInputRefs.current[lead.id]?.click()}
+                                style={secondaryButtonStyle(compact)}
+                                type="button"
+                              >
+                                From Gallery
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                              style={secondaryButtonStyle(compact)}
+                              type="button"
+                            >
+                              Add / Take Photo
+                            </button>
+                          )}
                           <input
                             ref={(node) => {
                               leadPhotoInputRefs.current[lead.id] = node;
@@ -688,6 +784,15 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
                             type="file"
                             accept="image/*"
                             capture="environment"
+                            onChange={(event) => void handleExistingLeadPhotoSelection(lead, event)}
+                            style={{ display: 'none' }}
+                          />
+                          <input
+                            ref={(node) => {
+                              leadGalleryInputRefs.current[lead.id] = node;
+                            }}
+                            type="file"
+                            accept="image/*"
                             onChange={(event) => void handleExistingLeadPhotoSelection(lead, event)}
                             style={{ display: 'none' }}
                           />
@@ -783,28 +888,332 @@ function LeadsTab({ compact = false }: { compact?: boolean }) {
             <div style={emptyStateStyle(compact)}>No active leads yet.</div>
           )}
         </div>
+        ) : null}
       </section>
 
       <section style={panelStyle(compact)}>
-        <SectionHeading
-          title="Closed Leads"
-          subtitle={`${closedLeads.length} closed`}
-          compact={compact}
-        />
-        <div style={{ display: 'grid', gap: 10 }}>
-          {closedLeads.length ? (
-            closedLeads.map((lead) => (
-              <div key={lead.id} style={leadCardStyle(compact)}>
-                <div style={{ fontSize: compact ? 15 : 18, fontWeight: 800 }}>{lead.customerName}</div>
-                <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14 }}>
-                  {lead.vehicle} • {lead.status === 'won' ? 'Won' : 'Lost'}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div style={emptyStateStyle(compact)}>No closed leads yet.</div>
-          )}
-        </div>
+        <button
+          onClick={() => setClosedLeadsExpanded((current) => !current)}
+          style={sectionToggleButtonStyle}
+          type="button"
+        >
+          <SectionHeading
+            title="Closed Leads"
+            subtitle={`${closedLeads.length} closed`}
+            compact={compact}
+            noMargin
+          />
+          <span style={sectionToggleLabelStyle(compact)}>
+            {closedLeadsExpanded ? 'Collapse' : 'Expand'}
+          </span>
+        </button>
+
+        {closedLeadsExpanded ? (
+          <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+            {closedLeads.length ? (
+              closedLeads.map((lead) => {
+                const closedLeadExpanded = isClosedLeadExpanded(lead.id);
+                const reopenStatus: LeadStatus =
+                  lead.status === 'won' ? 'contacted' : 'new';
+                const leadDraft = leadDrafts[lead.id] ?? {
+                  customerName: lead.customerName,
+                  phoneNumber: lead.phoneNumber,
+                  vehicle: lead.vehicle,
+                  insuranceCompany: lead.insuranceCompany,
+                  source: lead.source,
+                  estimatedValue: lead.estimatedValue,
+                  followUpDate: lead.followUpDate,
+                  status: lead.status,
+                  notes: lead.notes,
+                };
+
+                return (
+                  <div key={lead.id} style={leadCardStyle(compact)}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: compact ? 15 : 18, fontWeight: 800 }}>
+                          {lead.customerName}
+                        </div>
+                        <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14 }}>
+                          {lead.vehicle} • {lead.status === 'won' ? 'Won' : 'Lost'}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => void updateLeadStatus(lead.id, reopenStatus)}
+                          style={primaryButtonStyle(compact)}
+                          type="button"
+                        >
+                          Reopen Lead
+                        </button>
+                        <button
+                          onClick={() => toggleClosedLeadExpanded(lead.id)}
+                          style={secondaryButtonStyle(compact)}
+                          type="button"
+                        >
+                          {closedLeadExpanded ? 'Collapse Lead' : 'Expand Lead'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {closedLeadExpanded ? (
+                      <div style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          <Pill compact={compact}>Phone: {lead.phoneNumber || '—'}</Pill>
+                          <Pill compact={compact}>Source: {lead.source || '—'}</Pill>
+                          <Pill compact={compact}>Insurance: {lead.insuranceCompany || '—'}</Pill>
+                          <Pill compact={compact}>Value: {formatCurrency(lead.estimatedValue)}</Pill>
+                          <Pill compact={compact}>Follow Up: {lead.followUpDate || '—'}</Pill>
+                        </div>
+
+                        <div style={innerPanelStyle(compact)}>
+                          <div style={innerTitleStyle(compact)}>Lead Details</div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: compact ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                              gap: 12,
+                              marginTop: 12,
+                            }}
+                          >
+                            <Field
+                              label="Customer Name"
+                              value={leadDraft.customerName}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, customerName: value },
+                                }))
+                              }
+                            />
+                            <Field
+                              label="Phone Number"
+                              value={leadDraft.phoneNumber}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, phoneNumber: value },
+                                }))
+                              }
+                            />
+                            <Field
+                              label="Vehicle"
+                              value={leadDraft.vehicle}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, vehicle: value },
+                                }))
+                              }
+                            />
+                            <Field
+                              label="Insurance"
+                              value={leadDraft.insuranceCompany}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, insuranceCompany: value },
+                                }))
+                              }
+                            />
+                            <Field
+                              label="Source"
+                              value={leadDraft.source}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, source: value },
+                                }))
+                              }
+                            />
+                            <Field
+                              label="Follow Up"
+                              type="date"
+                              value={leadDraft.followUpDate}
+                              onChange={(value) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, followUpDate: value },
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <label style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+                            <span style={fieldLabelStyle(compact)}>Notes</span>
+                            <textarea
+                              value={leadDraft.notes}
+                              onChange={(event) =>
+                                setLeadDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: { ...leadDraft, notes: event.target.value },
+                                }))
+                              }
+                              rows={4}
+                              style={textAreaStyle(compact)}
+                            />
+                          </label>
+
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+                            <button
+                              onClick={() => void handleSaveLeadDetails(lead)}
+                              style={primaryButtonStyle(compact)}
+                              type="button"
+                            >
+                              {savingLeadId === lead.id ? 'Saving...' : 'Save Lead Details'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div style={innerPanelStyle(compact)}>
+                          <div style={innerTitleStyle(compact)}>Updates</div>
+                          <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+                            <textarea
+                              value={updateDrafts[lead.id] ?? ''}
+                              onChange={(event) =>
+                                setUpdateDrafts((current) => ({
+                                  ...current,
+                                  [lead.id]: event.target.value,
+                                }))
+                              }
+                              rows={3}
+                              placeholder="Add an update on this lead..."
+                              style={textAreaStyle(compact)}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                              <button
+                                onClick={() => {
+                                  void addLeadUpdate(lead, updateDrafts[lead.id] ?? '');
+                                  setUpdateDrafts((current) => ({ ...current, [lead.id]: '' }));
+                                }}
+                                style={primaryButtonStyle(compact)}
+                                type="button"
+                              >
+                                Save Update
+                              </button>
+                            </div>
+                            {lead.updates.length ? (
+                              lead.updates.map((update) => (
+                                <div key={update.id} style={updateRowStyle(compact)}>
+                                  <div style={{ color: '#f8fafc', lineHeight: 1.45 }}>{update.text}</div>
+                                  <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12 }}>
+                                    {formatDateTime(update.createdAt)}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div style={{ color: '#c9d5e4' }}>No updates yet.</div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={innerPanelStyle(compact)}>
+                          <div style={innerTitleStyle(compact)}>Photos</div>
+                          <div style={{ ...photoControlRowStyle(compact), marginTop: 12 }}>
+                            <label style={checkboxRowStyle(compact)}>
+                              <input
+                                type="checkbox"
+                                checked={leadPhotoTimestampEnabled[lead.id] ?? true}
+                                onChange={(event) =>
+                                  setLeadPhotoTimestampEnabled((current) => ({
+                                    ...current,
+                                    [lead.id]: event.target.checked,
+                                  }))
+                                }
+                              />
+                              <span>Add timestamp</span>
+                            </label>
+                            {mobile ? (
+                              <>
+                                <button
+                                  onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                  style={secondaryButtonStyle(compact)}
+                                  type="button"
+                                >
+                                  Take Photo
+                                </button>
+                                <button
+                                  onClick={() => leadGalleryInputRefs.current[lead.id]?.click()}
+                                  style={secondaryButtonStyle(compact)}
+                                  type="button"
+                                >
+                                  From Gallery
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                style={secondaryButtonStyle(compact)}
+                                type="button"
+                              >
+                                Add / Take Photo
+                              </button>
+                            )}
+                            <input
+                              ref={(node) => {
+                                leadPhotoInputRefs.current[lead.id] = node;
+                              }}
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              onChange={(event) => void handleExistingLeadPhotoSelection(lead, event)}
+                              style={{ display: 'none' }}
+                            />
+                            <input
+                              ref={(node) => {
+                                leadGalleryInputRefs.current[lead.id] = node;
+                              }}
+                              type="file"
+                              accept="image/*"
+                              onChange={(event) => void handleExistingLeadPhotoSelection(lead, event)}
+                              style={{ display: 'none' }}
+                            />
+                          </div>
+                          {photoActionLabel(lead.id) ? (
+                            <div style={photoStatusStyle(compact)}>{photoActionLabel(lead.id)}</div>
+                          ) : null}
+                          {lead.photos.length ? (
+                            <div style={photoGridStyle}>
+                              {lead.photos.map((photo) => (
+                                <button
+                                  key={photo.id}
+                                  onClick={() => {
+                                    setSelectedPhoto(photo);
+                                    setPhotoZoom(1);
+                                  }}
+                                  style={photoThumbButtonStyle(compact)}
+                                  type="button"
+                                >
+                                  <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
+                                  <span style={photoMetaStyle(compact)}>
+                                    {formatDateTime(photo.createdAt)}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={photoEmptyStateStyle(compact)}>No photos yet.</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            ) : (
+              <div style={emptyStateStyle(compact)}>No closed leads yet.</div>
+            )}
+          </div>
+        ) : null}
       </section>
 
       {selectedPhoto ? (
@@ -862,13 +1271,15 @@ function SectionHeading({
   title,
   subtitle,
   compact,
+  noMargin = false,
 }: {
   title: string;
   subtitle: string;
   compact: boolean;
+  noMargin?: boolean;
 }) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: noMargin ? 0 : 12 }}>
       <div style={{ fontSize: compact ? 18 : 24, fontWeight: 900, color: '#f8fafc' }}>
         {title}
       </div>
@@ -1264,6 +1675,23 @@ function formatFileSize(bytes: number) {
   }
 
   return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function labelLeadStatus(status: LeadStatus) {
+  switch (status) {
+    case 'new':
+      return 'New';
+    case 'contacted':
+      return 'Contacted';
+    case 'estimateScheduled':
+      return 'Estimate Scheduled';
+    case 'won':
+      return 'Won';
+    case 'lost':
+      return 'Lost';
+    default:
+      return status;
+  }
 }
 
 export default LeadsTab;

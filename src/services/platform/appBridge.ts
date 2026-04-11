@@ -1,12 +1,18 @@
 import { Capacitor } from '@capacitor/core';
-import type { AppMode, DisplayMode, LocalAppSettings } from '../../types/app';
+import type {
+  AppMode,
+  DisplayMode,
+  Job,
+  LocalAppSettings,
+  MitchellJobsSnapshot,
+} from '../../types/app';
 
 const WEB_SETTINGS_KEY = 'shop-keeper:web-settings';
+const PLAY_STORE_URL =
+  'https://play.google.com/store/apps/details?id=com.shopkeeper.app';
 const MOBILE_RELEASE_API =
   'https://api.github.com/repos/fmarin27/shop-keeper/releases/latest';
 const MOBILE_RELEASE_PAGE = 'https://github.com/fmarin27/shop-keeper/releases/latest';
-const PLAY_STORE_URL =
-  'https://play.google.com/store/apps/details?id=com.shopkeeper.app';
 const APP_VERSION = __APP_VERSION__;
 
 const DEFAULT_SETTINGS: LocalAppSettings = {
@@ -65,6 +71,43 @@ type AppBridge = {
     note?: string;
     requestedBy: AppMode;
   }) => Promise<SendMaterialEmailResult>;
+  getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
+  saveJobPhotoToRoFolder: (payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    bytes: number[];
+  }) => Promise<{ savedPath: string }>;
+  saveJobAudioToRoFolder: (payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    bytes: number[];
+    extension: string;
+  }) => Promise<{ savedPath: string }>;
+  saveJobTextNoteToRoFolder: (payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    text: string;
+    createdAt?: string;
+  }) => Promise<{ savedPath: string }>;
+  moveRoFolderForJob: (payload: {
+    roNumber: string;
+    customerName: string;
+    done: boolean;
+  }) => Promise<{ folderPath: string }>;
+  ensureRoFolderForJob: (payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+  }) => Promise<{ folderPath: string }>;
+  saveJobRecordToRoFolder: (payload: {
+    job: Job;
+  }) => Promise<{
+    folderPath: string;
+    summaryPath: string;
+  }>;
   onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
   getAppInfo: () => Promise<AppInfo>;
 };
@@ -173,8 +216,8 @@ function getMobileStoreUrl() {
 
 function getMobileUpdateMessage() {
   return getPlatform() === 'android'
-    ? 'Updates for the Android app are handled through Google Play.'
-    : `Mobile build ${APP_VERSION}`;
+    ? `Mobile build ${APP_VERSION}. Updates are available through Google Play.`
+    : `Mobile build ${APP_VERSION}.`;
 }
 
 function normalizeVersion(version: string) {
@@ -463,6 +506,94 @@ export const appBridge = {
       ok: false,
       message: 'Automatic material emails are only available in the desktop app right now.',
     };
+  },
+
+  async getMitchellJobsSnapshot() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.getMitchellJobsSnapshot();
+    }
+
+    throw new Error('Mitchell job sync is only available in the desktop app.');
+  },
+
+  async saveJobPhotoToRoFolder(payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    bytes: number[];
+  }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.saveJobPhotoToRoFolder(payload);
+    }
+
+    throw new Error('Saving job photos into RO folders is only available in the desktop app.');
+  },
+
+  async saveJobAudioToRoFolder(payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    bytes: number[];
+    extension: string;
+  }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.saveJobAudioToRoFolder(payload);
+    }
+
+    throw new Error('Saving job audio into RO folders is only available in the desktop app.');
+  },
+
+  async saveJobTextNoteToRoFolder(payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+    text: string;
+    createdAt?: string;
+  }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.saveJobTextNoteToRoFolder(payload);
+    }
+
+    throw new Error('Saving job text notes into RO folders is only available in the desktop app.');
+  },
+
+  async moveRoFolderForJob(payload: {
+    roNumber: string;
+    customerName: string;
+    done: boolean;
+  }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.moveRoFolderForJob(payload);
+    }
+
+    throw new Error('Moving RO folders is only available in the desktop app.');
+  },
+
+  async ensureRoFolderForJob(payload: {
+    roNumber: string;
+    customerName: string;
+    done?: boolean;
+  }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.ensureRoFolderForJob(payload);
+    }
+
+    throw new Error('Ensuring RO folders is only available in the desktop app.');
+  },
+
+  async saveJobRecordToRoFolder(payload: { job: Job }) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.saveJobRecordToRoFolder(payload);
+    }
+
+    throw new Error('Saving job records into RO folders is only available in the desktop app.');
   },
 
   onUpdaterStatus(listener: (status: UpdaterStatus) => void) {

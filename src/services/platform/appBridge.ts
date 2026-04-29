@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayHeight: 720,
   overlayX: null,
   overlayY: null,
+  materialsManagerUnlocked: false,
 };
 
 type AppInfo = {
@@ -60,6 +61,14 @@ type AppBridge = {
     x: number | null;
     y: number | null;
   }) => Promise<LocalAppSettings>;
+  unlockMaterialsManager: (accessCode: string) => Promise<{
+    ok: boolean;
+    message: string;
+    settings: LocalAppSettings;
+  }>;
+  getMaterialsManagerAccess: () => Promise<{
+    unlocked: boolean;
+  }>;
   switchToNormalWindow: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateCheckResult>;
   getUpdaterStatus: () => Promise<UpdaterStatus>;
@@ -110,6 +119,10 @@ type AppBridge = {
   }>;
   onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
   getAppInfo: () => Promise<AppInfo>;
+  launchMaterialsManager: () => Promise<{
+    ok: boolean;
+    message: string;
+  }>;
 };
 
 const getDesktopBridge = (): AppBridge | null => {
@@ -348,6 +361,38 @@ export const appBridge = {
       ...settings,
       displayMode: 'normal',
     }));
+  },
+
+  async unlockMaterialsManager(accessCode: string) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.unlockMaterialsManager(accessCode);
+    }
+
+    const trimmed = accessCode.trim();
+    const settings = updateWebSettings((current) => ({
+      ...current,
+      materialsManagerUnlocked: trimmed === 'UAB-MATERIALS-PRO',
+    }));
+
+    return {
+      ok: settings.materialsManagerUnlocked,
+      message: settings.materialsManagerUnlocked
+        ? 'Materials Manager unlocked on this device.'
+        : 'That access code did not work.',
+      settings,
+    };
+  },
+
+  async getMaterialsManagerAccess() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.getMaterialsManagerAccess();
+    }
+
+    return {
+      unlocked: readWebSettings().materialsManagerUnlocked,
+    };
   },
 
   async checkForUpdates() {
@@ -623,6 +668,18 @@ export const appBridge = {
       name: isMobilePlatform() ? 'Shop Keeper Mobile' : 'Shop Keeper Web',
       version: APP_VERSION,
       owner: 'Fernando Marin',
+    };
+  },
+
+  async launchMaterialsManager() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.launchMaterialsManager();
+    }
+
+    return {
+      ok: false,
+      message: 'Materials Manager launch is only available in the desktop app.',
     };
   },
 

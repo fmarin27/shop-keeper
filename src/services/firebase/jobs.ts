@@ -12,7 +12,12 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './config';
-import { getJobAudioExtension, uploadJobAudioNote, uploadJobPhoto } from './storage';
+import {
+  deleteStorageFile,
+  getJobAudioExtension,
+  uploadJobAudioNote,
+  uploadJobPhoto,
+} from './storage';
 import { appBridge } from '../platform/appBridge';
 import type {
   AppMode,
@@ -27,6 +32,7 @@ import type {
 } from '../../types/app';
 
 const jobsCollection = collection(db, 'jobs');
+const FIRESTORE_WRITE_TIMEOUT_MS = 15000;
 
 type FirestoreJobInput = Omit<Job, 'id'>;
 
@@ -58,6 +64,7 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
+            phoneNumber: data.phoneNumber ?? '',
             paintCode: data.paintCode ?? '',
             amount: data.amount ?? 0,
             amountStatus: data.amountStatus ?? 'notFinal',
@@ -72,6 +79,17 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             photos: (data.photos ?? []) as JobPhoto[],
             sortOrder:
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
+            sourceSystem: data.sourceSystem ?? '',
+            sourceJobUid: data.sourceJobUid ?? '',
+            sourceEstimateId: data.sourceEstimateId ?? '',
+            sourceOpportunityNumber: data.sourceOpportunityNumber ?? '',
+            mitchellEstimatorName: data.mitchellEstimatorName ?? '',
+            mitchellInsuranceCompany: data.mitchellInsuranceCompany ?? '',
+            mitchellClaimNumber: data.mitchellClaimNumber ?? '',
+            mitchellDepartmentName: data.mitchellDepartmentName ?? '',
+            mitchellLeadTechName: data.mitchellLeadTechName ?? '',
+            mitchellProductionStatus: data.mitchellProductionStatus ?? '',
+            mitchellLastSourceModifiedAt: data.mitchellLastSourceModifiedAt ?? '',
           },
         };
       },
@@ -147,6 +165,7 @@ export async function createJob(input: CreateJobInput) {
     vehicle: input.vehicle.trim(),
     roNumber: input.roNumber.trim(),
     customerName: input.customerName.trim(),
+    phoneNumber: input.phoneNumber.trim(),
     paintCode: input.paintCode.trim(),
     amount: Number.isFinite(input.amount) ? input.amount : 0,
     amountStatus: input.amountStatus,
@@ -258,12 +277,41 @@ function selectMitchellJobMatch(
   return sameRoJobs[0];
 }
 
+function isMitchellManagedJob(data: Record<string, any>) {
+  if (String(data.sourceSystem ?? '').trim() === 'mitchell') {
+    return true;
+  }
+
+  if (String(data.sourceJobUid ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.sourceEstimateId ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.mitchellLastSourceModifiedAt ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.mitchellSourcePath ?? '').trim()) {
+    return true;
+  }
+
+  if (data.lastMitchellSyncAt) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
   const existingSnapshot = await getDocs(jobsCollection);
   const existingJobs = existingSnapshot.docs.map((snap) => ({
     id: snap.id,
     data: snap.data() as Record<string, any>,
   }));
+  const matchedExistingJobIds = new Set<string>();
 
   let maxSortOrder = existingJobs.reduce((highest, entry) => {
     const sortOrder = entry.data.sortOrder;
@@ -276,6 +324,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
     const existing = selectMitchellJobMatch(existingJobs, mitchellJob);
 
     if (existing) {
+      matchedExistingJobIds.add(existing.id);
       const reopeningClosedJob = Boolean(existing.data.done);
       if (reopeningClosedJob) {
         maxSortOrder += 1;
@@ -285,6 +334,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         vehicle: mitchellJob.vehicle,
         roNumber: mitchellJob.roNumber,
         customerName: mitchellJob.customerName,
+        phoneNumber: mitchellJob.phoneNumber,
         amount: mitchellJob.amount,
         promiseDate: mitchellJob.promiseDate,
         partsWaiting: mitchellJob.partsWaiting,
@@ -366,6 +416,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         vehicle: mitchellJob.vehicle,
         roNumber: mitchellJob.roNumber,
         customerName: mitchellJob.customerName,
+        phoneNumber: mitchellJob.phoneNumber,
         paintCode: '',
         amount: mitchellJob.amount,
         amountStatus: 'notFinal',
@@ -391,6 +442,39 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         mitchellSourcePath: snapshot.sourcePath,
         lastMitchellSyncAt: serverTimestamp(),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  const mitchellJobsToClose = existingJobs.filter((entry) => {
+    if (Boolean(entry.data.done)) {
+      return false;
+    }
+
+    if (!isMitchellManagedJob(entry.data)) {
+      return false;
+    }
+
+    return !matchedExistingJobIds.has(entry.id);
+  });
+
+  mitchellJobsToClose.forEach((entry) => {
+    if (appBridge.isDesktop()) {
+      operations.push(
+        appBridge.moveRoFolderForJob({
+          roNumber: String(entry.data.roNumber ?? ''),
+          customerName: String(entry.data.customerName ?? ''),
+          done: true,
+        }),
+      );
+    }
+
+    operations.push(
+      updateDoc(doc(db, 'jobs', entry.id), {
+        done: true,
+        status: 'done',
+        lastMitchellSyncAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       }),
     );
@@ -481,6 +565,8 @@ export async function updateJobDetails(
   input: UpdateJobDetailsInput,
 ) {
   await updateDoc(doc(db, 'jobs', jobId), {
+    phoneNumber: input.phoneNumber.trim(),
+    status: input.status,
     paintCode: input.paintCode.trim(),
     amount: input.amount,
     amountStatus: input.amountStatus,
@@ -608,6 +694,22 @@ export async function markJobNotesRead(job: Job) {
   });
 }
 
+export async function deleteJobNote(job: Job, noteId: string) {
+  const targetNote = job.textNotes.find((note) => note.id === noteId);
+  if (!targetNote) return;
+
+  if (targetNote.type === 'audio' && targetNote.audioUrl) {
+    await deleteStorageFile(targetNote.audioUrl);
+  }
+
+  const nextNotes = job.textNotes.filter((note) => note.id !== noteId);
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    textNotes: nextNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function addPhotoToJob(
   job: Job,
   input: {
@@ -637,9 +739,50 @@ export async function addPhotoToJob(
     ...(job.photos ?? []),
   ];
 
+  await withTimeout(
+    updateDoc(doc(db, 'jobs', job.id), {
+      photos: nextPhotos,
+      updatedAt: serverTimestamp(),
+    }),
+    FIRESTORE_WRITE_TIMEOUT_MS,
+    'Saving the photo in Shop Keeper took too long. Please try again.',
+  );
+}
+
+export async function deletePhotoFromJob(job: Job, photoId: string) {
+  const targetPhoto = (job.photos ?? []).find((photo) => photo.id === photoId);
+  if (!targetPhoto) return;
+
+  await deleteStorageFile(targetPhoto.url);
+
+  const nextPhotos = (job.photos ?? []).filter((photo) => photo.id !== photoId);
+
   await updateDoc(doc(db, 'jobs', job.id), {
     photos: nextPhotos,
     updatedAt: serverTimestamp(),
+  });
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+) {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
   });
 }
 
@@ -733,6 +876,17 @@ export async function saveJobPartNote(
   );
 
   await updateDoc(doc(db, 'jobs', job.id), {
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteJobPart(job: Job, partId: string) {
+  const nextPartsRequests = (job.partsRequests ?? []).filter((part) => part.id !== partId);
+  const stillWaiting = nextPartsRequests.some((part) => part.status !== 'received');
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsWaiting: stillWaiting,
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
   });

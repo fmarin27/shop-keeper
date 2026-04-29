@@ -21,6 +21,14 @@ declare global {
       x: number | null;
       y: number | null;
     }) => Promise<LocalAppSettings>;
+    unlockMaterialsManager: (accessCode: string) => Promise<{
+      ok: boolean;
+      message: string;
+      settings: LocalAppSettings;
+    }>;
+    getMaterialsManagerAccess: () => Promise<{
+      unlocked: boolean;
+    }>;
     switchToNormalWindow: () => Promise<void>;
     checkForUpdates: () => Promise<UpdateCheckResult>;
     getUpdaterStatus: () => Promise<UpdaterStatus>;
@@ -71,6 +79,10 @@ declare global {
     }>;
     onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
     getAppInfo: () => Promise<AppInfo>;
+    launchMaterialsManager: () => Promise<{
+      ok: boolean;
+      message: string;
+    }>;
   }
 
   type AppInfo = {

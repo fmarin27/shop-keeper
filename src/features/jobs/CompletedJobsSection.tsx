@@ -12,6 +12,8 @@ type CompletedJobsSectionProps = {
   onSetPartReorderNeeded: (jobId: string, partId: string) => Promise<void> | void;
   onMarkPartReceived: (jobId: string, partId: string) => Promise<void> | void;
   onSavePartNote: (jobId: string, partId: string, note: string) => Promise<void> | void;
+  onDeleteNote: (jobId: string, noteId: string) => Promise<void> | void;
+  onDeletePart: (jobId: string, partId: string) => Promise<void> | void;
   onClearLegacyPartsWaiting: (jobId: string) => Promise<void> | void;
   onUpdateJobDetails: (
     jobId: string,
@@ -31,6 +33,8 @@ function CompletedJobsSection({
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onDeleteNote,
+  onDeletePart,
   onClearLegacyPartsWaiting,
   onUpdateJobDetails,
   onUndoDone,
@@ -41,6 +45,8 @@ function CompletedJobsSection({
     Record<
       string,
       {
+        phoneNumber: string;
+        status: Job['status'];
         paintCode: string;
         amount: string;
         amountStatus: AmountStatus;
@@ -55,10 +61,6 @@ function CompletedJobsSection({
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
   const lastAutoFocusedJobIdRef = useRef<string | null>(null);
-
-  if (compact) {
-    return null;
-  }
 
   useEffect(() => {
     return () => {
@@ -115,6 +117,8 @@ function CompletedJobsSection({
 
   const handleSaveJobDetails = async (job: Job) => {
     const draft = jobDetailDrafts[job.id] ?? {
+      phoneNumber: job.phoneNumber,
+      status: job.status,
       paintCode: job.paintCode,
       amount: String(job.amount),
       amountStatus: job.amountStatus,
@@ -130,6 +134,8 @@ function CompletedJobsSection({
     try {
       setSavingJobDetailsId(job.id);
       await onUpdateJobDetails(job.id, {
+        phoneNumber: draft.phoneNumber,
+        status: draft.status,
         paintCode: draft.paintCode,
         amount: parsedAmount,
         amountStatus: draft.amountStatus,
@@ -224,6 +230,8 @@ function CompletedJobsSection({
             jobs.map((job) => {
               const isOpen = openJobIds.includes(job.id);
               const detailDraft = jobDetailDrafts[job.id] ?? {
+                phoneNumber: job.phoneNumber,
+                status: job.status,
                 paintCode: job.paintCode,
                 amount: String(job.amount),
                 amountStatus: job.amountStatus,
@@ -284,6 +292,17 @@ function CompletedJobsSection({
                           RO {job.roNumber} • {formatAmount(job.amount)} -{' '}
                           {job.amountStatus === 'final' ? 'Final' : 'Not Final'}
                         </div>
+                        {job.phoneNumber?.trim() ? (
+                          <div style={{ marginTop: 6 }}>
+                            <a
+                              href={`tel:${sanitizePhoneNumber(job.phoneNumber)}`}
+                              style={phoneLinkStyle()}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {job.phoneNumber}
+                            </a>
+                          </div>
+                        ) : null}
                       </div>
 
                       <span
@@ -320,8 +339,12 @@ function CompletedJobsSection({
                           value={job.customerName}
                         />
                         <DetailBox
+                          label="Phone"
+                          value={job.phoneNumber || 'Not set'}
+                        />
+                        <DetailBox
                           label="Paint Code"
-                          value={job.paintCode || 'Not set'}
+                          value={job.paintCode || 'NEED PAINTCODE'}
                         />
                         <DetailBox
                           label="Promise Date"
@@ -350,6 +373,20 @@ function CompletedJobsSection({
                           gap: 12,
                         }}
                       >
+                        <EditableField
+                          label="Phone Number"
+                          value={detailDraft.phoneNumber}
+                          onChange={(value) =>
+                            setJobDetailDrafts((current) => ({
+                              ...current,
+                              [job.id]: {
+                                ...detailDraft,
+                                phoneNumber: value,
+                              },
+                            }))
+                          }
+                          inputMode="tel"
+                        />
                         <EditableField
                           label="Paint Code"
                           value={detailDraft.paintCode}
@@ -458,6 +495,14 @@ function CompletedJobsSection({
                                   {note.type === 'audio' ? 'Audio note • ' : ''}
                                   {formatDateTime(note.createdAt)}
                                 </div>
+                                <div style={{ marginTop: 8 }}>
+                                  <ActionButton
+                                    danger
+                                    onClick={() => void onDeleteNote(job.id, note.id)}
+                                  >
+                                    Delete
+                                  </ActionButton>
+                                </div>
                               </div>
                             ))
                           ) : (
@@ -502,6 +547,7 @@ function CompletedJobsSection({
                           void onSetPartReorderNeeded(job.id, partId)
                         }
                         onMarkPartReceived={(partId) => void onMarkPartReceived(job.id, partId)}
+                        onDeletePart={(partId) => void onDeletePart(job.id, partId)}
                         onClearLegacyPartsWaiting={() => void onClearLegacyPartsWaiting(job.id)}
                       />
 
@@ -632,6 +678,7 @@ function PartsPanel({
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
+  onDeletePart,
   onClearLegacyPartsWaiting,
 }: {
   job: Job;
@@ -642,6 +689,7 @@ function PartsPanel({
   onSetPartOrdered: (partId: string) => void;
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
+  onDeletePart: (partId: string) => void;
   onClearLegacyPartsWaiting: () => void;
 }) {
   const parts = job.partsRequests ?? [];
@@ -682,6 +730,7 @@ function PartsPanel({
               onSetOrdered={() => onSetPartOrdered(part.id)}
               onSetReorderNeeded={() => onSetPartReorderNeeded(part.id)}
               onMarkReceived={() => onMarkPartReceived(part.id)}
+              onDelete={() => onDeletePart(part.id)}
             />
           );
         })
@@ -724,6 +773,7 @@ function PartCard({
   onSetOrdered,
   onSetReorderNeeded,
   onMarkReceived,
+  onDelete,
 }: {
   part: JobPartRequest;
   noteDraft: string;
@@ -733,6 +783,7 @@ function PartCard({
   onSetOrdered: () => void;
   onSetReorderNeeded: () => void;
   onMarkReceived: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div
@@ -775,6 +826,9 @@ function PartCard({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <ActionButton onClick={onSaveNote}>
           {savingPartNote ? 'Saving...' : 'Save Part Note'}
+        </ActionButton>
+        <ActionButton danger onClick={onDelete}>
+          Delete Part
         </ActionButton>
         {part.status === 'requested' ? (
           <ActionButton onClick={onSetOrdered}>Mark Ordered</ActionButton>
@@ -834,17 +888,21 @@ function DetailBox({
 function ActionButton({
   children,
   onClick,
+  danger = false,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
+  danger?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       style={{
-        border: '1px solid rgba(148,163,184,0.18)',
-        background: 'rgba(30,41,59,0.72)',
-        color: '#f8fafc',
+        border: danger
+          ? '1px solid rgba(248,113,113,0.34)'
+          : '1px solid rgba(148,163,184,0.18)',
+        background: danger ? 'rgba(127,29,29,0.36)' : 'rgba(30,41,59,0.72)',
+        color: danger ? '#fee2e2' : '#f8fafc',
         borderRadius: 14,
         padding: '11px 14px',
         fontSize: 13,
@@ -886,6 +944,20 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function phoneLinkStyle(): React.CSSProperties {
+  return {
+    color: '#93c5fd',
+    fontSize: 13,
+    fontWeight: 800,
+    textDecoration: 'none',
+  };
+}
+
+function sanitizePhoneNumber(value: string) {
+  const cleaned = value.replace(/[^\d+]/g, '');
+  return cleaned || value;
 }
 
 function formatPartStatus(status: JobPartRequest['status']) {

@@ -12,6 +12,7 @@ export interface LocalAppSettings {
   overlayHeight: number;
   overlayX: number | null;
   overlayY: number | null;
+  materialsManagerUnlocked: boolean;
 }
 
 const DEFAULT_SETTINGS: LocalAppSettings = {
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayHeight: 260,
   overlayX: null,
   overlayY: null,
+  materialsManagerUnlocked: false,
 };
 
 export class SettingsStore {
@@ -70,5 +72,9 @@ export class SettingsStore {
       overlayX: bounds.x,
       overlayY: bounds.y,
     });
+  }
+
+  setMaterialsManagerUnlocked(unlocked: boolean): LocalAppSettings {
+    return this.saveSettings({ materialsManagerUnlocked: unlocked });
   }
 }

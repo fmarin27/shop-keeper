@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
@@ -55,6 +56,7 @@ export function subscribeToMaterials(
             : data.emailConfirmedAt?.toDate?.()?.toISOString?.() ?? '',
         emailReplyText: data.emailReplyText ?? '',
         status: data.status ?? 'requested',
+        archived: data.archived ?? false,
       };
     });
 
@@ -134,4 +136,15 @@ export async function setMaterialEmailStatus(
   }
 
   await updateDoc(doc(db, 'materials', id), payload);
+}
+
+export async function setMaterialArchived(id: string, archived: boolean) {
+  await updateDoc(doc(db, 'materials', id), {
+    archived,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteMaterialRequest(id: string) {
+  await deleteDoc(doc(db, 'materials', id));
 }

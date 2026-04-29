@@ -42,6 +42,9 @@ contextBridge.exposeInMainWorld('appBridge', {
     ipcRenderer.invoke('settings:setDisplayMode', mode),
   setOverlayBounds: (bounds: { width: number; height: number; x: number | null; y: number | null }) =>
     ipcRenderer.invoke('settings:setOverlayBounds', bounds),
+  unlockMaterialsManager: (accessCode: string) =>
+    ipcRenderer.invoke('settings:unlockMaterialsManager', accessCode),
+  getMaterialsManagerAccess: () => ipcRenderer.invoke('settings:getMaterialsManagerAccess'),
   switchToNormalWindow: () => ipcRenderer.invoke('window:switchToNormal'),
   checkForUpdates: () => ipcRenderer.invoke('updater:checkNow'),
   getUpdaterStatus: () => ipcRenderer.invoke('updater:getStatus'),
@@ -115,4 +118,5 @@ contextBridge.exposeInMainWorld('appBridge', {
     };
   },
   getAppInfo: () => ipcRenderer.invoke('app:getInfo'),
+  launchMaterialsManager: () => ipcRenderer.invoke('materialsManager:launch'),
 });

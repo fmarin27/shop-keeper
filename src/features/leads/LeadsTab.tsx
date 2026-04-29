@@ -5,6 +5,8 @@ import {
   addLeadUpdate,
   addPhotoToLead,
   createLead,
+  deleteLeadUpdate,
+  deletePhotoFromLead,
   subscribeToLeads,
   updateLeadDetails,
   updateLeadStatus,
@@ -13,6 +15,10 @@ import {
   processJobImage,
   type ProcessedJobImage,
 } from '../../services/media/imageProcessor';
+import {
+  canUseNativeMobileCamera,
+  getNativeMobilePhoto,
+} from '../../services/media/mobileCamera';
 
 type DraftLeadPhoto = ProcessedJobImage & {
   id: string;
@@ -148,15 +154,25 @@ function LeadsTab({
     }
   };
 
-  const handleDraftPhotoSelection = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const handleDeleteLeadUpdate = async (lead: Lead, updateId: string) => {
+    await deleteLeadUpdate(lead, updateId);
+  };
+
+  const handleDeleteLeadPhoto = async (lead: Lead, photoId: string) => {
+    await deletePhotoFromLead(lead, photoId);
+  };
+
+  const handleDraftPhotoFile = async (file: File | null) => {
     if (!file) return;
 
     try {
       setPhotoActionState({ leadId: null, phase: 'processing' });
       const processed = await processJobImage(file, {
         addTimestamp: formPhotoTimestampEnabled,
+        maxDimension: mobile ? 960 : 1280,
+        quality: mobile ? 0.58 : 0.68,
+        targetMaxBytes: mobile ? 220 * 1024 : 300 * 1024,
+        minDimension: mobile ? 520 : 640,
       });
       const previewUrl = URL.createObjectURL(processed.blob);
       setFormPhotos((current) => [
@@ -174,18 +190,26 @@ function LeadsTab({
     }
   };
 
-  const handleExistingLeadPhotoSelection = async (
-    lead: Lead,
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
+  const handleDraftPhotoSelection = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
     event.target.value = '';
+    await handleDraftPhotoFile(file);
+  };
+
+  const handleExistingLeadPhotoFile = async (
+    lead: Lead,
+    file: File | null,
+  ) => {
     if (!file) return;
 
     try {
       setPhotoActionState({ leadId: lead.id, phase: 'processing' });
       const processed = await processJobImage(file, {
         addTimestamp: leadPhotoTimestampEnabled[lead.id] ?? true,
+        maxDimension: mobile ? 960 : 1280,
+        quality: mobile ? 0.58 : 0.68,
+        targetMaxBytes: mobile ? 220 * 1024 : 300 * 1024,
+        minDimension: mobile ? 520 : 640,
       });
       setPhotoActionState({ leadId: lead.id, phase: 'uploading' });
       await addPhotoToLead(lead, processed);
@@ -193,6 +217,44 @@ function LeadsTab({
       alert(error instanceof Error ? error.message : 'Could not add the selected photo.');
     } finally {
       setPhotoActionState(null);
+    }
+  };
+
+  const handleExistingLeadPhotoSelection = async (
+    lead: Lead,
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = '';
+    await handleExistingLeadPhotoFile(lead, file);
+  };
+
+  const handleDraftNativeMobilePhoto = async (source: 'camera' | 'gallery') => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      await handleDraftPhotoFile(file);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
+    }
+  };
+
+  const handleExistingLeadNativeMobilePhoto = async (
+    lead: Lead,
+    source: 'camera' | 'gallery',
+  ) => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      await handleExistingLeadPhotoFile(lead, file);
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
     }
   };
 
@@ -388,18 +450,26 @@ function LeadsTab({
               </label>
               {mobile ? (
                 <>
-                  <button
-                    onClick={() => createPhotoInputRef.current?.click()}
-                    style={secondaryButtonStyle(compact)}
-                    type="button"
-                  >
+                    <button
+                      onClick={() =>
+                        canUseNativeMobileCamera()
+                          ? void handleDraftNativeMobilePhoto('camera')
+                          : createPhotoInputRef.current?.click()
+                      }
+                      style={secondaryButtonStyle(compact)}
+                      type="button"
+                    >
                     Take Photo
                   </button>
-                  <button
-                    onClick={() => createGalleryInputRef.current?.click()}
-                    style={secondaryButtonStyle(compact)}
-                    type="button"
-                  >
+                    <button
+                      onClick={() =>
+                        canUseNativeMobileCamera()
+                          ? void handleDraftNativeMobilePhoto('gallery')
+                          : createGalleryInputRef.current?.click()
+                      }
+                      style={secondaryButtonStyle(compact)}
+                      type="button"
+                    >
                     From Gallery
                   </button>
                 </>
@@ -535,8 +605,29 @@ function LeadsTab({
                       <div style={{ fontSize: mobile && !leadExpanded ? 18 : compact ? 16 : 20, fontWeight: 900 }}>
                         {lead.customerName}
                       </div>
-                      <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14 }}>
-                        {lead.vehicle} • {lead.phoneNumber}
+                      <div
+                        style={{
+                          color: '#c9d5e4',
+                          fontSize: compact ? 12 : 14,
+                          display: 'flex',
+                          gap: 6,
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <span>{lead.vehicle}</span>
+                        {lead.phoneNumber.trim() ? (
+                          <>
+                            <span>•</span>
+                            <a
+                              href={`tel:${sanitizePhoneNumber(lead.phoneNumber)}`}
+                              style={phoneLinkStyle}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {lead.phoneNumber}
+                            </a>
+                          </>
+                        ) : null}
                       </div>
                       {mobile && !leadExpanded ? (
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
@@ -754,14 +845,22 @@ function LeadsTab({
                           {mobile ? (
                             <>
                               <button
-                                onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                onClick={() =>
+                                  canUseNativeMobileCamera()
+                                    ? void handleExistingLeadNativeMobilePhoto(lead, 'camera')
+                                    : leadPhotoInputRefs.current[lead.id]?.click()
+                                }
                                 style={secondaryButtonStyle(compact)}
                                 type="button"
                               >
                                 Take Photo
                               </button>
                               <button
-                                onClick={() => leadGalleryInputRefs.current[lead.id]?.click()}
+                                onClick={() =>
+                                  canUseNativeMobileCamera()
+                                    ? void handleExistingLeadNativeMobilePhoto(lead, 'gallery')
+                                    : leadGalleryInputRefs.current[lead.id]?.click()
+                                }
                                 style={secondaryButtonStyle(compact)}
                                 type="button"
                               >
@@ -770,7 +869,11 @@ function LeadsTab({
                             </>
                           ) : (
                             <button
-                              onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                              onClick={() =>
+                                canUseNativeMobileCamera()
+                                  ? void handleExistingLeadNativeMobilePhoto(lead, 'camera')
+                                  : leadPhotoInputRefs.current[lead.id]?.click()
+                              }
                               style={secondaryButtonStyle(compact)}
                               type="button"
                             >
@@ -803,20 +906,28 @@ function LeadsTab({
                         {lead.photos.length ? (
                           <div style={photoGridStyle}>
                             {lead.photos.map((photo) => (
-                              <button
-                                key={photo.id}
-                                onClick={() => {
-                                  setSelectedPhoto(photo);
-                                  setPhotoZoom(1);
-                                }}
-                                style={photoThumbButtonStyle(compact)}
-                                type="button"
-                              >
-                                <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
-                                <span style={photoMetaStyle(compact)}>
+                              <div key={photo.id} style={photoCardStyle(compact)}>
+                                <button
+                                  onClick={() => {
+                                    setSelectedPhoto(photo);
+                                    setPhotoZoom(1);
+                                  }}
+                                  style={photoPreviewButtonStyle}
+                                  type="button"
+                                >
+                                  <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
+                                </button>
+                                <div style={photoMetaStyle(compact)}>
                                   {formatDateTime(photo.createdAt)}
-                                </span>
-                              </button>
+                                </div>
+                                <button
+                                  onClick={() => void handleDeleteLeadPhoto(lead, photo.id)}
+                                  style={dangerButtonStyle(compact)}
+                                  type="button"
+                                >
+                                  Delete
+                                </button>
+                              </div>
                             ))}
                           </div>
                         ) : (
@@ -867,8 +978,25 @@ function LeadsTab({
                               lead.updates.map((update) => (
                                 <div key={update.id} style={updateRowStyle(compact)}>
                                   <div style={{ color: '#f8fafc', lineHeight: 1.45 }}>{update.text}</div>
-                                  <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12 }}>
-                                    {formatDateTime(update.createdAt)}
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                      alignItems: 'center',
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12 }}>
+                                      {formatDateTime(update.createdAt)}
+                                    </div>
+                                    <button
+                                      onClick={() => void handleDeleteLeadUpdate(lead, update.id)}
+                                      style={dangerButtonStyle(compact)}
+                                      type="button"
+                                    >
+                                      Delete
+                                    </button>
                                   </div>
                                 </div>
                               ))
@@ -942,8 +1070,31 @@ function LeadsTab({
                         <div style={{ fontSize: compact ? 15 : 18, fontWeight: 800 }}>
                           {lead.customerName}
                         </div>
-                        <div style={{ color: '#c9d5e4', fontSize: compact ? 12 : 14 }}>
-                          {lead.vehicle} • {lead.status === 'won' ? 'Won' : 'Lost'}
+                        <div
+                          style={{
+                            color: '#c9d5e4',
+                            fontSize: compact ? 12 : 14,
+                            display: 'flex',
+                            gap: 6,
+                            flexWrap: 'wrap',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span>{lead.vehicle}</span>
+                          <span>•</span>
+                          <span>{lead.status === 'won' ? 'Won' : 'Lost'}</span>
+                          {lead.phoneNumber.trim() ? (
+                            <>
+                              <span>•</span>
+                              <a
+                                href={`tel:${sanitizePhoneNumber(lead.phoneNumber)}`}
+                                style={phoneLinkStyle}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                {lead.phoneNumber}
+                              </a>
+                            </>
+                          ) : null}
                         </div>
                       </div>
 
@@ -1105,8 +1256,25 @@ function LeadsTab({
                               lead.updates.map((update) => (
                                 <div key={update.id} style={updateRowStyle(compact)}>
                                   <div style={{ color: '#f8fafc', lineHeight: 1.45 }}>{update.text}</div>
-                                  <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12 }}>
-                                    {formatDateTime(update.createdAt)}
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                      alignItems: 'center',
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12 }}>
+                                      {formatDateTime(update.createdAt)}
+                                    </div>
+                                    <button
+                                      onClick={() => void handleDeleteLeadUpdate(lead, update.id)}
+                                      style={dangerButtonStyle(compact)}
+                                      type="button"
+                                    >
+                                      Delete
+                                    </button>
                                   </div>
                                 </div>
                               ))
@@ -1135,14 +1303,22 @@ function LeadsTab({
                             {mobile ? (
                               <>
                                 <button
-                                  onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                  onClick={() =>
+                                    canUseNativeMobileCamera()
+                                      ? void handleExistingLeadNativeMobilePhoto(lead, 'camera')
+                                      : leadPhotoInputRefs.current[lead.id]?.click()
+                                  }
                                   style={secondaryButtonStyle(compact)}
                                   type="button"
                                 >
                                   Take Photo
                                 </button>
                                 <button
-                                  onClick={() => leadGalleryInputRefs.current[lead.id]?.click()}
+                                  onClick={() =>
+                                    canUseNativeMobileCamera()
+                                      ? void handleExistingLeadNativeMobilePhoto(lead, 'gallery')
+                                      : leadGalleryInputRefs.current[lead.id]?.click()
+                                  }
                                   style={secondaryButtonStyle(compact)}
                                   type="button"
                                 >
@@ -1151,7 +1327,11 @@ function LeadsTab({
                               </>
                             ) : (
                               <button
-                                onClick={() => leadPhotoInputRefs.current[lead.id]?.click()}
+                                onClick={() =>
+                                  canUseNativeMobileCamera()
+                                    ? void handleExistingLeadNativeMobilePhoto(lead, 'camera')
+                                    : leadPhotoInputRefs.current[lead.id]?.click()
+                                }
                                 style={secondaryButtonStyle(compact)}
                                 type="button"
                               >
@@ -1184,20 +1364,28 @@ function LeadsTab({
                           {lead.photos.length ? (
                             <div style={photoGridStyle}>
                               {lead.photos.map((photo) => (
-                                <button
-                                  key={photo.id}
-                                  onClick={() => {
-                                    setSelectedPhoto(photo);
-                                    setPhotoZoom(1);
-                                  }}
-                                  style={photoThumbButtonStyle(compact)}
-                                  type="button"
-                                >
-                                  <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
-                                  <span style={photoMetaStyle(compact)}>
+                                <div key={photo.id} style={photoCardStyle(compact)}>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedPhoto(photo);
+                                      setPhotoZoom(1);
+                                    }}
+                                    style={photoPreviewButtonStyle}
+                                    type="button"
+                                  >
+                                    <img src={photo.url} alt="Lead photo" style={photoImageStyle} />
+                                  </button>
+                                  <div style={photoMetaStyle(compact)}>
                                     {formatDateTime(photo.createdAt)}
-                                  </span>
-                                </button>
+                                  </div>
+                                  <button
+                                    onClick={() => void handleDeleteLeadPhoto(lead, photo.id)}
+                                    style={dangerButtonStyle(compact)}
+                                    type="button"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
                               ))}
                             </div>
                           ) : (
@@ -1410,6 +1598,12 @@ function sectionToggleLabelStyle(compact: boolean): React.CSSProperties {
     whiteSpace: 'nowrap',
   };
 }
+
+const phoneLinkStyle: React.CSSProperties = {
+  color: '#93c5fd',
+  fontWeight: 800,
+  textDecoration: 'none',
+};
 
 function inputStyle(compact: boolean): React.CSSProperties {
   return {
@@ -1665,6 +1859,11 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function sanitizePhoneNumber(value: string) {
+  const cleaned = value.replace(/[^\d+]/g, '');
+  return cleaned || value;
 }
 
 function formatFileSize(bytes: number) {

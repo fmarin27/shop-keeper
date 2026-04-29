@@ -4,11 +4,14 @@ import { useIsMobile } from './hooks/useIsMobile';
 import ManagerPage from './pages/ManagerPage';
 import ModeChooserPage from './pages/ModeChooserPage';
 import TechPage from './pages/TechPage';
+import { ensureFirebaseSession } from './services/firebase/config';
+import { subscribeToJobs } from './services/firebase/jobs';
 import { appBridge } from './services/platform/appBridge';
 import { MANAGER_MODE_PASSWORD } from './utils/constants';
 import type {
   AppMode,
   DisplayMode,
+  Job,
   MainTab,
   OverlayFocusTarget,
 } from './types/app';
@@ -54,6 +57,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    void ensureFirebaseSession().catch((error) => {
+      console.error('Failed to establish Firebase session:', error);
+    });
+  }, []);
+
+  useEffect(() => {
     const loadSettings = async () => {
       const startedAt = Date.now();
 
@@ -83,6 +92,9 @@ function App() {
     if (!isMobile) return;
     if (displayMode !== 'normal') {
       void handleDisplayModeChange('normal');
+    }
+    if (selectedTab === 'commandCenter' || selectedTab === 'materialsManager') {
+      setSelectedTab('jobs');
     }
   }, [displayMode, isMobile]);
 
@@ -114,6 +126,81 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!appBridge.isDesktop()) {
+      return;
+    }
+
+    let cancelled = false;
+    const folderSyncSignatures: Record<string, string> = {};
+    const jobRecordSyncSignatures: Record<string, string> = {};
+
+    const syncJobsToRoFolders = async (jobs: Job[]) => {
+      for (const job of jobs) {
+        if (cancelled || !job.roNumber.trim()) {
+          continue;
+        }
+
+        const folderSignature = [
+          job.customerName.trim(),
+          job.done ? 'closed' : 'active',
+        ].join('|');
+
+        if (folderSyncSignatures[job.id] !== folderSignature) {
+          try {
+            if (job.done) {
+              await appBridge.moveRoFolderForJob({
+                roNumber: job.roNumber,
+                customerName: job.customerName,
+                done: true,
+              });
+            } else {
+              await appBridge.ensureRoFolderForJob({
+                roNumber: job.roNumber,
+                customerName: job.customerName,
+                done: false,
+              });
+            }
+
+            if (cancelled) {
+              return;
+            }
+
+            folderSyncSignatures[job.id] = folderSignature;
+          } catch (error) {
+            console.error('Failed to sync RO folder from app-level job state:', error);
+          }
+        }
+
+        const jobRecordSignature = JSON.stringify(job);
+        if (jobRecordSyncSignatures[job.id] === jobRecordSignature) {
+          continue;
+        }
+
+        try {
+          await appBridge.saveJobRecordToRoFolder({ job });
+
+          if (cancelled) {
+            return;
+          }
+
+          jobRecordSyncSignatures[job.id] = jobRecordSignature;
+        } catch (error) {
+          console.error('Failed to save app-level job record into RO folder:', error);
+        }
+      }
+    };
+
+    const unsubscribe = subscribeToJobs((jobs) => {
+      void syncJobsToRoFolders(jobs);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
   const applyModeSelect = async (mode: AppMode) => {
     try {
       const settings = await appBridge.setAppMode(mode);
@@ -133,7 +220,10 @@ function App() {
     }
 
     await applyModeSelect(mode);
-    if (mode === 'tech' && selectedTab === 'leads') {
+    if (
+      mode === 'tech' &&
+      (selectedTab === 'leads' || selectedTab === 'materialsManager')
+    ) {
       setSelectedTab('jobs');
     }
   };
@@ -151,7 +241,10 @@ function App() {
 
   const handleSwitchMode = async () => {
     const nextMode: AppMode = appMode === 'manager' ? 'tech' : 'manager';
-    if (nextMode === 'tech' && selectedTab === 'leads') {
+    if (
+      nextMode === 'tech' &&
+      (selectedTab === 'leads' || selectedTab === 'materialsManager')
+    ) {
       setSelectedTab('jobs');
     }
     await handleModeSelect(nextMode);

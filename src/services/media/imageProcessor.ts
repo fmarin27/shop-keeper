@@ -2,6 +2,8 @@ export type ProcessJobImageOptions = {
   addTimestamp: boolean;
   maxDimension?: number;
   quality?: number;
+  targetMaxBytes?: number;
+  minDimension?: number;
 };
 
 export type ProcessedJobImage = {
@@ -14,8 +16,10 @@ export type ProcessedJobImage = {
 
 const DEFAULT_MAX_DIMENSION = 1280;
 const DEFAULT_QUALITY = 0.68;
-const MIN_QUALITY = 0.38;
+const MIN_QUALITY = 0.24;
 const TARGET_MAX_BYTES = 300 * 1024;
+const MIN_DIMENSION = 640;
+const MAX_COMPRESSION_ATTEMPTS = 12;
 const PROCESS_TIMEOUT_MS = 15000;
 
 export async function processJobImage(
@@ -32,6 +36,8 @@ async function processJobImageInternal(
   const source = await loadImage(file);
   const maxDimension = options.maxDimension ?? DEFAULT_MAX_DIMENSION;
   const quality = options.quality ?? DEFAULT_QUALITY;
+  const targetMaxBytes = options.targetMaxBytes ?? TARGET_MAX_BYTES;
+  const minDimension = options.minDimension ?? MIN_DIMENSION;
   const scaled = getScaledSize(source.width, source.height, maxDimension);
 
   const canvas = document.createElement('canvas');
@@ -59,18 +65,18 @@ async function processJobImageInternal(
   let blob = await canvasToJpegBlob(canvas, currentQuality);
 
   let attempts = 0;
-  while (blob.size > TARGET_MAX_BYTES && attempts < 6) {
+  while (blob.size > targetMaxBytes && attempts < MAX_COMPRESSION_ATTEMPTS) {
     attempts += 1;
 
     if (currentQuality > MIN_QUALITY) {
-      currentQuality = Math.max(MIN_QUALITY, currentQuality - 0.07);
+      currentQuality = Math.max(MIN_QUALITY, currentQuality - 0.08);
       await nextFrame();
       blob = await canvasToJpegBlob(canvas, currentQuality);
       continue;
     }
 
-    currentWidth = Math.max(960, Math.round(currentWidth * 0.88));
-    currentHeight = Math.max(960, Math.round(currentHeight * 0.88));
+    currentWidth = Math.max(minDimension, Math.round(currentWidth * 0.84));
+    currentHeight = Math.max(minDimension, Math.round(currentHeight * 0.84));
 
     canvas.width = currentWidth;
     canvas.height = currentHeight;

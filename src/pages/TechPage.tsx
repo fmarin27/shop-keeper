@@ -2,6 +2,7 @@ import type { DisplayMode, MainTab, OverlayFocusTarget } from '../types/app';
 import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
+import CommandCenterTab from '../features/commandCenter/CommandCenterTab';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 type TechPageProps = {
@@ -68,10 +69,13 @@ function TechPage({
         onOpenAttentionJob={onOpenAttentionJob}
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
+        showCommandCenter={!isMobile}
       />
 
       <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
-        {selectedTab === 'jobs' ? (
+        {selectedTab === 'commandCenter' && !isMobile ? (
+          <CommandCenterTab compact={isCompact} mobile={isMobile} />
+        ) : selectedTab === 'jobs' ? (
           <JobsTab
             showAddJob={false}
             compact={isCompact}

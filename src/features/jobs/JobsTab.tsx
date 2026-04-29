@@ -16,6 +16,9 @@ import {
   addAudioNoteToJob,
   addPhotoToJob,
   clearLegacyPartsWaiting,
+  deleteJobNote,
+  deleteJobPart,
+  deletePhotoFromJob,
   markJobPartReceived,
   addTextNoteToJob,
   createJob,
@@ -46,6 +49,7 @@ type AddJobFormState = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   paintCode: string;
   amount: string;
   amountStatus: AmountStatus;
@@ -63,6 +67,7 @@ const initialFormState: AddJobFormState = {
   vehicle: '',
   roNumber: '',
   customerName: '',
+  phoneNumber: '',
   paintCode: '',
   amount: '',
   amountStatus: 'notFinal',
@@ -77,6 +82,13 @@ const initialFormState: AddJobFormState = {
 };
 
 const MITCHELL_SYNC_INTERVAL_MS = 1000 * 30;
+const ACTIVE_JOB_STATUSES: Exclude<JobStatus, 'done'>[] = [
+  'notStarted',
+  'inProgress',
+  'waiting',
+  'waitingOnAppraiser',
+  'supplementNeeded',
+];
 
 function JobsTab({
   showAddJob = false,
@@ -89,8 +101,6 @@ function JobsTab({
 }: JobsTabProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
-  const desktopFolderSyncRef = useRef<Record<string, string>>({});
-  const desktopJobRecordSyncRef = useRef<Record<string, string>>({});
 
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [addJobForm, setAddJobForm] = useState<AddJobFormState>(initialFormState);
@@ -130,78 +140,6 @@ function JobsTab({
 
     return () => unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (!appBridge.isDesktop()) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const syncDesktopRoFolders = async () => {
-      for (const job of jobs) {
-        if (!job.roNumber.trim()) {
-          continue;
-        }
-
-        const nextSignature = [
-          job.customerName.trim(),
-          job.done ? 'closed' : 'active',
-        ].join('|');
-
-        if (desktopFolderSyncRef.current[job.id] === nextSignature) {
-          continue;
-        }
-
-        try {
-          if (job.done) {
-            await appBridge.moveRoFolderForJob({
-              roNumber: job.roNumber,
-              customerName: job.customerName,
-              done: true,
-            });
-          } else {
-            await appBridge.ensureRoFolderForJob({
-              roNumber: job.roNumber,
-              customerName: job.customerName,
-              done: false,
-            });
-          }
-
-          if (cancelled) {
-            return;
-          }
-
-          desktopFolderSyncRef.current[job.id] = nextSignature;
-        } catch (error) {
-          console.error('Failed to sync RO folder from job state:', error);
-        }
-
-        const jobRecordSignature = JSON.stringify(job);
-        if (desktopJobRecordSyncRef.current[job.id] === jobRecordSignature) {
-          continue;
-        }
-
-        try {
-          await appBridge.saveJobRecordToRoFolder({ job });
-
-          if (cancelled) {
-            return;
-          }
-
-          desktopJobRecordSyncRef.current[job.id] = jobRecordSignature;
-        } catch (error) {
-          console.error('Failed to save job record into RO folder:', error);
-        }
-      }
-    };
-
-    void syncDesktopRoFolders();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [jobs]);
 
   useEffect(() => {
     if (!appBridge.isDesktop()) {
@@ -304,10 +242,7 @@ function JobsTab({
     [jobs],
   );
 
-  const visibleActiveJobs = useMemo(
-    () => (compact ? activeJobs.slice(0, 1) : activeJobs),
-    [activeJobs, compact],
-  );
+  const visibleActiveJobs = useMemo(() => activeJobs, [activeJobs]);
 
   const topPriorityJob = visibleActiveJobs[0] ?? null;
 
@@ -363,6 +298,20 @@ function JobsTab({
     await markJobNotesRead(job);
   };
 
+  const handleDeleteNote = async (jobId: string, noteId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deleteJobNote(job, noteId);
+  };
+
+  const handleDeletePhoto = async (jobId: string, photoId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deletePhotoFromJob(job, photoId);
+  };
+
   const handleRequestPart = async (
     jobId: string,
     input: { name: string; quantity: string; note?: string },
@@ -399,6 +348,13 @@ function JobsTab({
     if (!job) return;
 
     await saveJobPartNote(job, partId, note);
+  };
+
+  const handleDeletePart = async (jobId: string, partId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deleteJobPart(job, partId);
   };
 
   const handleSetPartReorderNeeded = async (jobId: string, partId: string) => {
@@ -493,6 +449,7 @@ function JobsTab({
       vehicle,
       roNumber,
       customerName,
+      phoneNumber: addJobForm.phoneNumber.trim(),
       paintCode: addJobForm.paintCode.trim(),
       amount: parsedAmount,
       amountStatus: addJobForm.amountStatus,
@@ -623,7 +580,7 @@ function JobsTab({
           </div>
         ) : null}
 
-        {compact ? (
+        {compact && topPriorityJob ? (
           <div
             style={{
               borderRadius: 16,
@@ -635,9 +592,7 @@ function JobsTab({
               fontWeight: 800,
             }}
           >
-            {topPriorityJob
-              ? 'Compact view shows only the top priority job.'
-              : 'No active jobs right now.'}
+            Compact view is active. Jobs stay fully visible, with {topPriorityJob.vehicle} still at the top.
           </div>
         ) : null}
 
@@ -654,33 +609,36 @@ function JobsTab({
           onAddAudioNote={handleAddAudioNote}
           onAddPhoto={handleAddPhoto}
           onMarkNotesRead={handleMarkNotesRead}
+          onDeleteNote={handleDeleteNote}
+          onDeletePhoto={handleDeletePhoto}
           onRequestPart={handleRequestPart}
           onSetPartOrdered={handleSetPartOrdered}
           onSetPartReorderNeeded={handleSetPartReorderNeeded}
           onMarkPartReceived={handleMarkPartReceived}
           onSavePartNote={handleSavePartNote}
+          onDeletePart={handleDeletePart}
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
           onSetPriorityPosition={handleSetPriorityPosition}
           onUpdateJobDetails={handleUpdateJobDetails}
         />
 
-        {!compact || mobile ? (
-          <CompletedJobsSection
-            jobs={completedJobs}
-            compact={compact}
-            focusedJobId={focusedJobDone ? focusedJobId : null}
-            onFocusedJobHandled={focusedJobDone ? onFocusedJobHandled : undefined}
-            onAddTextNote={handleAddTextNote}
-            onMarkNotesRead={handleMarkNotesRead}
-            onSetPartOrdered={handleSetPartOrdered}
-            onSetPartReorderNeeded={handleSetPartReorderNeeded}
-            onMarkPartReceived={handleMarkPartReceived}
-            onSavePartNote={handleSavePartNote}
-            onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
-            onUpdateJobDetails={handleUpdateJobDetails}
-            onUndoDone={handleUndoDone}
-          />
-        ) : null}
+        <CompletedJobsSection
+          jobs={completedJobs}
+          compact={compact}
+          focusedJobId={focusedJobDone ? focusedJobId : null}
+          onFocusedJobHandled={focusedJobDone ? onFocusedJobHandled : undefined}
+          onAddTextNote={handleAddTextNote}
+          onMarkNotesRead={handleMarkNotesRead}
+          onSetPartOrdered={handleSetPartOrdered}
+          onSetPartReorderNeeded={handleSetPartReorderNeeded}
+          onMarkPartReceived={handleMarkPartReceived}
+          onSavePartNote={handleSavePartNote}
+          onDeleteNote={handleDeleteNote}
+          onDeletePart={handleDeletePart}
+          onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
+          onUpdateJobDetails={handleUpdateJobDetails}
+          onUndoDone={handleUndoDone}
+        />
       </div>
 
       {showAddJobModal ? (
@@ -808,6 +766,13 @@ function JobsTab({
                 />
 
                 <Field
+                  label="Phone Number"
+                  value={addJobForm.phoneNumber}
+                  onChange={(value) => updateForm('phoneNumber', value)}
+                  placeholder="(555) 555-5555"
+                />
+
+                <Field
                   label="Paint Code"
                   value={addJobForm.paintCode}
                   onChange={(value) => updateForm('paintCode', value)}
@@ -842,6 +807,8 @@ function JobsTab({
                     { value: 'notStarted', label: 'Not Started' },
                     { value: 'inProgress', label: 'In Progress' },
                     { value: 'waiting', label: 'Waiting' },
+                    { value: 'waitingOnAppraiser', label: 'Waiting on Appraiser' },
+                    { value: 'supplementNeeded', label: 'Supplement Needed' },
                   ]}
                 />
 
@@ -1174,18 +1141,16 @@ function formatDateTime(value: string) {
 }
 
 function getNextStatus(status: JobStatus): JobStatus {
-  switch (status) {
-    case 'notStarted':
-      return 'inProgress';
-    case 'inProgress':
-      return 'waiting';
-    case 'waiting':
-      return 'notStarted';
-    case 'done':
-      return 'done';
-    default:
-      return 'notStarted';
+  if (status === 'done') {
+    return 'done';
   }
+
+  const currentIndex = ACTIVE_JOB_STATUSES.indexOf(status);
+  if (currentIndex === -1) {
+    return 'notStarted';
+  }
+
+  return ACTIVE_JOB_STATUSES[(currentIndex + 1) % ACTIVE_JOB_STATUSES.length];
 }
 
 export default JobsTab;

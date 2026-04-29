@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { ImapFlow } from 'imapflow';
@@ -50,6 +51,24 @@ const MITCHELL_JOBS_CSV_PATH = path.join(
 const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
 const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
 const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
+const MATERIALS_MANAGER_UNLOCK_CODE = 'UAB-MATERIALS-PRO';
+const MATERIALS_APP_ROOT_PATH = path.join(app.getPath('home'), 'APPS', 'Business Apps', 'Materials App');
+const MATERIALS_APP_ENTRY_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'main.py');
+const MATERIALS_APP_VENV_PYTHON_PATH = path.join(
+  MATERIALS_APP_ROOT_PATH,
+  '.venv',
+  'Scripts',
+  'python.exe',
+);
+const USER_PYTHON_PATH = path.join(
+  app.getPath('home'),
+  'AppData',
+  'Local',
+  'Programs',
+  'Python',
+  'Python311',
+  'python.exe',
+);
 
 type UpdaterStatus =
   | {
@@ -132,6 +151,7 @@ type MitchellJobImport = {
   jobUid: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   vehicle: string;
   amount: number;
   promiseDate: string;
@@ -159,6 +179,7 @@ type RoFolderJobRecord = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber?: string;
   paintCode: string;
   amount: number;
   amountStatus: string;
@@ -267,6 +288,18 @@ function buildMitchellCustomerName(row: Record<string, string>) {
     .join(' ');
 }
 
+function buildMitchellPhoneNumber(row: Record<string, string>) {
+  return (
+    row.CustomerCellPhone?.trim() ||
+    row.CustomerMobilePhone?.trim() ||
+    row.CustomerPhone?.trim() ||
+    row.CustomerDayPhone?.trim() ||
+    row.CustomerEveningPhone?.trim() ||
+    row.CustomerHomePhone?.trim() ||
+    ''
+  );
+}
+
 function getMitchellJobStatus(
   row: Record<string, string>,
 ): MitchellJobImport['status'] {
@@ -318,6 +351,7 @@ function parseMitchellJobsCsv(csvText: string, lastModifiedAt: string): Mitchell
       jobUid: row.JobUid?.trim() ?? '',
       roNumber: row.RONumber?.trim() ?? '',
       customerName: buildMitchellCustomerName(row),
+      phoneNumber: buildMitchellPhoneNumber(row),
       vehicle: buildMitchellVehicle(row),
       amount: parseMitchellNumber(row.TotalAmount ?? ''),
       promiseDate: parseMitchellDate(row.DueOutDate ?? ''),
@@ -334,6 +368,34 @@ function parseMitchellJobsCsv(csvText: string, lastModifiedAt: string): Mitchell
       lastModifiedAt,
     };
   }).filter((job) => job.roNumber && job.vehicle);
+}
+
+function getMaterialsManagerPythonPath() {
+  if (fs.existsSync(MATERIALS_APP_VENV_PYTHON_PATH)) {
+    return MATERIALS_APP_VENV_PYTHON_PATH;
+  }
+
+  if (fs.existsSync(USER_PYTHON_PATH)) {
+    return USER_PYTHON_PATH;
+  }
+
+  return 'python';
+}
+
+async function launchMaterialsManagerApp() {
+  if (!fs.existsSync(MATERIALS_APP_ENTRY_PATH)) {
+    throw new Error(`Materials App entry file was not found at ${MATERIALS_APP_ENTRY_PATH}.`);
+  }
+
+  const pythonPath = getMaterialsManagerPythonPath();
+  const child = spawn(pythonPath, [MATERIALS_APP_ENTRY_PATH], {
+    cwd: MATERIALS_APP_ROOT_PATH,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+
+  child.unref();
 }
 
 function getMitchellJobsSnapshot(): MitchellJobsSnapshot {
@@ -554,6 +616,7 @@ function buildJobNotesText(job: RoFolderJobRecord) {
   const lines: string[] = [
     `RO: ${job.roNumber}`,
     `Customer: ${job.customerName}`,
+    `Phone: ${job.phoneNumber || 'Not set'}`,
     `Vehicle: ${job.vehicle}`,
     `Status: ${job.done ? 'Closed' : 'Active'} / ${job.status}`,
     `Promise Date: ${job.promiseDate || 'Not set'}`,
@@ -1051,6 +1114,23 @@ app.whenReady().then(async () => {
     ) => settingsStore.setOverlayBounds(bounds),
   );
 
+  ipcMain.handle('settings:getMaterialsManagerAccess', () => ({
+    unlocked: settingsStore.getSettings().materialsManagerUnlocked,
+  }));
+
+  ipcMain.handle('settings:unlockMaterialsManager', (_event, accessCode: string) => {
+    const unlocked = accessCode.trim() === MATERIALS_MANAGER_UNLOCK_CODE;
+    const nextSettings = settingsStore.setMaterialsManagerUnlocked(unlocked);
+
+    return {
+      ok: unlocked,
+      message: unlocked
+        ? 'Materials Manager unlocked on this device.'
+        : 'That access code did not work.',
+      settings: nextSettings,
+    };
+  });
+
   ipcMain.handle('window:switchToNormal', () => {
     const nextSettings = settingsStore.setDisplayMode('normal');
 
@@ -1304,6 +1384,32 @@ app.whenReady().then(async () => {
     version: app.getVersion(),
     owner: 'Fernando Marin',
   }));
+
+  ipcMain.handle('materialsManager:launch', async () => {
+    const settings = settingsStore.getSettings();
+    if (!settings.materialsManagerUnlocked) {
+      return {
+        ok: false,
+        message: 'Materials Manager is locked until the add-on is unlocked.',
+      };
+    }
+
+    try {
+      await launchMaterialsManagerApp();
+      return {
+        ok: true,
+        message: 'Materials Manager launched.',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not launch Materials Manager.',
+      };
+    }
+  });
 
   await createWindow();
   setupAutoUpdates();

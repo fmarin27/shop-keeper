@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
@@ -9,7 +10,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './config';
-import { uploadGeneralMessageAudio } from './storage';
+import { deleteStorageFile, uploadGeneralMessageAudio } from './storage';
 import type {
   GeneralMessage,
   MessageAudienceMode,
@@ -47,6 +48,7 @@ export function subscribeToGeneralMessages(
         createdBy: data.createdBy ?? 'manager',
         unreadByManager: data.unreadByManager ?? data.unread ?? false,
         unreadByTech: data.unreadByTech ?? data.unread ?? false,
+        archived: data.archived ?? false,
       };
     });
 
@@ -68,6 +70,7 @@ export async function addTextGeneralMessage(
     unread: createdBy === 'tech',
     unreadByManager: createdBy === 'tech',
     unreadByTech: createdBy === 'manager',
+    archived: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -87,6 +90,7 @@ export async function addAudioGeneralMessage(
     unread: createdBy === 'tech',
     unreadByManager: createdBy === 'tech',
     unreadByTech: createdBy === 'manager',
+    archived: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -106,4 +110,42 @@ export async function markGeneralMessageRead(
         unreadByTech: false,
         updatedAt: serverTimestamp(),
       });
+}
+
+export async function setGeneralMessageArchived(
+  id: string,
+  archived: boolean,
+) {
+  await updateDoc(doc(db, 'generalMessages', id), {
+    archived,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function setGeneralMessageUnreadState(
+  id: string,
+  appMode: MessageAudienceMode,
+  unread: boolean,
+) {
+  await updateDoc(
+    doc(db, 'generalMessages', id),
+    appMode === 'manager'
+      ? {
+          unread,
+          unreadByManager: unread,
+          updatedAt: serverTimestamp(),
+        }
+      : {
+          unreadByTech: unread,
+          updatedAt: serverTimestamp(),
+        },
+  );
+}
+
+export async function deleteGeneralMessage(message: GeneralMessageWithAudio) {
+  if (message.type === 'audio' && message.audioUrl) {
+    await deleteStorageFile(message.audioUrl);
+  }
+
+  await deleteDoc(doc(db, 'generalMessages', message.id));
 }

@@ -13,6 +13,7 @@ import type {
   MaterialRequest,
 } from '../features/messages/types';
 import type { Lead } from '../types/app';
+import packageJson from '../../package.json';
 
 type AppTopBarProps = {
   modeLabel: 'Manager' | 'Tech';
@@ -29,6 +30,8 @@ type AppTopBarProps = {
   onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
+  showCommandCenter?: boolean;
+  showMaterialsManager?: boolean;
 };
 
 function AppTopBar({
@@ -46,10 +49,13 @@ function AppTopBar({
   onOpenAttentionJob,
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
+  showCommandCenter = false,
+  showMaterialsManager = false,
 }: AppTopBarProps) {
   const isCompact = displayMode === 'compact';
   const appMode: MessageAudienceMode =
     modeLabel === 'Manager' ? 'manager' : 'tech';
+  const versionLabel = `v${packageJson.version}`;
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -241,6 +247,17 @@ function AppTopBar({
             Priority View
           </span>
         ) : null}
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: mobile ? 10 : isCompact ? 10 : 11,
+            fontWeight: 700,
+            color: 'rgba(226,232,240,0.78)',
+            letterSpacing: 0.4,
+          }}
+        >
+          {versionLabel}
+        </span>
       </div>
 
       <div
@@ -256,7 +273,9 @@ function AppTopBar({
           onTabChange={onTabChange}
           compact={isCompact}
           mobile={mobile}
+          showCommandCenter={showCommandCenter}
           showLeads={modeLabel === 'Manager'}
+          showMaterialsManager={showMaterialsManager}
           jobsUnreadCount={jobsUnreadCount}
           materialsMessagesUnreadCount={materialsMessagesUnreadCount}
           leadsCount={leads.filter((lead) => lead.status !== 'won' && lead.status !== 'lost').length}

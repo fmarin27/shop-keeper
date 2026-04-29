@@ -2,7 +2,12 @@ export type AppMode = 'manager' | 'tech';
 
 export type DisplayMode = 'normal' | 'compact' | 'overlay';
 
-export type MainTab = 'jobs' | 'materialsMessages' | 'leads';
+export type MainTab =
+  | 'commandCenter'
+  | 'jobs'
+  | 'materialsMessages'
+  | 'leads'
+  | 'materialsManager';
 
 export type OverlayFocusTarget =
   | {
@@ -23,9 +28,16 @@ export type LocalAppSettings = {
   overlayHeight: number;
   overlayX: number | null;
   overlayY: number | null;
+  materialsManagerUnlocked: boolean;
 };
 
-export type JobStatus = 'notStarted' | 'inProgress' | 'waiting' | 'done';
+export type JobStatus =
+  | 'notStarted'
+  | 'inProgress'
+  | 'waiting'
+  | 'waitingOnAppraiser'
+  | 'supplementNeeded'
+  | 'done';
 
 export type AmountStatus = 'final' | 'notFinal';
 
@@ -66,6 +78,7 @@ export type Job = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
@@ -77,12 +90,24 @@ export type Job = {
   textNotes: JobNote[];
   photos: JobPhoto[];
   sortOrder?: number;
+  sourceSystem?: string;
+  sourceJobUid?: string;
+  sourceEstimateId?: string;
+  sourceOpportunityNumber?: string;
+  mitchellEstimatorName?: string;
+  mitchellInsuranceCompany?: string;
+  mitchellClaimNumber?: string;
+  mitchellDepartmentName?: string;
+  mitchellLeadTechName?: string;
+  mitchellProductionStatus?: string;
+  mitchellLastSourceModifiedAt?: string;
 };
 
 export type CreateJobInput = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
@@ -97,6 +122,8 @@ export type CreateJobInput = {
 };
 
 export type UpdateJobDetailsInput = {
+  phoneNumber: string;
+  status: JobStatus;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
@@ -107,6 +134,7 @@ export type MitchellJobImport = {
   jobUid: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   vehicle: string;
   amount: number;
   promiseDate: string;

@@ -6,6 +6,8 @@ type TabBarProps = {
   compact?: boolean;
   mobile?: boolean;
   showLeads?: boolean;
+  showCommandCenter?: boolean;
+  showMaterialsManager?: boolean;
   jobsUnreadCount?: number;
   materialsMessagesUnreadCount?: number;
   leadsCount?: number;
@@ -44,6 +46,8 @@ function TabBar({
   compact = false,
   mobile = false,
   showLeads = false,
+  showCommandCenter = false,
+  showMaterialsManager = false,
   jobsUnreadCount = 0,
   materialsMessagesUnreadCount = 0,
   leadsCount = 0,
@@ -61,6 +65,17 @@ function TabBar({
         width: mobile ? '100%' : 'auto',
       }}
     >
+      {showCommandCenter ? (
+        <TabButton
+          label="RO Command Center"
+          active={selectedTab === 'commandCenter'}
+          compact={compact}
+          mobile={mobile}
+          unreadCount={0}
+          onClick={() => onTabChange('commandCenter')}
+        />
+      ) : null}
+
       <TabButton
         label="Jobs"
         active={selectedTab === 'jobs'}
@@ -87,6 +102,17 @@ function TabBar({
           mobile={mobile}
           unreadCount={leadsCount}
           onClick={() => onTabChange('leads')}
+        />
+      ) : null}
+
+      {showMaterialsManager ? (
+        <TabButton
+          label="Materials Manager"
+          active={selectedTab === 'materialsManager'}
+          compact={compact}
+          mobile={mobile}
+          unreadCount={0}
+          onClick={() => onTabChange('materialsManager')}
         />
       ) : null}
     </div>

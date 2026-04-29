@@ -3,6 +3,8 @@ import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import LeadsTab from '../features/leads/LeadsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
+import CommandCenterTab from '../features/commandCenter/CommandCenterTab';
+import MaterialsManagerTab from '../features/materialsManager/MaterialsManagerTab';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 type ManagerPageProps = {
@@ -69,10 +71,14 @@ function ManagerPage({
         onOpenAttentionJob={onOpenAttentionJob}
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
+        showCommandCenter={!isMobile}
+        showMaterialsManager={!isMobile}
       />
 
       <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
-        {selectedTab === 'jobs' ? (
+        {selectedTab === 'commandCenter' && !isMobile ? (
+          <CommandCenterTab compact={isCompact} mobile={isMobile} />
+        ) : selectedTab === 'jobs' ? (
           <JobsTab
             showAddJob
             compact={isCompact}
@@ -84,6 +90,8 @@ function ManagerPage({
           />
         ) : selectedTab === 'leads' ? (
           <LeadsTab compact={isCompact} mobile={isMobile} />
+        ) : selectedTab === 'materialsManager' && !isMobile ? (
+          <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
         ) : (
           <MaterialsMessagesTab
             appMode="manager"

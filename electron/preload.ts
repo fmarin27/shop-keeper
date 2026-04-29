@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('appBridge', {
   unlockMaterialsManager: (accessCode: string) =>
     ipcRenderer.invoke('settings:unlockMaterialsManager', accessCode),
   getMaterialsManagerAccess: () => ipcRenderer.invoke('settings:getMaterialsManagerAccess'),
+  getMaterialsManagerSnapshot: () => ipcRenderer.invoke('materialsManager:getSnapshot'),
   switchToNormalWindow: () => ipcRenderer.invoke('window:switchToNormal'),
   checkForUpdates: () => ipcRenderer.invoke('updater:checkNow'),
   getUpdaterStatus: () => ipcRenderer.invoke('updater:getStatus'),

@@ -54,6 +54,7 @@ const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
 const MATERIALS_MANAGER_UNLOCK_CODE = 'UAB-MATERIALS-PRO';
 const MATERIALS_APP_ROOT_PATH = path.join(app.getPath('home'), 'APPS', 'Business Apps', 'Materials App');
 const MATERIALS_APP_ENTRY_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'main.py');
+const MATERIALS_APP_DB_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'bodyshop_materials.db');
 const MATERIALS_APP_VENV_PYTHON_PATH = path.join(
   MATERIALS_APP_ROOT_PATH,
   '.venv',
@@ -172,6 +173,50 @@ type MitchellJobsSnapshot = {
   sourcePath: string;
   lastModifiedAt: string;
   jobs: MitchellJobImport[];
+};
+
+type MaterialsManagerSummary = {
+  materialCount: number;
+  invoiceCount: number;
+  invoiceItemCount: number;
+  refundCount: number;
+  catalogValue: number;
+  totalInvoiceSpend: number;
+  latestInvoiceDate: string;
+  latestUpdatedAt: string;
+};
+
+type MaterialsManagerInvoice = {
+  id: number;
+  number: string;
+  date: string;
+  isRefund: boolean;
+  sourceDevice: string;
+  updatedAt: string;
+  lineItemCount: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  materialNames: string[];
+};
+
+type MaterialsManagerMaterial = {
+  id: number;
+  name: string;
+  partNumber: string;
+  netPrice: number;
+  usageCount: number;
+  totalPurchasedQty: number;
+  averageUnitCost: number;
+  lastInvoiceDate: string;
+};
+
+type MaterialsManagerSnapshot = {
+  sourcePath: string;
+  generatedAt: string;
+  summary: MaterialsManagerSummary;
+  recentInvoices: MaterialsManagerInvoice[];
+  materials: MaterialsManagerMaterial[];
 };
 
 type RoFolderJobRecord = {
@@ -396,6 +441,203 @@ async function launchMaterialsManagerApp() {
   });
 
   child.unref();
+}
+
+async function getMaterialsManagerSnapshot(): Promise<MaterialsManagerSnapshot> {
+  if (!fs.existsSync(MATERIALS_APP_DB_PATH)) {
+    throw new Error(`Materials database not found at ${MATERIALS_APP_DB_PATH}.`);
+  }
+
+  const pythonPath = getMaterialsManagerPythonPath();
+  const snapshotScript = `
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+db_path = Path(sys.argv[1])
+if not db_path.exists():
+    raise FileNotFoundError('Materials database not found at ' + str(db_path))
+
+connection = sqlite3.connect(str(db_path))
+connection.row_factory = sqlite3.Row
+cursor = connection.cursor()
+
+def query_one(sql):
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    return dict(row) if row else {}
+
+def query_all(sql):
+    cursor.execute(sql)
+    return [dict(row) for row in cursor.fetchall()]
+
+summary = query_one("""
+SELECT
+  (SELECT COUNT(*) FROM materials) AS materialCount,
+  (SELECT COUNT(*) FROM invoices) AS invoiceCount,
+  (SELECT COUNT(*) FROM invoice_items) AS invoiceItemCount,
+  (SELECT COUNT(*) FROM invoices WHERE COALESCE(is_refund, 0) = 1) AS refundCount,
+  (SELECT COALESCE(SUM(COALESCE(net_price, 0)), 0) FROM materials) AS catalogValue,
+  (
+    SELECT COALESCE(
+      SUM(
+        COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) +
+        CASE
+          WHEN COALESCE(ii.taxable, 0) = 1
+            THEN COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) * COALESCE(ii.tax_rate, 0)
+          ELSE 0
+        END
+      ),
+      0
+    )
+    FROM invoice_items ii
+  ) AS totalInvoiceSpend,
+  (SELECT COALESCE(MAX(date), '') FROM invoices) AS latestInvoiceDate,
+  (SELECT COALESCE(MAX(updated_at), '') FROM invoices) AS latestUpdatedAt
+""")
+
+recent_invoices = query_all("""
+SELECT
+  i.id,
+  COALESCE(i.number, '') AS number,
+  COALESCE(i.date, '') AS date,
+  COALESCE(i.is_refund, 0) AS isRefund,
+  COALESCE(i.source_device, '') AS sourceDevice,
+  COALESCE(i.updated_at, '') AS updatedAt,
+  COUNT(ii.id) AS lineItemCount,
+  COALESCE(SUM(COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0)), 0) AS subtotal,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN COALESCE(ii.taxable, 0) = 1
+          THEN COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) * COALESCE(ii.tax_rate, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS tax,
+  COALESCE(GROUP_CONCAT(DISTINCT m.name), '') AS materialNames
+FROM invoices i
+LEFT JOIN invoice_items ii ON ii.invoice_id = i.id
+LEFT JOIN materials m ON m.id = ii.material_id
+GROUP BY i.id
+ORDER BY COALESCE(i.date, '') DESC, i.id DESC
+LIMIT 40
+""")
+
+materials = query_all("""
+SELECT
+  m.id,
+  COALESCE(m.name, '') AS name,
+  COALESCE(m.part_no, '') AS partNumber,
+  COALESCE(m.net_price, 0) AS netPrice,
+  COUNT(ii.id) AS usageCount,
+  COALESCE(SUM(COALESCE(ii.qty, 0)), 0) AS totalPurchasedQty,
+  COALESCE(AVG(COALESCE(ii.unit_cost, 0)), 0) AS averageUnitCost,
+  COALESCE(MAX(i.date), '') AS lastInvoiceDate
+FROM materials m
+LEFT JOIN invoice_items ii ON ii.material_id = m.id
+LEFT JOIN invoices i ON i.id = ii.invoice_id
+GROUP BY m.id
+ORDER BY LOWER(COALESCE(m.name, '')) ASC
+""")
+
+payload = {
+    'sourcePath': str(db_path),
+    'generatedAt': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+    'summary': {
+        'materialCount': int(summary.get('materialCount') or 0),
+        'invoiceCount': int(summary.get('invoiceCount') or 0),
+        'invoiceItemCount': int(summary.get('invoiceItemCount') or 0),
+        'refundCount': int(summary.get('refundCount') or 0),
+        'catalogValue': float(summary.get('catalogValue') or 0),
+        'totalInvoiceSpend': float(summary.get('totalInvoiceSpend') or 0),
+        'latestInvoiceDate': summary.get('latestInvoiceDate') or '',
+        'latestUpdatedAt': summary.get('latestUpdatedAt') or '',
+    },
+    'recentInvoices': [],
+    'materials': [],
+}
+
+for invoice in recent_invoices:
+    subtotal = float(invoice.get('subtotal') or 0)
+    tax = float(invoice.get('tax') or 0)
+    names = [name.strip() for name in (invoice.get('materialNames') or '').split(',') if name.strip()]
+    payload['recentInvoices'].append({
+        'id': int(invoice.get('id') or 0),
+        'number': invoice.get('number') or '',
+        'date': invoice.get('date') or '',
+        'isRefund': bool(invoice.get('isRefund') or 0),
+        'sourceDevice': invoice.get('sourceDevice') or '',
+        'updatedAt': invoice.get('updatedAt') or '',
+        'lineItemCount': int(invoice.get('lineItemCount') or 0),
+        'subtotal': subtotal,
+        'tax': tax,
+        'total': subtotal + tax,
+        'materialNames': names,
+    })
+
+for material in materials:
+    payload['materials'].append({
+        'id': int(material.get('id') or 0),
+        'name': material.get('name') or '',
+        'partNumber': material.get('partNumber') or '',
+        'netPrice': float(material.get('netPrice') or 0),
+        'usageCount': int(material.get('usageCount') or 0),
+        'totalPurchasedQty': float(material.get('totalPurchasedQty') or 0),
+        'averageUnitCost': float(material.get('averageUnitCost') or 0),
+        'lastInvoiceDate': material.get('lastInvoiceDate') or '',
+    })
+
+print(json.dumps(payload))
+`;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonPath, ['-c', snapshotScript, MATERIALS_APP_DB_PATH], {
+      cwd: MATERIALS_APP_ROOT_PATH,
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            stderr.trim() || `Materials Manager snapshot exited with code ${code ?? 'unknown'}.`,
+          ),
+        );
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout.trim()) as MaterialsManagerSnapshot;
+        resolve(parsed);
+      } catch (error) {
+        reject(
+          new Error(
+            `Could not parse Materials Manager snapshot JSON. ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      }
+    });
+  });
 }
 
 function getMitchellJobsSnapshot(): MitchellJobsSnapshot {
@@ -1384,6 +1626,24 @@ app.whenReady().then(async () => {
     version: app.getVersion(),
     owner: 'Fernando Marin',
   }));
+
+  ipcMain.handle('materialsManager:getSnapshot', async () => {
+    const settings = settingsStore.getSettings();
+    if (!settings.materialsManagerUnlocked) {
+      throw new Error('Materials Manager is locked until the add-on is unlocked.');
+    }
+
+    try {
+      return await getMaterialsManagerSnapshot();
+    } catch (error) {
+      console.error('[materials-manager] Failed to load embedded snapshot:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not load the embedded Materials Manager data.',
+      );
+    }
+  });
 
   ipcMain.handle('materialsManager:launch', async () => {
     const settings = settingsStore.getSettings();

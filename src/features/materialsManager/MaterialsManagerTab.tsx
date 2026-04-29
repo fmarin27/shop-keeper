@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
+import type {
+  MaterialsManagerInvoice,
+  MaterialsManagerMaterial,
+  MaterialsManagerSnapshot,
+} from '../../types/app';
 import { appBridge } from '../../services/platform/appBridge';
 
 type MaterialsManagerTabProps = {
@@ -15,15 +20,44 @@ function MaterialsManagerTab({
   const [accessCode, setAccessCode] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
+  const [snapshot, setSnapshot] = useState<MaterialsManagerSnapshot | null>(null);
+  const [materialsQuery, setMaterialsQuery] = useState('');
+  const [invoiceQuery, setInvoiceQuery] = useState('');
 
   useEffect(() => {
     let mounted = true;
 
-    const loadAccess = async () => {
+    const loadInitialState = async () => {
       try {
         const access = await appBridge.getMaterialsManagerAccess();
-        if (mounted) {
-          setUnlocked(access.unlocked);
+        if (!mounted) {
+          return;
+        }
+
+        setUnlocked(access.unlocked);
+
+        if (access.unlocked) {
+          setIsLoadingSnapshot(true);
+
+          try {
+            const nextSnapshot = await appBridge.getMaterialsManagerSnapshot();
+            if (mounted) {
+              setSnapshot(nextSnapshot);
+            }
+          } catch (error) {
+            if (mounted) {
+              setStatusMessage(
+                error instanceof Error
+                  ? error.message
+                  : 'Could not load Materials Manager data.',
+              );
+            }
+          } finally {
+            if (mounted) {
+              setIsLoadingSnapshot(false);
+            }
+          }
         }
       } catch (error) {
         if (mounted) {
@@ -36,12 +70,33 @@ function MaterialsManagerTab({
       }
     };
 
-    void loadAccess();
+    void loadInitialState();
 
     return () => {
       mounted = false;
     };
   }, []);
+
+  const refreshSnapshot = async (message?: string) => {
+    setIsLoadingSnapshot(true);
+    setStatusMessage(null);
+
+    try {
+      const nextSnapshot = await appBridge.getMaterialsManagerSnapshot();
+      setSnapshot(nextSnapshot);
+      if (message) {
+        setStatusMessage(message);
+      }
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error
+          ? error.message
+          : 'Could not refresh Materials Manager data.',
+      );
+    } finally {
+      setIsLoadingSnapshot(false);
+    }
+  };
 
   const handleUnlock = async () => {
     setIsBusy(true);
@@ -51,8 +106,10 @@ function MaterialsManagerTab({
       const result = await appBridge.unlockMaterialsManager(accessCode);
       setUnlocked(result.settings.materialsManagerUnlocked);
       setStatusMessage(result.message);
+
       if (result.ok) {
         setAccessCode('');
+        await refreshSnapshot('Materials Manager unlocked and connected.');
       }
     } finally {
       setIsBusy(false);
@@ -71,6 +128,59 @@ function MaterialsManagerTab({
     }
   };
 
+  const filteredInvoices = snapshot
+    ? snapshot.recentInvoices
+        .filter((invoice) => matchesInvoice(invoice, invoiceQuery))
+        .slice(0, compact ? 10 : 16)
+    : [];
+
+  const filteredMaterials = snapshot
+    ? snapshot.materials
+        .filter((material) => matchesMaterial(material, materialsQuery))
+        .slice(0, compact ? 18 : 28)
+    : [];
+
+  const topMaterials = snapshot
+    ? [...snapshot.materials]
+        .sort((left, right) => {
+          if (right.usageCount !== left.usageCount) {
+            return right.usageCount - left.usageCount;
+          }
+
+          return right.totalPurchasedQty - left.totalPurchasedQty;
+        })
+        .slice(0, compact ? 6 : 8)
+    : [];
+
+  const summaryCards = snapshot
+    ? [
+        {
+          label: 'Catalog Items',
+          value: formatWholeNumber(snapshot.summary.materialCount),
+          note: `${formatCurrency(snapshot.summary.catalogValue)} in listed material value`,
+        },
+        {
+          label: 'Invoices',
+          value: formatWholeNumber(snapshot.summary.invoiceCount),
+          note: `${formatWholeNumber(snapshot.summary.invoiceItemCount)} invoice lines tracked`,
+        },
+        {
+          label: 'Tracked Spend',
+          value: formatCurrency(snapshot.summary.totalInvoiceSpend),
+          note: snapshot.summary.latestInvoiceDate
+            ? `Latest invoice ${formatDate(snapshot.summary.latestInvoiceDate)}`
+            : 'No invoice dates recorded yet',
+        },
+        {
+          label: 'Refunds',
+          value: formatWholeNumber(snapshot.summary.refundCount),
+          note: snapshot.summary.latestUpdatedAt
+            ? `Last sync source update ${formatDateTime(snapshot.summary.latestUpdatedAt)}`
+            : 'Waiting for source updates',
+        },
+      ]
+    : [];
+
   return (
     <section
       style={{
@@ -78,33 +188,16 @@ function MaterialsManagerTab({
         gap: mobile ? 12 : 16,
       }}
     >
-      <div
-        style={{
-          borderRadius: 24,
-          border: '2px solid rgba(196,207,223,0.42)',
-          background: 'linear-gradient(180deg, rgba(78,94,120,0.97), rgba(43,56,77,0.98))',
-          padding: mobile ? 14 : compact ? 16 : 22,
-          boxShadow: '0 18px 42px rgba(0,0,0,0.16)',
-        }}
-      >
+      <div style={shellPanelStyle(mobile, compact)}>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: mobile ? '1fr' : 'minmax(0, 1.15fr) minmax(320px, 0.85fr)',
+            gridTemplateColumns: mobile ? '1fr' : 'minmax(0, 1.15fr) minmax(340px, 0.85fr)',
             gap: mobile ? 14 : 20,
           }}
         >
-          <div
-            style={{
-              borderRadius: 20,
-              border: '1px solid rgba(148,163,184,0.22)',
-              background: 'rgba(8,16,28,0.35)',
-              padding: mobile ? 16 : 22,
-            }}
-          >
-            <div style={{ color: '#9fc2ff', fontWeight: 900, fontSize: 12, letterSpacing: 0.7 }}>
-              PREMIUM ADD-ON
-            </div>
+          <div style={featurePanelStyle(mobile)}>
+            <div style={eyebrowStyle('#9fc2ff')}>PREMIUM ADD-ON</div>
             <h2
               style={{
                 margin: '8px 0 10px',
@@ -121,12 +214,12 @@ function MaterialsManagerTab({
                 color: '#d7e3f4',
                 fontSize: mobile ? 13 : 15,
                 lineHeight: 1.55,
-                maxWidth: 740,
+                maxWidth: 760,
               }}
             >
-              This connects Shop Keeper to your separate materials and invoice workflow so office
-              staff can launch the dedicated materials program from one place. It is intentionally
-              gated as a paid add-on for shops that want the extra purchasing and invoice tools.
+              This add-on now pulls the real materials database into Shop Keeper so office staff
+              can work invoices and material records from the same desktop app. The original
+              Materials App is still available as a fallback for anything we have not embedded yet.
             </p>
 
             <div
@@ -137,9 +230,9 @@ function MaterialsManagerTab({
               }}
             >
               {[
-                'Launch the dedicated Materials App from inside Shop Keeper',
-                'Keep Repair Orders and materials workflow side-by-side on desktop',
-                'Set this up as a premium add-on instead of bundling it into the base app',
+                'Review the live materials catalog and recent invoices without leaving Shop Keeper',
+                'Keep the premium tools behind a paid unlock instead of bundling them into the base app',
+                'Open the original Materials App only when you need the legacy workflow',
               ].map((item) => (
                 <div
                   key={item}
@@ -151,7 +244,7 @@ function MaterialsManagerTab({
                     fontWeight: 700,
                   }}
                 >
-                  <span style={{ color: '#60a5fa' }}>•</span>
+                  <span style={{ color: '#60a5fa' }}>*</span>
                   <span>{item}</span>
                 </div>
               ))}
@@ -180,7 +273,7 @@ function MaterialsManagerTab({
                   color: unlocked ? '#9ef7ba' : '#fcd34d',
                 }}
               >
-                {unlocked ? 'UNLOCKED ON THIS DEVICE' : 'LOCKED'}
+                {unlocked ? 'LIVE DESKTOP DATABASE' : 'LOCKED'}
               </div>
               <div
                 style={{
@@ -190,7 +283,7 @@ function MaterialsManagerTab({
                   color: '#ffffff',
                 }}
               >
-                {unlocked ? 'Materials Manager Ready' : 'Upgrade Required'}
+                {unlocked ? 'Materials Workspace Ready' : 'Upgrade Required'}
               </div>
             </div>
 
@@ -203,7 +296,7 @@ function MaterialsManagerTab({
                     lineHeight: 1.5,
                   }}
                 >
-                  Use your paid add-on access code to unlock the Materials Manager launcher for
+                  Use your paid add-on access code to unlock the embedded materials workspace on
                   this desktop install.
                 </div>
 
@@ -211,16 +304,7 @@ function MaterialsManagerTab({
                   value={accessCode}
                   onChange={(event) => setAccessCode(event.target.value)}
                   placeholder="Enter Materials Manager access code"
-                  style={{
-                    borderRadius: 12,
-                    border: '1px solid rgba(251,191,36,0.3)',
-                    background: 'rgba(15,23,42,0.78)',
-                    color: '#f8fbff',
-                    padding: '12px 14px',
-                    fontSize: 14,
-                    fontWeight: 700,
-                    outline: 'none',
-                  }}
+                  style={inputStyle}
                 />
 
                 <button
@@ -241,41 +325,498 @@ function MaterialsManagerTab({
                     lineHeight: 1.5,
                   }}
                 >
-                  The add-on is unlocked here. You can launch the dedicated Materials App directly
-                  from Shop Keeper.
+                  {snapshot
+                    ? `Connected to ${snapshot.sourcePath}. Refresh any time to pull the latest material and invoice data.`
+                    : 'The add-on is unlocked. Load the latest material and invoice data below.'}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => void handleLaunch()}
-                  disabled={isBusy}
-                  style={primaryButtonStyle(isBusy, '#059669')}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                  }}
                 >
-                  {isBusy ? 'Launching...' : 'Open Materials Manager'}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => void refreshSnapshot('Materials data refreshed.')}
+                    disabled={isLoadingSnapshot}
+                    style={primaryButtonStyle(isLoadingSnapshot, '#2563eb')}
+                  >
+                    {isLoadingSnapshot ? 'Refreshing...' : 'Refresh Embedded Data'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleLaunch()}
+                    disabled={isBusy}
+                    style={secondaryButtonStyle(isBusy)}
+                  >
+                    {isBusy ? 'Opening...' : 'Open Legacy Materials App'}
+                  </button>
+                </div>
               </>
             )}
 
             {statusMessage ? (
-              <div
-                style={{
-                  borderRadius: 12,
-                  border: '1px solid rgba(148,163,184,0.2)',
-                  background: 'rgba(15,23,42,0.55)',
-                  color: '#e2ecf9',
-                  padding: '12px 14px',
-                  fontSize: 13,
-                  fontWeight: 700,
-                }}
-              >
-                {statusMessage}
-              </div>
+              <div style={messageBoxStyle}>{statusMessage}</div>
             ) : null}
           </div>
         </div>
       </div>
+
+      {unlocked ? (
+        <>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: mobile ? '1fr' : compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
+              gap: 12,
+            }}
+          >
+            {summaryCards.map((card) => (
+              <article key={card.label} style={summaryCardStyle}>
+                <div style={eyebrowStyle('#9fc2ff')}>{card.label}</div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: '#ffffff',
+                    fontSize: compact ? 26 : 30,
+                    fontWeight: 900,
+                  }}
+                >
+                  {card.value}
+                </div>
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: '#d8e3f1',
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {card.note}
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: mobile ? '1fr' : 'minmax(0, 1.2fr) minmax(320px, 0.8fr)',
+              gap: 16,
+            }}
+          >
+            <section style={workspaceCardStyle}>
+              <div style={cardHeaderRowStyle}>
+                <div>
+                  <div style={eyebrowStyle('#8fd8ff')}>INVOICES</div>
+                  <h3 style={cardTitleStyle}>Recent Invoice Flow</h3>
+                </div>
+                <input
+                  value={invoiceQuery}
+                  onChange={(event) => setInvoiceQuery(event.target.value)}
+                  placeholder="Search invoice number or item"
+                  style={searchInputStyle}
+                />
+              </div>
+
+              <div style={tableShellStyle}>
+                {filteredInvoices.length ? (
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={tableHeadStyle}>Invoice</th>
+                        <th style={tableHeadStyle}>Date</th>
+                        <th style={tableHeadStyle}>Items</th>
+                        <th style={tableHeadStyle}>Total</th>
+                        <th style={tableHeadStyle}>Materials</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredInvoices.map((invoice) => (
+                        <tr key={invoice.id}>
+                          <td style={tableCellStyle}>
+                            <div style={{ color: '#ffffff', fontWeight: 800 }}>
+                              {invoice.number || `Invoice ${invoice.id}`}
+                            </div>
+                            <div style={tableSubtleStyle}>
+                              {invoice.isRefund ? 'Refund' : 'Purchase'}
+                            </div>
+                          </td>
+                          <td style={tableCellStyle}>{formatDate(invoice.date)}</td>
+                          <td style={tableCellStyle}>
+                            <div style={{ fontWeight: 700 }}>{formatWholeNumber(invoice.lineItemCount)}</div>
+                            <div style={tableSubtleStyle}>{invoice.sourceDevice || 'Local device'}</div>
+                          </td>
+                          <td style={tableCellStyle}>
+                            <div style={{ fontWeight: 800, color: '#f8fbff' }}>
+                              {formatCurrency(invoice.total)}
+                            </div>
+                            <div style={tableSubtleStyle}>
+                              {formatCurrency(invoice.subtotal)} + {formatCurrency(invoice.tax)} tax
+                            </div>
+                          </td>
+                          <td style={tableCellStyle}>
+                            <div style={tagWrapStyle}>
+                              {(invoice.materialNames.length
+                                ? invoice.materialNames
+                                : ['No material lines'])
+                                .slice(0, 3)
+                                .map((name) => (
+                                  <span key={`${invoice.id}-${name}`} style={tagStyle}>
+                                    {name}
+                                  </span>
+                                ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <EmptyState message="No invoices match that search yet." />
+                )}
+              </div>
+            </section>
+
+            <section style={workspaceCardStyle}>
+              <div style={cardHeaderRowStyle}>
+                <div>
+                  <div style={eyebrowStyle('#8fd8ff')}>MOST USED</div>
+                  <h3 style={cardTitleStyle}>Top Materials</h3>
+                </div>
+              </div>
+
+              {topMaterials.length ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {topMaterials.map((material) => (
+                    <article key={material.id} style={stackedListItemStyle}>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <div style={{ color: '#ffffff', fontSize: 16, fontWeight: 800 }}>
+                          {material.name}
+                        </div>
+                        <div style={tableSubtleStyle}>
+                          {material.partNumber || 'No part number'} | last bought{' '}
+                          {formatDate(material.lastInvoiceDate)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', justifyItems: 'end', gap: 4 }}>
+                        <div style={{ color: '#9fc2ff', fontWeight: 900 }}>
+                          {formatWholeNumber(material.usageCount)} uses
+                        </div>
+                        <div style={tableSubtleStyle}>
+                          Qty {formatDecimal(material.totalPurchasedQty)} | avg{' '}
+                          {formatCurrency(material.averageUnitCost)}
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState message="No material activity has been recorded yet." />
+              )}
+            </section>
+          </div>
+
+          <section style={workspaceCardStyle}>
+            <div style={cardHeaderRowStyle}>
+              <div>
+                <div style={eyebrowStyle('#8fd8ff')}>CATALOG</div>
+                <h3 style={cardTitleStyle}>Materials Catalog</h3>
+              </div>
+              <input
+                value={materialsQuery}
+                onChange={(event) => setMaterialsQuery(event.target.value)}
+                placeholder="Search material or part number"
+                style={searchInputStyle}
+              />
+            </div>
+
+            <div style={tableShellStyle}>
+              {filteredMaterials.length ? (
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={tableHeadStyle}>Material</th>
+                      <th style={tableHeadStyle}>Part #</th>
+                      <th style={tableHeadStyle}>Catalog</th>
+                      <th style={tableHeadStyle}>Usage</th>
+                      <th style={tableHeadStyle}>Average Cost</th>
+                      <th style={tableHeadStyle}>Last Invoice</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMaterials.map((material) => (
+                      <tr key={material.id}>
+                        <td style={tableCellStyle}>
+                          <div style={{ color: '#ffffff', fontWeight: 800 }}>{material.name}</div>
+                        </td>
+                        <td style={tableCellStyle}>{material.partNumber || '-'}</td>
+                        <td style={tableCellStyle}>{formatCurrency(material.netPrice)}</td>
+                        <td style={tableCellStyle}>
+                          <div style={{ fontWeight: 800 }}>{formatWholeNumber(material.usageCount)}</div>
+                          <div style={tableSubtleStyle}>
+                            Qty {formatDecimal(material.totalPurchasedQty)}
+                          </div>
+                        </td>
+                        <td style={tableCellStyle}>{formatCurrency(material.averageUnitCost)}</td>
+                        <td style={tableCellStyle}>{formatDate(material.lastInvoiceDate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <EmptyState message="No materials match that search yet." />
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
     </section>
   );
+}
+
+function matchesInvoice(invoice: MaterialsManagerInvoice, query: string) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) {
+    return true;
+  }
+
+  return (
+    invoice.number.toLowerCase().includes(trimmed) ||
+    invoice.materialNames.some((name) => name.toLowerCase().includes(trimmed))
+  );
+}
+
+function matchesMaterial(material: MaterialsManagerMaterial, query: string) {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) {
+    return true;
+  }
+
+  return (
+    material.name.toLowerCase().includes(trimmed) ||
+    material.partNumber.toLowerCase().includes(trimmed)
+  );
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+}
+
+function formatWholeNumber(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: 0,
+  }).format(value || 0);
+}
+
+function formatDecimal(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 1,
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+}
+
+function formatDate(value: string) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleDateString();
+}
+
+function formatDateTime(value: string) {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        border: '1px dashed rgba(148,163,184,0.28)',
+        background: 'rgba(15,23,42,0.5)',
+        color: '#d4deed',
+        padding: '22px 18px',
+        textAlign: 'center',
+        fontWeight: 700,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+const inputStyle: CSSProperties = {
+  borderRadius: 12,
+  border: '1px solid rgba(251,191,36,0.3)',
+  background: 'rgba(15,23,42,0.78)',
+  color: '#f8fbff',
+  padding: '12px 14px',
+  fontSize: 14,
+  fontWeight: 700,
+  outline: 'none',
+};
+
+const searchInputStyle: CSSProperties = {
+  ...inputStyle,
+  border: '1px solid rgba(96,165,250,0.22)',
+  minWidth: 220,
+};
+
+const summaryCardStyle: CSSProperties = {
+  borderRadius: 22,
+  border: '1px solid rgba(148,163,184,0.2)',
+  background: 'linear-gradient(180deg, rgba(54,72,96,0.95), rgba(31,41,59,0.96))',
+  padding: 18,
+  boxShadow: '0 14px 30px rgba(0,0,0,0.12)',
+};
+
+const workspaceCardStyle: CSSProperties = {
+  borderRadius: 22,
+  border: '1px solid rgba(148,163,184,0.2)',
+  background: 'linear-gradient(180deg, rgba(55,72,96,0.95), rgba(35,45,62,0.98))',
+  padding: 18,
+  display: 'grid',
+  gap: 14,
+  boxShadow: '0 18px 36px rgba(0,0,0,0.14)',
+};
+
+const tableShellStyle: CSSProperties = {
+  borderRadius: 18,
+  border: '1px solid rgba(148,163,184,0.16)',
+  background: 'rgba(15,23,42,0.48)',
+  overflow: 'hidden',
+};
+
+const tableStyle: CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+};
+
+const tableHeadStyle: CSSProperties = {
+  color: '#9fc2ff',
+  fontSize: 12,
+  fontWeight: 900,
+  letterSpacing: 0.5,
+  textAlign: 'left',
+  padding: '14px 14px 12px',
+  borderBottom: '1px solid rgba(148,163,184,0.16)',
+  background: 'rgba(8,15,28,0.42)',
+};
+
+const tableCellStyle: CSSProperties = {
+  color: '#dce7f5',
+  padding: '14px',
+  verticalAlign: 'top',
+  borderBottom: '1px solid rgba(148,163,184,0.1)',
+  fontSize: 14,
+};
+
+const tableSubtleStyle: CSSProperties = {
+  color: '#97a8be',
+  fontSize: 12,
+  lineHeight: 1.4,
+};
+
+const cardHeaderRowStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  justifyContent: 'space-between',
+  gap: 12,
+  alignItems: 'center',
+};
+
+const cardTitleStyle: CSSProperties = {
+  margin: '4px 0 0',
+  color: '#ffffff',
+  fontSize: 24,
+  fontWeight: 900,
+};
+
+const tagWrapStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+};
+
+const tagStyle: CSSProperties = {
+  borderRadius: 999,
+  border: '1px solid rgba(96,165,250,0.24)',
+  background: 'rgba(30,64,175,0.22)',
+  color: '#dbeafe',
+  padding: '4px 10px',
+  fontSize: 12,
+  fontWeight: 700,
+};
+
+const stackedListItemStyle: CSSProperties = {
+  borderRadius: 16,
+  border: '1px solid rgba(148,163,184,0.16)',
+  background: 'rgba(13,21,35,0.46)',
+  padding: '14px 16px',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: 12,
+  alignItems: 'center',
+};
+
+const messageBoxStyle: CSSProperties = {
+  borderRadius: 12,
+  border: '1px solid rgba(148,163,184,0.2)',
+  background: 'rgba(15,23,42,0.55)',
+  color: '#e2ecf9',
+  padding: '12px 14px',
+  fontSize: 13,
+  fontWeight: 700,
+};
+
+function shellPanelStyle(mobile: boolean, compact: boolean): CSSProperties {
+  return {
+    borderRadius: 24,
+    border: '2px solid rgba(196,207,223,0.42)',
+    background: 'linear-gradient(180deg, rgba(78,94,120,0.97), rgba(43,56,77,0.98))',
+    padding: mobile ? 14 : compact ? 16 : 22,
+    boxShadow: '0 18px 42px rgba(0,0,0,0.16)',
+  };
+}
+
+function featurePanelStyle(mobile: boolean): CSSProperties {
+  return {
+    borderRadius: 20,
+    border: '1px solid rgba(148,163,184,0.22)',
+    background: 'rgba(8,16,28,0.35)',
+    padding: mobile ? 16 : 22,
+  };
+}
+
+function eyebrowStyle(color: string): CSSProperties {
+  return {
+    color,
+    fontWeight: 900,
+    fontSize: 12,
+    letterSpacing: 0.7,
+  };
 }
 
 function primaryButtonStyle(disabled: boolean, borderColor: string): CSSProperties {
@@ -283,6 +824,20 @@ function primaryButtonStyle(disabled: boolean, borderColor: string): CSSProperti
     borderRadius: 14,
     border: `1px solid ${borderColor}`,
     background: disabled ? '#5b6678' : '#1d4ed8',
+    color: '#f8fbff',
+    padding: '13px 16px',
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.82 : 1,
+  };
+}
+
+function secondaryButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    borderRadius: 14,
+    border: '1px solid rgba(148,163,184,0.26)',
+    background: disabled ? '#4b5563' : 'rgba(15,23,42,0.6)',
     color: '#f8fbff',
     padding: '13px 16px',
     fontSize: 14,

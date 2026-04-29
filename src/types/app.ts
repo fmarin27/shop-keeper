@@ -157,6 +157,50 @@ export type MitchellJobsSnapshot = {
   jobs: MitchellJobImport[];
 };
 
+export type MaterialsManagerSummary = {
+  materialCount: number;
+  invoiceCount: number;
+  invoiceItemCount: number;
+  refundCount: number;
+  catalogValue: number;
+  totalInvoiceSpend: number;
+  latestInvoiceDate: string;
+  latestUpdatedAt: string;
+};
+
+export type MaterialsManagerInvoice = {
+  id: number;
+  number: string;
+  date: string;
+  isRefund: boolean;
+  sourceDevice: string;
+  updatedAt: string;
+  lineItemCount: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  materialNames: string[];
+};
+
+export type MaterialsManagerMaterial = {
+  id: number;
+  name: string;
+  partNumber: string;
+  netPrice: number;
+  usageCount: number;
+  totalPurchasedQty: number;
+  averageUnitCost: number;
+  lastInvoiceDate: string;
+};
+
+export type MaterialsManagerSnapshot = {
+  sourcePath: string;
+  generatedAt: string;
+  summary: MaterialsManagerSummary;
+  recentInvoices: MaterialsManagerInvoice[];
+  materials: MaterialsManagerMaterial[];
+};
+
 export type LeadStatus =
   | 'new'
   | 'contacted'

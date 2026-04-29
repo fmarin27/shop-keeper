@@ -5,6 +5,7 @@ import type {
   DisplayMode,
   Job,
   LocalAppSettings,
+  MaterialsManagerSnapshot,
   MitchellJobsSnapshot,
 } from './types/app';
 
@@ -29,6 +30,7 @@ declare global {
     getMaterialsManagerAccess: () => Promise<{
       unlocked: boolean;
     }>;
+    getMaterialsManagerSnapshot: () => Promise<MaterialsManagerSnapshot>;
     switchToNormalWindow: () => Promise<void>;
     checkForUpdates: () => Promise<UpdateCheckResult>;
     getUpdaterStatus: () => Promise<UpdaterStatus>;

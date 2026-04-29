@@ -4,6 +4,7 @@ import type {
   DisplayMode,
   Job,
   LocalAppSettings,
+  MaterialsManagerSnapshot,
   MitchellJobsSnapshot,
 } from '../../types/app';
 
@@ -69,6 +70,7 @@ type AppBridge = {
   getMaterialsManagerAccess: () => Promise<{
     unlocked: boolean;
   }>;
+  getMaterialsManagerSnapshot: () => Promise<MaterialsManagerSnapshot>;
   switchToNormalWindow: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateCheckResult>;
   getUpdaterStatus: () => Promise<UpdaterStatus>;
@@ -393,6 +395,15 @@ export const appBridge = {
     return {
       unlocked: readWebSettings().materialsManagerUnlocked,
     };
+  },
+
+  async getMaterialsManagerSnapshot() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.getMaterialsManagerSnapshot();
+    }
+
+    throw new Error('Materials Manager data is only available in the desktop app.');
   },
 
   async checkForUpdates() {

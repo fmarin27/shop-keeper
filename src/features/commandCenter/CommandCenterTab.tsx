@@ -547,7 +547,7 @@ function CommandCenterTab({
                   />
                   <DetailRow
                     label="Parts"
-                    value={`${getPartsOrderedLabel(selectedJob)} / ${getPartsReceivedPercent(selectedJob)} received`}
+                    value={getPartsDetailSummary(selectedJob)}
                   />
                 </div>
 
@@ -1505,7 +1505,7 @@ function getCommandCenterSortValue(job: Job, key: CommandCenterSortKey) {
     case 'parts':
       return getPartsOrderedLabel(job);
     case 'received':
-      return Number(getPartsReceivedPercent(job));
+      return getPartsReceivedSortValue(job);
     default:
       return '';
   }
@@ -1535,10 +1535,41 @@ function getPartItems(job: Job) {
   return (job.partsRequests ?? []).filter((part) => (part.kind ?? 'part') === 'part');
 }
 
+function getEstimatePartItems(job: Job) {
+  return (job.estimateLines ?? []).filter(isOrderableEstimatePart);
+}
+
+function isOrderableEstimatePart(line: EmsEstimateLine) {
+  if (isRefinishEstimateLine(line)) return false;
+  if (line.isOrderablePart) return true;
+
+  const kind = String(line.lineKind ?? '').trim().toLowerCase();
+  if (kind) return kind === 'part';
+
+  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+}
+
+function isRefinishEstimateLine(line: EmsEstimateLine) {
+  const label = [
+    line.operationLabel,
+    line.operationCategory,
+    line.laborType,
+  ]
+    .map((value) => String(value ?? '').toLowerCase())
+    .join(' ');
+
+  return label.includes('refinish') || label.includes('paint');
+}
+
 function getPartsOrderedLabel(job: Job) {
   const parts = getPartItems(job);
   if (parts.length || job.partsWaiting) {
     return 'Yes';
+  }
+
+  const estimateParts = getEstimatePartItems(job);
+  if (estimateParts.length) {
+    return `${estimateParts.length} estimate`;
   }
 
   return 'No';
@@ -1547,11 +1578,36 @@ function getPartsOrderedLabel(job: Job) {
 function getPartsReceivedPercent(job: Job) {
   const parts = getPartItems(job);
   if (!parts.length) {
-    return job.partsWaiting ? '0' : '100';
+    return getEstimatePartItems(job).length ? 'N/A' : job.partsWaiting ? '0' : '100';
   }
 
   const received = parts.filter((part) => part.status === 'received').length;
   return String(Math.round((received / parts.length) * 100));
+}
+
+function getPartsReceivedSortValue(job: Job) {
+  const parts = getPartItems(job);
+  if (!parts.length) {
+    return job.partsWaiting ? 0 : 100;
+  }
+
+  const received = parts.filter((part) => part.status === 'received').length;
+  return Math.round((received / parts.length) * 100);
+}
+
+function getPartsDetailSummary(job: Job) {
+  const liveParts = getPartItems(job);
+  const estimateParts = getEstimatePartItems(job);
+
+  if (liveParts.length) {
+    return `${liveParts.length} live / ${getPartsReceivedPercent(job)}% received`;
+  }
+
+  if (estimateParts.length) {
+    return `${estimateParts.length} estimate part${estimateParts.length === 1 ? '' : 's'} / no live requests`;
+  }
+
+  return job.partsWaiting ? 'Waiting flag set / no parts listed' : 'No parts listed';
 }
 
 function sanitizePhoneNumber(value: string) {

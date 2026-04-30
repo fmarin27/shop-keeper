@@ -2218,6 +2218,7 @@ function PartsPanel({
   onClearLegacyPartsWaiting: () => void;
 }) {
   const parts = job.partsRequests ?? [];
+  const estimateParts = getEstimatePartLines(job);
   const pendingCount = parts.filter(
     (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
   ).length;
@@ -2255,9 +2256,92 @@ function PartsPanel({
         </div>
 
         <span style={partsSummaryBadgeStyle(compact, pendingCount > 0 || unpaidSubletCount > 0)}>
-          {formatPartsPanelSummary(pendingCount, unpaidSubletCount)}
+          {estimateParts.length && !pendingCount && !unpaidSubletCount
+            ? `${estimateParts.length} estimate part${estimateParts.length === 1 ? '' : 's'}`
+            : formatPartsPanelSummary(pendingCount, unpaidSubletCount)}
         </span>
       </div>
+
+      {estimateParts.length ? (
+        <div
+          style={{
+            borderRadius: compact ? 12 : 14,
+            padding: compact ? 10 : 12,
+            background: 'rgba(15,24,42,0.98)',
+            border: '2px solid rgba(96,165,250,0.26)',
+            display: 'grid',
+            gap: 10,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 10,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <div style={{ color: '#eff6ff', fontSize: compact ? 13 : 15, fontWeight: 900 }}>
+                Estimate Parts
+              </div>
+              <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
+                Read-only EMS parts from the estimate. Use Live Requests below only when you actually need to order or track one.
+              </div>
+            </div>
+            <span
+              style={{
+                borderRadius: 999,
+                padding: compact ? '5px 8px' : '6px 10px',
+                background: 'rgba(37,99,235,0.22)',
+                border: '1px solid rgba(147,197,253,0.36)',
+                color: '#dbeafe',
+                fontSize: compact ? 11 : 12,
+                fontWeight: 900,
+              }}
+            >
+              {estimateParts.length} part{estimateParts.length === 1 ? '' : 's'} on estimate
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gap: 8 }}>
+            {estimateParts.map((line) => (
+              <div
+                key={line.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) auto',
+                  gap: compact ? 6 : 10,
+                  padding: compact ? 9 : 10,
+                  borderRadius: compact ? 10 : 12,
+                  background: 'rgba(8,15,28,0.76)',
+                  border: '1px solid rgba(148,163,184,0.16)',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#f8fafc', fontSize: compact ? 12 : 13, fontWeight: 900 }}>
+                    {line.description || 'Estimate part'}
+                  </div>
+                  <div style={{ color: '#9fb3cb', fontSize: compact ? 10 : 11, fontWeight: 800 }}>
+                    Line {line.lineNumber || '-'}{line.partNumber ? ` | Part # ${line.partNumber}` : ''}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    color: '#dbeafe',
+                    fontSize: compact ? 11 : 12,
+                    fontWeight: 900,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Qty {line.quantity || 1} | {formatEstimatePartAmount(line)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -2275,7 +2359,7 @@ function PartsPanel({
               name: event.target.value,
             })
           }
-          placeholder="Part name"
+          placeholder="Live request part name"
           style={inputStyle(compact)}
         />
         <input
@@ -3433,6 +3517,10 @@ function getEstimatePartAmount(line: EstimateLineForDisplay) {
 
 function getOrderablePartsTotal(lines: EstimateLineForDisplay[]) {
   return lines.reduce((total, line) => total + getEstimatePartAmount(line), 0);
+}
+
+function getEstimatePartLines(job: Job) {
+  return (job.estimateLines ?? []).filter(isOrderableEstimatePart);
 }
 
 function formatEstimatePartAmount(line: EstimateLineForDisplay) {

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { subscribeToJobs, updateJobDetails } from '../../services/firebase/jobs';
-import type { AmountStatus, Job } from '../../types/app';
+import {
+  markJobLaborDone,
+  markJobLaborPaid,
+  reopenJobLabor,
+  subscribeToJobs,
+  updateJobDetails,
+} from '../../services/firebase/jobs';
+import type { AmountStatus, EmsEstimateLine, Job } from '../../types/app';
 import EmsImportPanel from '../ems/EmsImportPanel';
 
 type CommandCenterTabProps = {
@@ -45,6 +51,16 @@ type CommandCenterDraft = {
   status: Job['status'];
 };
 
+type CommandCenterLaborLine = {
+  id: string;
+  estimateLineId: string;
+  lineNumber: string;
+  description: string;
+  laborType: string;
+  laborHours: number;
+  laborAmount: number;
+};
+
 function CommandCenterTab({
   compact = false,
   mobile = false,
@@ -61,6 +77,9 @@ function CommandCenterTab({
   const [detailDraft, setDetailDraft] = useState<CommandCenterDraft | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [laborTechDrafts, setLaborTechDrafts] = useState<Record<string, string>>({});
+  const [savingLaborId, setSavingLaborId] = useState<string | null>(null);
+  const [laborError, setLaborError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToJobs((items) => {
@@ -155,7 +174,18 @@ function CommandCenterTab({
       promiseDate: selectedJob.promiseDate,
       status: selectedJob.status,
     });
+    setLaborTechDrafts(
+      Object.fromEntries(
+        getJobLaborLines(selectedJob).map((line) => [
+          line.id,
+          getLaborCompletion(selectedJob, line.id)?.completedBy ||
+            selectedJob.mitchellLeadTechName ||
+            '',
+        ]),
+      ),
+    );
     setDetailError(null);
+    setLaborError(null);
   }, [selectedJob?.id]);
 
   const saveSelectedJobDetails = async () => {
@@ -191,6 +221,60 @@ function CommandCenterTab({
       );
     } finally {
       setSavingDetails(false);
+    }
+  };
+
+  const markSelectedLaborDone = async (line: CommandCenterLaborLine) => {
+    if (!selectedJob) return;
+
+    try {
+      setSavingLaborId(line.id);
+      setLaborError(null);
+      await markJobLaborDone(selectedJob, {
+        ...line,
+        completedBy:
+          laborTechDrafts[line.id] ||
+          selectedJob.mitchellLeadTechName ||
+          '',
+      });
+    } catch (error) {
+      setLaborError(
+        error instanceof Error ? error.message : 'Could not mark labor done.',
+      );
+    } finally {
+      setSavingLaborId(null);
+    }
+  };
+
+  const markSelectedLaborPaid = async (laborId: string) => {
+    if (!selectedJob) return;
+
+    try {
+      setSavingLaborId(laborId);
+      setLaborError(null);
+      await markJobLaborPaid(selectedJob, laborId);
+    } catch (error) {
+      setLaborError(
+        error instanceof Error ? error.message : 'Could not mark labor paid.',
+      );
+    } finally {
+      setSavingLaborId(null);
+    }
+  };
+
+  const reopenSelectedLabor = async (laborId: string) => {
+    if (!selectedJob) return;
+
+    try {
+      setSavingLaborId(laborId);
+      setLaborError(null);
+      await reopenJobLabor(selectedJob, laborId);
+    } catch (error) {
+      setLaborError(
+        error instanceof Error ? error.message : 'Could not reopen labor.',
+      );
+    } finally {
+      setSavingLaborId(null);
     }
   };
 
@@ -467,6 +551,23 @@ function CommandCenterTab({
                   />
                 </div>
 
+                <LaborTrackingSection
+                  job={selectedJob}
+                  mobile={mobile}
+                  laborTechDrafts={laborTechDrafts}
+                  savingLaborId={savingLaborId}
+                  error={laborError}
+                  onTechChange={(laborId, value) =>
+                    setLaborTechDrafts((current) => ({
+                      ...current,
+                      [laborId]: value,
+                    }))
+                  }
+                  onMarkDone={(line) => void markSelectedLaborDone(line)}
+                  onMarkPaid={(laborId) => void markSelectedLaborPaid(laborId)}
+                  onReopen={(laborId) => void reopenSelectedLabor(laborId)}
+                />
+
                 {detailDraft ? (
                   <div
                     style={{
@@ -735,6 +836,234 @@ function DetailRow({
   );
 }
 
+function LaborTrackingSection({
+  job,
+  mobile,
+  laborTechDrafts,
+  savingLaborId,
+  error,
+  onTechChange,
+  onMarkDone,
+  onMarkPaid,
+  onReopen,
+}: {
+  job: Job;
+  mobile: boolean;
+  laborTechDrafts: Record<string, string>;
+  savingLaborId: string | null;
+  error: string | null;
+  onTechChange: (laborId: string, value: string) => void;
+  onMarkDone: (line: CommandCenterLaborLine) => void;
+  onMarkPaid: (laborId: string) => void;
+  onReopen: (laborId: string) => void;
+}) {
+  const laborLines = getJobLaborLines(job);
+  const summary = getLaborSummary(job, laborLines);
+
+  return (
+    <section
+      style={{
+        marginTop: 16,
+        borderRadius: 16,
+        border: '1px solid rgba(96,165,250,0.22)',
+        background: 'rgba(15,23,42,0.48)',
+        padding: 14,
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 10,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        <div>
+          <div style={{ color: '#e8f1ff', fontWeight: 900, fontSize: 15 }}>
+            Labor Tracking
+          </div>
+          <div style={{ color: '#9fb7d5', fontWeight: 700, fontSize: 12, marginTop: 3 }}>
+            Mark completed labor so tech hours are ready for payroll.
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: mobile ? '1fr' : 'repeat(3, minmax(92px, 1fr))',
+            gap: 8,
+            width: mobile ? '100%' : undefined,
+          }}
+        >
+          <LaborMetric label="Total" value={`${formatHours(summary.totalHours)}h`} />
+          <LaborMetric label="Done" value={`${formatHours(summary.doneHours)}h`} />
+          <LaborMetric label="Payable" value={`${formatHours(summary.unpaidHours)}h`} />
+        </div>
+      </div>
+
+      {error ? (
+        <div style={{ color: '#fecaca', fontWeight: 800, fontSize: 12 }}>
+          {error}
+        </div>
+      ) : null}
+
+      {laborLines.length ? (
+        <div style={{ display: 'grid', gap: 10, maxHeight: 520, overflowY: 'auto' }}>
+          {laborLines.map((line) => {
+            const completion = getLaborCompletion(job, line.id);
+            const saving = savingLaborId === line.id;
+            const techName =
+              laborTechDrafts[line.id] ??
+              completion?.completedBy ??
+              job.mitchellLeadTechName ??
+              '';
+
+            return (
+              <div
+                key={line.id}
+                style={{
+                  borderRadius: 14,
+                  border: '1px solid rgba(148,163,184,0.18)',
+                  background: completion
+                    ? 'rgba(6,78,59,0.24)'
+                    : 'rgba(8,16,28,0.52)',
+                  padding: 12,
+                  display: 'grid',
+                  gap: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div>
+                    <div style={{ color: '#f8fbff', fontWeight: 900, fontSize: 13 }}>
+                      {line.description || 'Labor line'}
+                    </div>
+                    <div style={{ color: '#a8bed9', fontSize: 12, fontWeight: 700, marginTop: 3 }}>
+                      Line {line.lineNumber || '-'} - {line.laborType}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={laborPillStyle()}>
+                      {formatHours(line.laborHours)}h
+                    </span>
+                    {line.laborAmount > 0 ? (
+                      <span style={laborPillStyle()}>
+                        {formatCurrency(line.laborAmount)}
+                      </span>
+                    ) : null}
+                    <span style={completionStatusStyle(Boolean(completion), Boolean(completion?.paidAt))}>
+                      {completion?.paidAt
+                        ? 'Paid'
+                        : completion
+                        ? 'Done'
+                        : 'Open'}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: mobile ? '1fr' : 'minmax(150px, 1fr) auto',
+                    gap: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <label style={{ display: 'grid', gap: 5 }}>
+                    <span style={editLabelStyle()}>Technician</span>
+                    <input
+                      value={techName}
+                      onChange={(event) => onTechChange(line.id, event.target.value)}
+                      placeholder="Tech name"
+                      style={editInputStyle()}
+                    />
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {completion ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={saving || Boolean(completion.paidAt)}
+                          onClick={() => onMarkPaid(line.id)}
+                          style={laborActionButtonStyle('green', saving || Boolean(completion.paidAt))}
+                        >
+                          {completion.paidAt ? 'Paid' : 'Mark Paid'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => onReopen(line.id)}
+                          style={laborActionButtonStyle('slate', saving)}
+                        >
+                          Reopen
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => onMarkDone(line)}
+                        style={laborActionButtonStyle('blue', saving)}
+                      >
+                        {saving ? 'Saving...' : 'Mark Done'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {completion ? (
+                  <div style={{ color: '#b7c8dd', fontWeight: 700, fontSize: 12 }}>
+                    Completed by {completion.completedBy} on {formatDateTime(completion.completedAt)}
+                    {completion.paidAt ? ` - paid ${formatDateTime(completion.paidAt)}` : ''}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div
+          style={{
+            borderRadius: 12,
+            border: '1px dashed rgba(148,163,184,0.28)',
+            color: '#c8d6e8',
+            padding: 12,
+            fontWeight: 700,
+            fontSize: 13,
+          }}
+        >
+          No labor lines are loaded for this RO yet. Use the EMS update on this
+          repair order to bring in labor detail.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LaborMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        borderRadius: 12,
+        border: '1px solid rgba(147,197,253,0.18)',
+        background: 'rgba(30,64,175,0.18)',
+        padding: '8px 10px',
+      }}
+    >
+      <div style={{ color: '#9fb7d5', fontSize: 11, fontWeight: 900 }}>{label}</div>
+      <div style={{ color: '#eff6ff', fontSize: 18, fontWeight: 900 }}>{value}</div>
+    </div>
+  );
+}
+
 function filterInputStyle(): CSSProperties {
   return {
     flex: '1 1 280px',
@@ -858,6 +1187,67 @@ function phoneLinkStyle(): CSSProperties {
   };
 }
 
+function laborPillStyle(): CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: '6px 9px',
+    background: 'rgba(30,41,59,0.72)',
+    border: '1px solid rgba(148,163,184,0.2)',
+    color: '#e8f1ff',
+    fontSize: 12,
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+  };
+}
+
+function completionStatusStyle(done: boolean, paid: boolean): CSSProperties {
+  return {
+    ...laborPillStyle(),
+    background: paid
+      ? 'rgba(6,95,70,0.4)'
+      : done
+      ? 'rgba(29,78,216,0.36)'
+      : 'rgba(180,83,9,0.28)',
+    border: paid
+      ? '1px solid rgba(110,231,183,0.34)'
+      : done
+      ? '1px solid rgba(147,197,253,0.34)'
+      : '1px solid rgba(253,186,116,0.34)',
+  };
+}
+
+function laborActionButtonStyle(
+  tone: 'blue' | 'green' | 'slate',
+  disabled: boolean,
+): CSSProperties {
+  const palette = {
+    blue: {
+      background: '#1d4ed8',
+      border: 'rgba(96,165,250,0.45)',
+    },
+    green: {
+      background: '#059669',
+      border: 'rgba(110,231,183,0.42)',
+    },
+    slate: {
+      background: 'rgba(71,85,105,0.92)',
+      border: 'rgba(148,163,184,0.26)',
+    },
+  }[tone];
+
+  return {
+    border: `1px solid ${palette.border}`,
+    background: disabled ? 'rgba(51,65,85,0.74)' : palette.background,
+    color: '#eff6ff',
+    fontWeight: 900,
+    fontSize: 12,
+    padding: '9px 11px',
+    borderRadius: 11,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    whiteSpace: 'nowrap',
+  };
+}
+
 function statusPillStyle(status: Job['status'], done: boolean): CSSProperties {
   const palette = done
     ? {
@@ -928,6 +1318,157 @@ function formatDate(value: string) {
   }
 
   return parsed.toLocaleDateString();
+}
+
+function formatDateTime(value: string) {
+  if (!value) return 'Not set';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+}
+
+function formatHours(value: number) {
+  return (Math.round((value || 0) * 10) / 10).toFixed(1);
+}
+
+function getJobLaborLines(job: Job): CommandCenterLaborLine[] {
+  const estimateLines = job.estimateLines ?? [];
+  const lineItems = estimateLines
+    .filter(isLaborEstimateLine)
+    .map((line) => {
+      const laborHours = getLineLaborHours(line);
+      const laborAmount = getLineLaborAmount(line);
+
+      return {
+        id: `estimate-${line.id}`,
+        estimateLineId: line.id,
+        lineNumber: line.lineNumber,
+        description: line.description,
+        laborType: getLaborTypeLabel(line),
+        laborHours,
+        laborAmount,
+      };
+    })
+    .filter((line) => line.laborHours > 0 || line.laborAmount > 0);
+
+  if (lineItems.length) {
+    return lineItems;
+  }
+
+  return getLaborSummaryFallbackLines(job);
+}
+
+function isLaborEstimateLine(line: EmsEstimateLine) {
+  if (line.isSublet) return false;
+
+  const kind = String(line.lineKind ?? '').toLowerCase();
+  const label = `${line.operationLabel ?? ''} ${line.operationCategory ?? ''} ${line.laborType ?? ''}`
+    .toLowerCase();
+
+  if (kind === 'labor' || kind === 'paint') return true;
+  if (line.laborHours > 0 || (line.paintHours ?? 0) > 0) return true;
+  if (line.laborAmount > 0 || (line.paintAmount ?? 0) > 0) return true;
+
+  return (
+    !line.partNumber &&
+    (label.includes('body labor') ||
+      label.includes('mechanical') ||
+      label.includes('refinish') ||
+      label.includes('paint'))
+  );
+}
+
+function getLineLaborHours(line: EmsEstimateLine) {
+  if (String(line.lineKind ?? '').toLowerCase() === 'paint') {
+    return line.paintHours || line.laborHours || 0;
+  }
+
+  return line.laborHours || line.paintHours || 0;
+}
+
+function getLineLaborAmount(line: EmsEstimateLine) {
+  const kind = String(line.lineKind ?? '').toLowerCase();
+  if (kind === 'paint') {
+    return line.paintAmount || line.laborAmount || line.totalAmount || 0;
+  }
+
+  return line.laborAmount || line.paintAmount || line.totalAmount || 0;
+}
+
+function getLaborTypeLabel(line: EmsEstimateLine) {
+  const label = String(line.operationLabel ?? '').trim();
+  const kind = String(line.lineKind ?? '').trim();
+
+  if (label) return label;
+  if (kind === 'paint') return 'Refinish';
+  if (kind === 'labor') return 'Body Labor';
+  if (String(line.laborType ?? '').toUpperCase() === 'LAM') return 'Mechanical Labor';
+
+  return 'Labor';
+}
+
+function getLaborSummaryFallbackLines(job: Job): CommandCenterLaborLine[] {
+  const totals = job.estimateTotals;
+  if (!totals) return [];
+
+  return [
+    {
+      id: 'summary-body-labor',
+      estimateLineId: 'summary-body-labor',
+      lineNumber: 'Body',
+      description: 'Body labor total',
+      laborType: 'Body Labor',
+      laborHours: totals.bodyLaborHours || 0,
+      laborAmount: 0,
+    },
+    {
+      id: 'summary-refinish-labor',
+      estimateLineId: 'summary-refinish-labor',
+      lineNumber: 'Paint',
+      description: 'Refinish labor total',
+      laborType: 'Refinish',
+      laborHours: totals.refinishLaborHours || 0,
+      laborAmount: 0,
+    },
+    {
+      id: 'summary-mechanical-labor',
+      estimateLineId: 'summary-mechanical-labor',
+      lineNumber: 'Mech',
+      description: 'Mechanical labor total',
+      laborType: 'Mechanical Labor',
+      laborHours: totals.mechanicalLaborHours || 0,
+      laborAmount: 0,
+    },
+  ].filter((line) => line.laborHours > 0);
+}
+
+function getLaborCompletion(job: Job, laborId: string) {
+  return (job.laborCompletions ?? []).find((completion) => completion.id === laborId);
+}
+
+function getLaborSummary(job: Job, laborLines: CommandCenterLaborLine[]) {
+  const totalHours = laborLines.reduce((sum, line) => sum + line.laborHours, 0);
+  const lineHoursById = new Map(laborLines.map((line) => [line.id, line.laborHours]));
+  const doneHours = (job.laborCompletions ?? []).reduce(
+    (sum, completion) => sum + (lineHoursById.get(completion.id) ?? completion.laborHours ?? 0),
+    0,
+  );
+  const paidHours = (job.laborCompletions ?? []).reduce(
+    (sum, completion) =>
+      completion.paidAt
+        ? sum + (lineHoursById.get(completion.id) ?? completion.laborHours ?? 0)
+        : sum,
+    0,
+  );
+
+  return {
+    totalHours,
+    doneHours,
+    unpaidHours: Math.max(doneHours - paidHours, 0),
+  };
 }
 
 function sortCommandCenterJobs(jobs: Job[], sort: CommandCenterSort) {

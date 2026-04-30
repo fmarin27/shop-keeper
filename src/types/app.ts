@@ -88,6 +88,19 @@ export type JobPartRequest = {
   paidAt?: string;
 };
 
+export type JobLaborCompletion = {
+  id: string;
+  estimateLineId: string;
+  lineNumber: string;
+  description: string;
+  laborType: string;
+  laborHours: number;
+  laborAmount: number;
+  completedBy: string;
+  completedAt: string;
+  paidAt?: string;
+};
+
 export type EmsEstimateLine = {
   id: string;
   lineNumber: string;
@@ -142,6 +155,7 @@ export type Job = {
   promiseDate: string;
   partsWaiting: boolean;
   partsRequests: JobPartRequest[];
+  laborCompletions: JobLaborCompletion[];
   textNotes: JobNote[];
   photos: JobPhoto[];
   sortOrder?: number;

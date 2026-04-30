@@ -32,6 +32,7 @@ import type {
   EmsNormalizedLineItem,
   EmsNormalizedRepairOrder,
   Job,
+  JobLaborCompletion,
   JobNote,
   JobPhoto,
   JobPartRequest,
@@ -73,6 +74,21 @@ function toFirestorePartRequest(part: JobPartRequest) {
   };
 }
 
+function toFirestoreLaborCompletion(completion: JobLaborCompletion) {
+  return {
+    id: completion.id,
+    estimateLineId: completion.estimateLineId,
+    lineNumber: completion.lineNumber,
+    description: completion.description,
+    laborType: completion.laborType,
+    laborHours: completion.laborHours,
+    laborAmount: completion.laborAmount,
+    completedBy: completion.completedBy,
+    completedAt: completion.completedAt,
+    ...(completion.paidAt ? { paidAt: completion.paidAt } : {}),
+  };
+}
+
 export function subscribeToJobs(callback: (jobs: Job[]) => void) {
   const q = query(jobsCollection, orderBy('createdAt', 'desc'));
 
@@ -106,8 +122,8 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
-            phoneNumber: data.phoneNumber ?? data.customerPhone ?? '',
-            customerPhone: data.customerPhone ?? data.phoneNumber ?? '',
+            phoneNumber: firstText(data.phoneNumber, data.customerPhone),
+            customerPhone: firstText(data.customerPhone, data.phoneNumber),
             customerEmail: data.customerEmail ?? '',
             paintCode: data.paintCode ?? '',
             amount: data.amount ?? 0,
@@ -117,6 +133,9 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             promiseDate: data.promiseDate ?? '',
             partsWaiting: sourceSystem ? hasOpenParts(partsRequests) : data.partsWaiting ?? false,
             partsRequests,
+            laborCompletions: Array.isArray(data.laborCompletions)
+              ? (data.laborCompletions as JobLaborCompletion[])
+              : [],
             textNotes: (data.textNotes ?? []) as JobNote[],
             photos: (data.photos ?? []) as JobPhoto[],
             sortOrder:
@@ -238,6 +257,7 @@ export async function createJob(input: CreateJobInput) {
       input.partsWaiting ||
       partsRequests.some((part) => part.status !== 'received'),
     partsRequests: partsRequests.map(toFirestorePartRequest),
+    laborCompletions: [],
     textNotes: notes,
     photos: [],
     sortOrder: Date.now() * -1,
@@ -631,8 +651,8 @@ export async function convertEmsRepairOrderToJob(
       customer.full_name,
       [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
     ),
-    phoneNumber: existing?.phoneNumber ?? customerPhone,
-    customerPhone,
+    phoneNumber: firstText(existing?.phoneNumber, customerPhone),
+    customerPhone: firstText(existing?.customerPhone, existing?.phoneNumber, customerPhone),
     customerEmail: text(customer.email),
     vehicle: buildVehicleLabel(vehicle),
     vehicleYear: text(vehicle.year),
@@ -651,6 +671,8 @@ export async function convertEmsRepairOrderToJob(
     promiseDate: existing?.promiseDate ?? '',
     partsWaiting: hasOpenParts(seededParts),
     partsRequests: seededParts.map(toFirestorePartRequest),
+    laborCompletions: ((existing?.laborCompletions ?? []) as JobLaborCompletion[])
+      .map(toFirestoreLaborCompletion),
     textNotes: existing?.textNotes ?? [],
     photos: existing?.photos ?? [],
     ...(typeof existing?.sortOrder === 'number'
@@ -758,6 +780,7 @@ export async function updateJobFromEmsRepairOrder(
     promiseDate: job.promiseDate,
     partsWaiting: hasOpenParts(seededParts),
     partsRequests: seededParts.map(toFirestorePartRequest),
+    laborCompletions: (job.laborCompletions ?? []).map(toFirestoreLaborCompletion),
     estimateTotals: {
       bodyLaborHours: toNumber(totals.body_labor_hours),
       refinishLaborHours: toNumber(totals.refinish_labor_hours),
@@ -1042,6 +1065,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         promiseDate: mitchellJob.promiseDate,
         partsWaiting: mitchellJob.partsWaiting,
         partsRequests: [],
+        laborCompletions: [],
         textNotes: [],
         photos: [],
         sortOrder: maxSortOrder,
@@ -1219,6 +1243,76 @@ export async function updateJobDetails(
   if (input.policyNumber !== undefined) payload.policyNumber = input.policyNumber.trim();
 
   await updateDoc(jobDoc(jobId), payload);
+}
+
+export async function markJobLaborDone(
+  job: Job,
+  input: {
+    id: string;
+    estimateLineId: string;
+    lineNumber: string;
+    description: string;
+    laborType: string;
+    laborHours: number;
+    laborAmount: number;
+    completedBy: string;
+  },
+) {
+  const existing = (job.laborCompletions ?? []).find(
+    (completion) => completion.id === input.id,
+  );
+  const completedAt = new Date().toISOString();
+  const completion: JobLaborCompletion = {
+    id: input.id,
+    estimateLineId: input.estimateLineId,
+    lineNumber: input.lineNumber,
+    description: input.description,
+    laborType: input.laborType,
+    laborHours: input.laborHours,
+    laborAmount: input.laborAmount,
+    completedBy: input.completedBy.trim() || 'Unassigned tech',
+    completedAt,
+    ...(existing?.paidAt ? { paidAt: existing.paidAt } : {}),
+  };
+  const nextLaborCompletions = [
+    completion,
+    ...(job.laborCompletions ?? []).filter(
+      (item) => item.id !== input.id,
+    ),
+  ];
+
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
+    laborCompletions: nextLaborCompletions.map(toFirestoreLaborCompletion),
+    updatedAt: serverTimestamp(),
+  }));
+}
+
+export async function markJobLaborPaid(job: Job, laborId: string) {
+  const now = new Date().toISOString();
+  const nextLaborCompletions = (job.laborCompletions ?? []).map((completion) =>
+    completion.id === laborId
+      ? {
+          ...completion,
+          paidAt: completion.paidAt ?? now,
+        }
+      : completion,
+  );
+
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
+    laborCompletions: nextLaborCompletions.map(toFirestoreLaborCompletion),
+    updatedAt: serverTimestamp(),
+  }));
+}
+
+export async function reopenJobLabor(job: Job, laborId: string) {
+  const nextLaborCompletions = (job.laborCompletions ?? []).filter(
+    (completion) => completion.id !== laborId,
+  );
+
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
+    laborCompletions: nextLaborCompletions.map(toFirestoreLaborCompletion),
+    updatedAt: serverTimestamp(),
+  }));
 }
 
 export async function markJobDone(jobId: string) {

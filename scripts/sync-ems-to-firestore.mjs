@@ -352,8 +352,8 @@ function buildJobPayload(normalized, existing, sourceFile) {
       customer.full_name,
       [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
     ),
-    phoneNumber: existing?.phoneNumber ?? customerPhone,
-    customerPhone,
+    phoneNumber: firstText(existing?.phoneNumber, customerPhone),
+    customerPhone: firstText(existing?.customerPhone, existing?.phoneNumber, customerPhone),
     customerEmail: text(customer.email),
     vehicle: buildVehicleLabel(vehicle),
     vehicleYear: text(vehicle.year),
@@ -375,6 +375,7 @@ function buildJobPayload(normalized, existing, sourceFile) {
       (part) => (part.kind || 'part') === 'part' && part.status !== 'received',
     ),
     partsRequests: seededParts,
+    laborCompletions: existing?.laborCompletions ?? [],
     textNotes: existing?.textNotes ?? [],
     photos: existing?.photos ?? [],
     ...(typeof existing?.sortOrder === 'number'

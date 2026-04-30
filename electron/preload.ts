@@ -59,6 +59,18 @@ contextBridge.exposeInMainWorld('appBridge', {
   }) => ipcRenderer.invoke('mail:sendMaterialRequestEmail', payload),
   getMitchellJobsSnapshot: () => ipcRenderer.invoke('mitchell:getJobsSnapshot'),
   selectEmsRepairOrder: () => ipcRenderer.invoke('ems:selectRepairOrder'),
+  listEmsImportCandidates: () => ipcRenderer.invoke('ems:listImportCandidates'),
+  convertEmsImportCandidate: (candidate: {
+    id: string;
+    location: 'local' | 'office';
+    source: 'ccc' | 'mitchell';
+    familyId: string;
+    label: string;
+    rootPath: string;
+    primaryFile: string;
+    fileCount: number;
+    lastModifiedAt: string;
+  }) => ipcRenderer.invoke('ems:convertImportCandidate', candidate),
   saveJobPhotoToRoFolder: (payload: {
     roNumber: string;
     customerName: string;

@@ -6,6 +6,8 @@ import type {
   AppMode,
   AmountStatus,
   CreateJobInput,
+  EmsImportCandidate,
+  EmsImportCandidatesSnapshot,
   Job,
   JobPartStatus,
   JobStatus,
@@ -105,10 +107,16 @@ function JobsTab({
   const [savingJob, setSavingJob] = useState(false);
   const [addJobError, setAddJobError] = useState<string | null>(null);
   const [emsImportMessage, setEmsImportMessage] = useState<string | null>(
-    'EMS import is manual. Choose one CCC or Mitchell EMS file when you are ready to create an RO.',
+    'EMS import is manual. The app watches this PC and the office PC, then you choose which EMS bundle becomes an RO.',
   );
   const [emsImportError, setEmsImportError] = useState<string | null>(null);
-  const [isEmsImporting, setIsEmsImporting] = useState(false);
+  const [emsCandidatesSnapshot, setEmsCandidatesSnapshot] =
+    useState<EmsImportCandidatesSnapshot | null>(null);
+  const [showEmsImportModal, setShowEmsImportModal] = useState(false);
+  const [loadingEmsCandidates, setLoadingEmsCandidates] = useState(false);
+  const [convertingEmsCandidateId, setConvertingEmsCandidateId] = useState<
+    string | null
+  >(null);
 
   const applyOptimisticActiveOrder = (
     sourceJobs: Job[],
@@ -169,6 +177,59 @@ function JobsTab({
   const visibleActiveJobs = useMemo(() => activeJobs, [activeJobs]);
 
   const topPriorityJob = visibleActiveJobs[0] ?? null;
+  const emsCandidateCount = emsCandidatesSnapshot?.candidates.length ?? 0;
+  const isEmsImportBusy = loadingEmsCandidates || Boolean(convertingEmsCandidateId);
+
+  const refreshEmsCandidates = async (options: { silent?: boolean } = {}) => {
+    if (!appBridge.isDesktop()) {
+      return null;
+    }
+
+    if (!options.silent) {
+      setLoadingEmsCandidates(true);
+      setEmsImportError(null);
+    }
+
+    try {
+      const snapshot = await appBridge.listEmsImportCandidates();
+      setEmsCandidatesSnapshot(snapshot);
+
+      if (!options.silent) {
+        setEmsImportMessage(
+          `EMS watch found ${snapshot.candidates.length} bundle${
+            snapshot.candidates.length === 1 ? '' : 's'
+          } across this PC and the office PC. Choose one when you are ready to create an RO.`,
+        );
+      }
+
+      return snapshot;
+    } catch (error) {
+      if (!options.silent) {
+        setEmsImportError(
+          error instanceof Error ? error.message : 'Could not scan EMS watched folders.',
+        );
+      }
+
+      return null;
+    } finally {
+      if (!options.silent) {
+        setLoadingEmsCandidates(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!appBridge.isDesktop()) {
+      return undefined;
+    }
+
+    void refreshEmsCandidates();
+    const intervalId = window.setInterval(() => {
+      void refreshEmsCandidates({ silent: true });
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const handleChangeStatus = async (jobId: string) => {
     const job = jobs.find((j) => j.id === jobId);
@@ -315,32 +376,41 @@ function JobsTab({
     await updateJobDetails(jobId, input);
   };
 
-  const handleConvertEmsToRo = async () => {
-    setIsEmsImporting(true);
+  const handleOpenEmsImportModal = async () => {
+    setShowEmsImportModal(true);
+    await refreshEmsCandidates();
+  };
+
+  const closeEmsImportModal = () => {
+    if (convertingEmsCandidateId) return;
+    setShowEmsImportModal(false);
+  };
+
+  const handleConvertEmsCandidate = async (candidate: EmsImportCandidate) => {
+    setConvertingEmsCandidateId(candidate.id);
     setEmsImportError(null);
-    setEmsImportMessage('Choose one EMS file. The app will convert only that file family into an RO.');
+    setEmsImportMessage(`Converting ${candidate.label} into an RO...`);
 
     try {
-      const selection = await appBridge.selectEmsRepairOrder();
-      if (selection.canceled) {
-        setEmsImportMessage('EMS import canceled. No RO was created.');
-        return;
-      }
-
+      const conversion = await appBridge.convertEmsImportCandidate(candidate);
       const result = await convertEmsRepairOrderToJob(
-        selection.repairOrder,
-        selection.selectedPath,
+        conversion.repairOrder,
+        conversion.selectedPath,
       );
 
       setEmsImportMessage(
-        `Converted ${selection.source.toUpperCase()} ${selection.familyId} into RO ${result.roNumber} for ${result.customerName || result.vehicle || 'selected EMS file'}. ${result.lineCount} estimate lines and ${result.partCount} parts candidates imported.`,
+        `Converted ${candidate.label} into RO ${result.roNumber} for ${
+          result.customerName || result.vehicle || 'selected EMS bundle'
+        }. ${result.lineCount} estimate lines and ${result.partCount} parts candidates imported.`,
       );
+      await refreshEmsCandidates({ silent: true });
+      setShowEmsImportModal(false);
     } catch (error) {
       setEmsImportError(
-        error instanceof Error ? error.message : 'Could not convert the selected EMS file.',
+        error instanceof Error ? error.message : 'Could not convert the selected EMS bundle.',
       );
     } finally {
-      setIsEmsImporting(false);
+      setConvertingEmsCandidateId(null);
     }
   };
 
@@ -475,16 +545,100 @@ function JobsTab({
                 : emsImportMessage}
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            {emsCandidatesSnapshot ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: mobile
+                    ? '1fr'
+                    : 'repeat(4, minmax(0, 1fr))',
+                  gap: 8,
+                }}
+              >
+                {emsCandidatesSnapshot.sources.map((source) => (
+                  <div
+                    key={source.id}
+                    title={source.path}
+                    style={{
+                      borderRadius: 12,
+                      padding: compact ? '8px 10px' : '9px 11px',
+                      background: source.available
+                        ? 'rgba(15,23,42,0.72)'
+                        : 'rgba(127,29,29,0.22)',
+                      border: source.available
+                        ? '1px solid rgba(148,163,184,0.18)'
+                        : '1px solid rgba(248,113,113,0.26)',
+                      color: source.available ? '#cbd5e1' : '#fecaca',
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: compact ? 11 : 12,
+                        fontWeight: 900,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {source.label}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 3,
+                        fontSize: compact ? 10 : 11,
+                        fontWeight: 700,
+                        opacity: 0.84,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {source.candidateCount} found - {source.message}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 10,
+                flexWrap: 'wrap',
+              }}
+            >
               <button
                 type="button"
                 onClick={() => {
-                  void handleConvertEmsToRo();
+                  void refreshEmsCandidates();
                 }}
-                disabled={isEmsImporting}
+                disabled={loadingEmsCandidates}
+                style={{
+                  border: '1px solid rgba(148,163,184,0.24)',
+                  background: 'rgba(15,23,42,0.76)',
+                  color: '#cbd5e1',
+                  fontWeight: 800,
+                  fontSize: mobile ? 13 : 14,
+                  padding: mobile ? '10px 14px' : '10px 16px',
+                  borderRadius: 12,
+                  cursor: loadingEmsCandidates ? 'not-allowed' : 'pointer',
+                  opacity: loadingEmsCandidates ? 0.75 : 1,
+                  width: mobile ? '100%' : 'auto',
+                }}
+              >
+                {loadingEmsCandidates ? 'Scanning...' : 'Refresh Watch'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleOpenEmsImportModal();
+                }}
+                disabled={isEmsImportBusy}
                 style={{
                   border: '1px solid rgba(96,165,250,0.45)',
-                  background: isEmsImporting
+                  background: isEmsImportBusy
                     ? 'rgba(51,65,85,0.92)'
                     : 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
                   color: '#eff6ff',
@@ -492,12 +646,14 @@ function JobsTab({
                   fontSize: mobile ? 13 : 14,
                   padding: mobile ? '10px 14px' : '10px 16px',
                   borderRadius: 12,
-                  cursor: isEmsImporting ? 'not-allowed' : 'pointer',
-                  opacity: isEmsImporting ? 0.75 : 1,
+                  cursor: isEmsImportBusy ? 'not-allowed' : 'pointer',
+                  opacity: isEmsImportBusy ? 0.75 : 1,
                   width: mobile ? '100%' : 'auto',
                 }}
               >
-                {isEmsImporting ? 'Converting EMS...' : 'Convert EMS File to RO'}
+                {convertingEmsCandidateId
+                  ? 'Converting EMS...'
+                  : `Choose EMS to Convert (${emsCandidateCount})`}
               </button>
             </div>
           </div>
@@ -586,6 +742,22 @@ function JobsTab({
           onUndoDone={handleUndoDone}
         />
       </div>
+
+      {showEmsImportModal ? (
+        <EmsImportModal
+          snapshot={emsCandidatesSnapshot}
+          loading={loadingEmsCandidates}
+          convertingCandidateId={convertingEmsCandidateId}
+          mobile={mobile}
+          onClose={closeEmsImportModal}
+          onRefresh={() => {
+            void refreshEmsCandidates();
+          }}
+          onConvert={(candidate) => {
+            void handleConvertEmsCandidate(candidate);
+          }}
+        />
+      ) : null}
 
       {showAddJobModal ? (
         <div
@@ -891,6 +1063,333 @@ function JobsTab({
   );
 }
 
+type EmsImportModalProps = {
+  snapshot: EmsImportCandidatesSnapshot | null;
+  loading: boolean;
+  convertingCandidateId: string | null;
+  mobile: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  onConvert: (candidate: EmsImportCandidate) => void;
+};
+
+function EmsImportModal({
+  snapshot,
+  loading,
+  convertingCandidateId,
+  mobile,
+  onClose,
+  onRefresh,
+  onConvert,
+}: EmsImportModalProps) {
+  const candidates = snapshot?.candidates ?? [];
+  const sources = snapshot?.sources ?? [];
+  const isConverting = Boolean(convertingCandidateId);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: 'rgba(2,6,23,0.64)',
+        backdropFilter: 'blur(4px)',
+        display: 'grid',
+        placeItems: 'center',
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: mobile ? '100%' : 'min(980px, 100%)',
+          maxHeight: mobile ? '100vh' : 'calc(100vh - 40px)',
+          borderRadius: 24,
+          background:
+            'linear-gradient(180deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))',
+          border: '1px solid rgba(148,163,184,0.18)',
+          boxShadow: '0 30px 80px rgba(0,0,0,0.45)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div
+          style={{
+            padding: mobile ? '16px' : '20px 24px',
+            borderBottom: '1px solid rgba(148,163,184,0.14)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                color: '#f8fafc',
+                fontWeight: 900,
+                fontSize: mobile ? 20 : 22,
+                lineHeight: 1.1,
+              }}
+            >
+              Convert EMS to RO
+            </div>
+            <div
+              style={{
+                color: '#94a3b8',
+                fontSize: 13,
+                marginTop: 6,
+              }}
+            >
+              Choose one watched CCC or Mitchell bundle.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isConverting}
+            style={{
+              border: '1px solid rgba(148,163,184,0.18)',
+              background: 'rgba(15,23,42,0.7)',
+              color: '#cbd5e1',
+              fontWeight: 800,
+              fontSize: 13,
+              padding: '9px 12px',
+              borderRadius: 12,
+              cursor: isConverting ? 'not-allowed' : 'pointer',
+              opacity: isConverting ? 0.6 : 1,
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        <div
+          style={{
+            padding: mobile ? 16 : 24,
+            display: 'grid',
+            gap: 16,
+            overflowY: 'auto',
+            minHeight: 0,
+          }}
+        >
+          {sources.length ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: mobile
+                  ? '1fr'
+                  : 'repeat(4, minmax(0, 1fr))',
+                gap: 10,
+              }}
+            >
+              {sources.map((source) => (
+                <div
+                  key={source.id}
+                  style={{
+                    borderRadius: 14,
+                    border: source.available
+                      ? '1px solid rgba(148,163,184,0.18)'
+                      : '1px solid rgba(248,113,113,0.26)',
+                    background: source.available
+                      ? 'rgba(15,23,42,0.74)'
+                      : 'rgba(127,29,29,0.2)',
+                    padding: '11px 12px',
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: source.available ? '#f8fafc' : '#fecaca',
+                      fontSize: 12,
+                      fontWeight: 900,
+                    }}
+                  >
+                    {source.label}
+                  </div>
+                  <div
+                    style={{
+                      color: source.available ? '#94a3b8' : '#fecaca',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      marginTop: 5,
+                    }}
+                  >
+                    {source.candidateCount} bundle
+                    {source.candidateCount === 1 ? '' : 's'}
+                  </div>
+                  <div
+                    title={source.path}
+                    style={{
+                      color: '#64748b',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      marginTop: 6,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {source.path}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div
+              style={{
+                color: '#cbd5e1',
+                fontSize: 13,
+                fontWeight: 800,
+              }}
+            >
+              {candidates.length} EMS bundle{candidates.length === 1 ? '' : 's'}
+            </div>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading || isConverting}
+              style={{
+                border: '1px solid rgba(148,163,184,0.22)',
+                background: 'rgba(15,23,42,0.74)',
+                color: '#cbd5e1',
+                fontWeight: 800,
+                fontSize: 13,
+                padding: '9px 12px',
+                borderRadius: 12,
+                cursor: loading || isConverting ? 'not-allowed' : 'pointer',
+                opacity: loading || isConverting ? 0.68 : 1,
+              }}
+            >
+              {loading ? 'Scanning...' : 'Refresh'}
+            </button>
+          </div>
+
+          <div style={{ display: 'grid', gap: 10 }}>
+            {candidates.length ? (
+              candidates.map((candidate) => {
+                const isCandidateConverting =
+                  convertingCandidateId === candidate.id;
+
+                return (
+                  <div
+                    key={candidate.id}
+                    style={{
+                      borderRadius: 16,
+                      border: '1px solid rgba(148,163,184,0.18)',
+                      background: 'rgba(15,23,42,0.72)',
+                      padding: mobile ? 12 : 14,
+                      display: 'grid',
+                      gridTemplateColumns: mobile ? '1fr' : '1fr auto',
+                      gap: 12,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          color: '#f8fafc',
+                          fontSize: 14,
+                          fontWeight: 900,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {candidate.label}
+                      </div>
+                      <div
+                        style={{
+                          color: '#94a3b8',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          marginTop: 5,
+                        }}
+                      >
+                        {candidate.location === 'local' ? 'This PC' : 'Office PC'} -{' '}
+                        {candidate.source.toUpperCase()} - {candidate.fileCount} file
+                        {candidate.fileCount === 1 ? '' : 's'} - updated{' '}
+                        {formatDateTime(candidate.lastModifiedAt)}
+                      </div>
+                      <div
+                        title={candidate.primaryFile}
+                        style={{
+                          color: '#64748b',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          marginTop: 6,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {candidate.primaryFile}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => onConvert(candidate)}
+                      disabled={isConverting}
+                      style={{
+                        border: '1px solid rgba(96,165,250,0.45)',
+                        background: isCandidateConverting
+                          ? 'rgba(51,65,85,0.92)'
+                          : 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
+                        color: '#eff6ff',
+                        fontWeight: 900,
+                        fontSize: 13,
+                        padding: '10px 14px',
+                        borderRadius: 12,
+                        cursor: isConverting ? 'not-allowed' : 'pointer',
+                        opacity: isConverting && !isCandidateConverting ? 0.5 : 1,
+                        width: mobile ? '100%' : 'auto',
+                      }}
+                    >
+                      {isCandidateConverting ? 'Converting...' : 'Convert'}
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div
+                style={{
+                  borderRadius: 16,
+                  border: '1px solid rgba(148,163,184,0.18)',
+                  background: 'rgba(15,23,42,0.72)',
+                  color: '#cbd5e1',
+                  fontSize: 13,
+                  fontWeight: 800,
+                  padding: 16,
+                }}
+              >
+                {loading
+                  ? 'Scanning watched EMS folders...'
+                  : 'No EMS bundles were found in the watched folders.'}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type FieldProps = {
   label: string;
   value: string;
@@ -1076,6 +1575,9 @@ function inputStyle(compact: boolean): React.CSSProperties {
 
 function formatDateTime(value: string) {
   const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) {
+    return value || 'Unknown';
+  }
 
   return new Intl.DateTimeFormat('en-US', {
     month: 'numeric',

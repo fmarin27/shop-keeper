@@ -271,6 +271,40 @@ export type EmsImportSelectionResult =
       repairOrder: EmsNormalizedRepairOrder;
     };
 
+export type EmsImportCandidate = {
+  id: string;
+  location: 'local' | 'office';
+  source: 'ccc' | 'mitchell';
+  familyId: string;
+  label: string;
+  rootPath: string;
+  primaryFile: string;
+  fileCount: number;
+  lastModifiedAt: string;
+};
+
+export type EmsWatchedSourceStatus = {
+  id: string;
+  label: string;
+  path: string;
+  available: boolean;
+  candidateCount: number;
+  message?: string;
+};
+
+export type EmsImportCandidatesSnapshot = {
+  generatedAt: string;
+  candidates: EmsImportCandidate[];
+  sources: EmsWatchedSourceStatus[];
+};
+
+export type EmsImportCandidateConversionResult = {
+  source: string;
+  familyId: string;
+  selectedPath: string;
+  repairOrder: EmsNormalizedRepairOrder;
+};
+
 export type MaterialsManagerSummary = {
   materialCount: number;
   invoiceCount: number;

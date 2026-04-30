@@ -57,6 +57,14 @@ const EMS_MANAGEMENT_PROJECT_PATH = path.join(
 );
 const CCC_EMS_ROOT_PATH = path.join(app.getPath('home'), 'CCC EMS');
 const MITCHELL_EMS_ROOT_PATH = path.join(app.getPath('home'), 'Mitchell EMS');
+const OFFICE_PC_HOST = process.env.SHOP_KEEPER_OFFICE_HOST || '100.69.179.72';
+const OFFICE_PC_USER = process.env.SHOP_KEEPER_OFFICE_USER || 'ferna';
+const OFFICE_PC_SSH_KEY_PATH =
+  process.env.SHOP_KEEPER_OFFICE_SSH_KEY ||
+  path.join(app.getPath('home'), '.ssh', 'office_pc_access_v2');
+const OFFICE_HOME_PATH = process.env.SHOP_KEEPER_OFFICE_HOME || 'C:\\Users\\ferna';
+const OFFICE_CCC_EMS_ROOT_PATH = `${OFFICE_HOME_PATH}\\CCC EMS`;
+const OFFICE_MITCHELL_EMS_ROOT_PATH = `${OFFICE_HOME_PATH}\\Mitchell EMS`;
 const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
 const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
 const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
@@ -195,6 +203,51 @@ type EmsImportSelectionResult =
       selectedPath: string;
       repairOrder: Record<string, unknown>;
     };
+
+type EmsSource = 'ccc' | 'mitchell';
+type EmsCandidateLocation = 'local' | 'office';
+
+type EmsImportCandidate = {
+  id: string;
+  location: EmsCandidateLocation;
+  source: EmsSource;
+  familyId: string;
+  label: string;
+  rootPath: string;
+  primaryFile: string;
+  fileCount: number;
+  lastModifiedAt: string;
+};
+
+type EmsWatchedSourceStatus = {
+  id: string;
+  label: string;
+  path: string;
+  available: boolean;
+  candidateCount: number;
+  message?: string;
+};
+
+type EmsImportCandidatesSnapshot = {
+  generatedAt: string;
+  candidates: EmsImportCandidate[];
+  sources: EmsWatchedSourceStatus[];
+};
+
+type EmsImportCandidateConversionResult = {
+  source: string;
+  familyId: string;
+  selectedPath: string;
+  repairOrder: Record<string, unknown>;
+};
+
+type OfficeEmsFamilyFiles = {
+  files: Array<{
+    name: string;
+    bytesBase64: string;
+    lastModifiedAt: string;
+  }>;
+};
 
 type MaterialsManagerSummary = {
   materialCount: number;
@@ -711,6 +764,125 @@ function inferEmsSourceAndFamily(filePath: string) {
   );
 }
 
+const EMS_BUNDLE_EXTENSIONS = new Set([
+  'ad1',
+  'ad2',
+  'dbt',
+  'env',
+  'lin',
+  'pfh',
+  'pfl',
+  'pfm',
+  'pfo',
+  'pfp',
+  'pft',
+  'stl',
+  'ttl',
+  'veh',
+  'ven',
+]);
+
+function getFamilyIdForEmsPath(source: EmsSource, filePath: string) {
+  const name = path.parse(filePath).name;
+  if (source === 'mitchell') {
+    return name.match(/^(\d+)/)?.[1] ?? name;
+  }
+
+  return name;
+}
+
+function scanLocalEmsRoot(
+  location: EmsCandidateLocation,
+  source: EmsSource,
+  label: string,
+  rootPath: string,
+) {
+  const status: EmsWatchedSourceStatus = {
+    id: `${location}:${source}`,
+    label,
+    path: rootPath,
+    available: false,
+    candidateCount: 0,
+  };
+
+  if (!fs.existsSync(rootPath)) {
+    return {
+      status: {
+        ...status,
+        message: 'Folder not found.',
+      },
+      candidates: [] as EmsImportCandidate[],
+    };
+  }
+
+  const grouped = new Map<
+    string,
+    {
+      fileCount: number;
+      lastModifiedAt: string;
+      primaryFile: string;
+    }
+  >();
+
+  for (const entry of fs.readdirSync(rootPath, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const filePath = path.join(rootPath, entry.name);
+    const extension = path.extname(entry.name).replace('.', '').toLowerCase();
+    if (!EMS_BUNDLE_EXTENSIONS.has(extension)) {
+      continue;
+    }
+
+    const familyId = getFamilyIdForEmsPath(source, filePath);
+    const stats = fs.statSync(filePath);
+    const lastModifiedAt = stats.mtime.toISOString();
+    const current = grouped.get(familyId);
+
+    if (!current) {
+      grouped.set(familyId, {
+        fileCount: 1,
+        lastModifiedAt,
+        primaryFile: filePath,
+      });
+      continue;
+    }
+
+    current.fileCount += 1;
+    if (lastModifiedAt > current.lastModifiedAt) {
+      current.lastModifiedAt = lastModifiedAt;
+      current.primaryFile = filePath;
+    }
+  }
+
+  const candidates = [...grouped.entries()]
+    .map(([familyId, details]) => ({
+      id: `${location}:${source}:${familyId}`,
+      location,
+      source,
+      familyId,
+      label: `${label} ${familyId}`,
+      rootPath,
+      primaryFile: details.primaryFile,
+      fileCount: details.fileCount,
+      lastModifiedAt: details.lastModifiedAt,
+    }))
+    .sort((left, right) => right.lastModifiedAt.localeCompare(left.lastModifiedAt));
+
+  return {
+    status: {
+      ...status,
+      available: true,
+      candidateCount: candidates.length,
+      message: candidates.length
+        ? `${candidates.length} EMS bundle${candidates.length === 1 ? '' : 's'} found.`
+        : 'No EMS bundles found.',
+    },
+    candidates,
+  };
+}
+
 function getPythonExecutable() {
   if (fs.existsSync(USER_PYTHON_PATH)) {
     return USER_PYTHON_PATH;
@@ -761,6 +933,138 @@ function runPythonJson(args: string[]) {
   });
 }
 
+function encodePowerShell(script: string) {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+function extractJsonPayload(stdout: string) {
+  const trimmed = stdout.trim();
+  const firstBrace = trimmed.indexOf('{');
+  const firstBracket = trimmed.indexOf('[');
+  const starts = [firstBrace, firstBracket].filter((index) => index >= 0);
+  if (!starts.length) {
+    throw new Error('Office bridge returned no JSON.');
+  }
+
+  const start = Math.min(...starts);
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      stack.push('}');
+      continue;
+    }
+
+    if (char === '[') {
+      stack.push(']');
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      const expected = stack.pop();
+      if (expected !== char) {
+        throw new Error('Office bridge returned malformed JSON.');
+      }
+
+      if (!stack.length) {
+        return trimmed.slice(start, index + 1);
+      }
+    }
+  }
+
+  throw new Error('Office bridge returned incomplete JSON.');
+}
+
+function runOfficePowerShellJson<T>(script: string) {
+  if (!fs.existsSync(OFFICE_PC_SSH_KEY_PATH)) {
+    return Promise.reject(
+      new Error(`Office bridge SSH key not found at ${OFFICE_PC_SSH_KEY_PATH}.`),
+    );
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const child = spawn(
+      'ssh',
+      [
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ConnectTimeout=5',
+        '-i',
+        OFFICE_PC_SSH_KEY_PATH,
+        `${OFFICE_PC_USER}@${OFFICE_PC_HOST}`,
+        'powershell',
+        '-NoProfile',
+        '-EncodedCommand',
+        encodePowerShell(script),
+      ],
+      {
+        windowsHide: true,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Office bridge exited with code ${code}.`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(extractJsonPayload(stdout)) as T);
+      } catch (error) {
+        reject(
+          new Error(
+            `Office bridge returned invalid JSON: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      }
+    });
+  });
+}
+
 async function normalizeEmsBundle(source: string, familyId: string) {
   if (!fs.existsSync(EMS_MANAGEMENT_PROJECT_PATH)) {
     throw new Error(`EMS Management Platform project not found at ${EMS_MANAGEMENT_PROJECT_PATH}.`);
@@ -777,6 +1081,241 @@ async function normalizeEmsBundle(source: string, familyId: string) {
   ].join('\n');
 
   return runPythonJson(['-c', script, source, familyId]);
+}
+
+function getOfficeEmsScanScript() {
+  return `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$extensions = @('ad1','ad2','dbt','env','lin','pfh','pfl','pfm','pfo','pfp','pft','stl','ttl','veh','ven')
+$roots = @(
+  @{ Location = 'office'; Source = 'ccc'; Label = 'Office CCC EMS'; Root = ${JSON.stringify(OFFICE_CCC_EMS_ROOT_PATH)} },
+  @{ Location = 'office'; Source = 'mitchell'; Label = 'Office Mitchell EMS'; Root = ${JSON.stringify(OFFICE_MITCHELL_EMS_ROOT_PATH)} }
+)
+function Get-FamilyId($source, $file) {
+  $name = [System.IO.Path]::GetFileNameWithoutExtension($file)
+  if ($source -eq 'mitchell' -and $name -match '^(\\d+)') {
+    return $Matches[1]
+  }
+  return $name
+}
+$allCandidates = @()
+$statuses = @()
+foreach ($root in $roots) {
+  $status = [ordered]@{
+    id = "$($root.Location):$($root.Source)"
+    label = $root.Label
+    path = $root.Root
+    available = $false
+    candidateCount = 0
+    message = 'Folder not found.'
+  }
+  if (Test-Path -LiteralPath $root.Root) {
+    $groups = @{}
+    Get-ChildItem -LiteralPath $root.Root -File -Force | ForEach-Object {
+      $extension = $_.Extension.TrimStart('.').ToLowerInvariant()
+      if ($extensions -contains $extension) {
+        $familyId = Get-FamilyId $root.Source $_.FullName
+        if (-not $groups.ContainsKey($familyId)) {
+          $groups[$familyId] = [ordered]@{
+            fileCount = 0
+            lastModifiedAt = ''
+            primaryFile = ''
+          }
+        }
+        $group = $groups[$familyId]
+        $group.fileCount += 1
+        $lastModifiedAt = $_.LastWriteTimeUtc.ToString('o')
+        if ($lastModifiedAt -gt $group.lastModifiedAt) {
+          $group.lastModifiedAt = $lastModifiedAt
+          $group.primaryFile = $_.FullName
+        }
+      }
+    }
+    foreach ($familyId in $groups.Keys) {
+      $group = $groups[$familyId]
+      $allCandidates += [ordered]@{
+        id = "$($root.Location):$($root.Source):$familyId"
+        location = $root.Location
+        source = $root.Source
+        familyId = $familyId
+        label = "$($root.Label) $familyId"
+        rootPath = $root.Root
+        primaryFile = $group.primaryFile
+        fileCount = $group.fileCount
+        lastModifiedAt = $group.lastModifiedAt
+      }
+    }
+    $status.available = $true
+    $status.candidateCount = $groups.Count
+    $status.message = if ($groups.Count -eq 1) { '1 EMS bundle found.' } else { "$($groups.Count) EMS bundles found." }
+  }
+  $statuses += $status
+}
+[ordered]@{
+  generatedAt = [DateTime]::UtcNow.ToString('o')
+  candidates = @($allCandidates | Sort-Object lastModifiedAt -Descending)
+  sources = $statuses
+} | ConvertTo-Json -Depth 8 -Compress
+`;
+}
+
+async function listOfficeEmsCandidates() {
+  return runOfficePowerShellJson<EmsImportCandidatesSnapshot>(getOfficeEmsScanScript());
+}
+
+async function syncOfficeEmsFamilyToLocal(
+  source: EmsSource,
+  familyId: string,
+  primaryFile: string,
+) {
+  const officeRoot =
+    source === 'ccc' ? OFFICE_CCC_EMS_ROOT_PATH : OFFICE_MITCHELL_EMS_ROOT_PATH;
+  const localRoot = source === 'ccc' ? CCC_EMS_ROOT_PATH : MITCHELL_EMS_ROOT_PATH;
+  const script = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$extensions = @('ad1','ad2','dbt','env','lin','pfh','pfl','pfm','pfo','pfp','pft','stl','ttl','veh','ven')
+$source = ${JSON.stringify(source)}
+$familyId = ${JSON.stringify(familyId)}
+$root = ${JSON.stringify(officeRoot)}
+function Test-FamilyId($source, $file, $familyId) {
+  $name = [System.IO.Path]::GetFileNameWithoutExtension($file)
+  if ($source -eq 'mitchell') {
+    if ($name -match '^(\\d+)') {
+      return $Matches[1] -eq $familyId
+    }
+    return $false
+  }
+  return $name -ieq $familyId
+}
+if (-not (Test-Path -LiteralPath $root)) {
+  throw "Office EMS folder not found at $root."
+}
+$files = @()
+Get-ChildItem -LiteralPath $root -File -Force | ForEach-Object {
+  $extension = $_.Extension.TrimStart('.').ToLowerInvariant()
+  if (($extensions -contains $extension) -and (Test-FamilyId $source $_.FullName $familyId)) {
+    $files += [ordered]@{
+      name = $_.Name
+      bytesBase64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($_.FullName))
+      lastModifiedAt = $_.LastWriteTimeUtc.ToString('o')
+    }
+  }
+}
+if (-not $files.Count) {
+  throw "No office EMS files found for $source $familyId."
+}
+[ordered]@{
+  files = @($files)
+} | ConvertTo-Json -Depth 5 -Compress
+`;
+
+  const payload = await runOfficePowerShellJson<OfficeEmsFamilyFiles>(script);
+  fs.mkdirSync(localRoot, { recursive: true });
+
+  let selectedPath = path.join(localRoot, path.basename(primaryFile));
+  for (const file of payload.files) {
+    const targetPath = path.join(localRoot, path.basename(file.name));
+    fs.writeFileSync(targetPath, Buffer.from(file.bytesBase64, 'base64'));
+
+    const lastModifiedAt = new Date(file.lastModifiedAt);
+    if (!Number.isNaN(lastModifiedAt.getTime())) {
+      fs.utimesSync(targetPath, lastModifiedAt, lastModifiedAt);
+    }
+  }
+
+  if (!fs.existsSync(selectedPath)) {
+    selectedPath = path.join(localRoot, payload.files[0]?.name ?? `${familyId}.ems`);
+  }
+
+  return selectedPath;
+}
+
+async function listEmsImportCandidates(): Promise<EmsImportCandidatesSnapshot> {
+  const localCcc = scanLocalEmsRoot('local', 'ccc', 'This PC CCC EMS', CCC_EMS_ROOT_PATH);
+  const localMitchell = scanLocalEmsRoot(
+    'local',
+    'mitchell',
+    'This PC Mitchell EMS',
+    MITCHELL_EMS_ROOT_PATH,
+  );
+  let officeSnapshot: EmsImportCandidatesSnapshot = {
+    generatedAt: new Date().toISOString(),
+    candidates: [],
+    sources: [
+      {
+        id: 'office:ccc',
+        label: 'Office CCC EMS',
+        path: OFFICE_CCC_EMS_ROOT_PATH,
+        available: false,
+        candidateCount: 0,
+        message: 'Office bridge not checked yet.',
+      },
+      {
+        id: 'office:mitchell',
+        label: 'Office Mitchell EMS',
+        path: OFFICE_MITCHELL_EMS_ROOT_PATH,
+        available: false,
+        candidateCount: 0,
+        message: 'Office bridge not checked yet.',
+      },
+    ],
+  };
+
+  try {
+    officeSnapshot = await listOfficeEmsCandidates();
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Office bridge could not be reached.';
+    officeSnapshot = {
+      generatedAt: new Date().toISOString(),
+      candidates: [],
+      sources: officeSnapshot.sources.map((source) => ({
+        ...source,
+        message,
+      })),
+    };
+  }
+
+  const candidates = [
+    ...localCcc.candidates,
+    ...localMitchell.candidates,
+    ...officeSnapshot.candidates,
+  ].sort((left, right) => right.lastModifiedAt.localeCompare(left.lastModifiedAt));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    candidates,
+    sources: [localCcc.status, localMitchell.status, ...officeSnapshot.sources],
+  };
+}
+
+async function convertEmsImportCandidate(
+  candidate: EmsImportCandidate,
+): Promise<EmsImportCandidateConversionResult> {
+  if (!['ccc', 'mitchell'].includes(candidate.source)) {
+    throw new Error(`Unsupported EMS source: ${candidate.source}`);
+  }
+
+  const selectedPath =
+    candidate.location === 'office'
+      ? await syncOfficeEmsFamilyToLocal(
+          candidate.source,
+          candidate.familyId,
+          candidate.primaryFile,
+        )
+      : candidate.primaryFile;
+  const repairOrder = await normalizeEmsBundle(candidate.source, candidate.familyId);
+
+  return {
+    source: candidate.source,
+    familyId: candidate.familyId,
+    selectedPath,
+    repairOrder,
+  };
 }
 
 async function selectEmsRepairOrder(): Promise<EmsImportSelectionResult> {
@@ -1662,6 +2201,35 @@ app.whenReady().then(async () => {
       );
     }
   });
+
+  ipcMain.handle('ems:listImportCandidates', async () => {
+    try {
+      return await listEmsImportCandidates();
+    } catch (error) {
+      console.error('[ems] Failed to list EMS import candidates:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not list EMS import candidates.',
+      );
+    }
+  });
+
+  ipcMain.handle(
+    'ems:convertImportCandidate',
+    async (_event, candidate: EmsImportCandidate) => {
+      try {
+        return await convertEmsImportCandidate(candidate);
+      } catch (error) {
+        console.error('[ems] Failed to convert EMS import candidate:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not convert the selected EMS candidate.',
+        );
+      }
+    },
+  );
 
   ipcMain.handle(
     'jobs:savePhotoToRoFolder',

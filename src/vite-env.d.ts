@@ -3,6 +3,9 @@
 import type {
   AppMode,
   DisplayMode,
+  EmsImportCandidate,
+  EmsImportCandidateConversionResult,
+  EmsImportCandidatesSnapshot,
   Job,
   EmsImportSelectionResult,
   LocalAppSettings,
@@ -45,6 +48,10 @@ declare global {
     }) => Promise<SendMaterialEmailResult>;
     getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
     selectEmsRepairOrder: () => Promise<EmsImportSelectionResult>;
+    listEmsImportCandidates: () => Promise<EmsImportCandidatesSnapshot>;
+    convertEmsImportCandidate: (
+      candidate: EmsImportCandidate,
+    ) => Promise<EmsImportCandidateConversionResult>;
     saveJobPhotoToRoFolder: (payload: {
       roNumber: string;
       customerName: string;

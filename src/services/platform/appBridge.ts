@@ -2,6 +2,9 @@ import { Capacitor } from '@capacitor/core';
 import type {
   AppMode,
   DisplayMode,
+  EmsImportCandidate,
+  EmsImportCandidateConversionResult,
+  EmsImportCandidatesSnapshot,
   EmsImportSelectionResult,
   Job,
   LocalAppSettings,
@@ -85,6 +88,10 @@ type AppBridge = {
   }) => Promise<SendMaterialEmailResult>;
   getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
   selectEmsRepairOrder: () => Promise<EmsImportSelectionResult>;
+  listEmsImportCandidates: () => Promise<EmsImportCandidatesSnapshot>;
+  convertEmsImportCandidate: (
+    candidate: EmsImportCandidate,
+  ) => Promise<EmsImportCandidateConversionResult>;
   saveJobPhotoToRoFolder: (payload: {
     roNumber: string;
     customerName: string;
@@ -579,6 +586,24 @@ export const appBridge = {
     const desktopBridge = getDesktopBridge();
     if (desktopBridge) {
       return desktopBridge.selectEmsRepairOrder();
+    }
+
+    throw new Error('EMS import is only available in the desktop app.');
+  },
+
+  async listEmsImportCandidates() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.listEmsImportCandidates();
+    }
+
+    throw new Error('EMS watch is only available in the desktop app.');
+  },
+
+  async convertEmsImportCandidate(candidate: EmsImportCandidate) {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.convertEmsImportCandidate(candidate);
     }
 
     throw new Error('EMS import is only available in the desktop app.');

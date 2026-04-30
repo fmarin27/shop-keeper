@@ -14,6 +14,7 @@ import {
   addAudioNoteToJob,
   addPhotoToJob,
   clearLegacyPartsWaiting,
+  deleteJob,
   deleteJobNote,
   deleteJobPart,
   deletePhotoFromJob,
@@ -178,6 +179,22 @@ function JobsTab({
 
   const handleUndoDone = async (jobId: string) => {
     await undoJobDone(jobId);
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    const label = [job.roNumber ? `RO ${job.roNumber}` : '', job.vehicle]
+      .filter(Boolean)
+      .join(' - ');
+    const confirmed = window.confirm(
+      `Hide ${label || 'this job'} from Shop Keeper? It will stay hidden even if Repair Center still has it.`,
+    );
+
+    if (!confirmed) return;
+
+    await deleteJob(jobId);
   };
 
   const handleAddTextNote = async (jobId: string, text: string) => {
@@ -483,6 +500,7 @@ function JobsTab({
           onFocusedJobHandled={focusedJobDone ? undefined : onFocusedJobHandled}
           onChangeStatus={handleChangeStatus}
           onMarkDone={handleMarkDone}
+          onDeleteJob={handleDeleteJob}
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
           onAddPhoto={handleAddPhoto}
@@ -520,6 +538,7 @@ function JobsTab({
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
           onUpdateJobDetails={handleUpdateJobDetails}
           onUndoDone={handleUndoDone}
+          onDeleteJob={handleDeleteJob}
         />
       </div>
 

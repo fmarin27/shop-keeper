@@ -24,6 +24,7 @@ type ActiveJobsSectionProps = {
   onFocusedJobHandled?: () => void;
   onChangeStatus: (jobId: string) => void;
   onMarkDone: (jobId: string) => void;
+  onDeleteJob: (jobId: string) => Promise<void> | void;
   onAddTextNote: (jobId: string, text: string) => void;
   onAddAudioNote: (jobId: string, file: Blob) => Promise<void> | void;
   onAddPhoto: (
@@ -72,6 +73,7 @@ function ActiveJobsSection({
   onFocusedJobHandled,
   onChangeStatus,
   onMarkDone,
+  onDeleteJob,
   onAddTextNote,
   onAddAudioNote,
   onAddPhoto,
@@ -772,6 +774,18 @@ function ActiveJobsSection({
                       </button>
                     ) : null}
 
+                    {!showCompactMobileSummary ? (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onDeleteJob(job.id);
+                        }}
+                        style={hideJobButtonStyle(compact)}
+                      >
+                        Hide
+                      </button>
+                    ) : null}
+
                     <button
                       type="button"
                       aria-label={isOpen ? 'Collapse job' : 'Expand job'}
@@ -1422,6 +1436,20 @@ function markDoneButtonStyle(compact: boolean): React.CSSProperties {
     fontWeight: 900,
     cursor: 'pointer',
     boxShadow: '0 8px 18px rgba(21,128,61,0.24)',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function hideJobButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(248,113,113,0.55)',
+    background: 'rgba(127,29,29,0.34)',
+    color: '#fee2e2',
+    borderRadius: compact ? 12 : 14,
+    padding: compact ? '8px 11px' : '10px 14px',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+    cursor: 'pointer',
     whiteSpace: 'nowrap',
   };
 }

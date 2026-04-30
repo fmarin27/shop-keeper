@@ -22,6 +22,7 @@ type CompletedJobsSectionProps = {
     input: UpdateJobDetailsInput,
   ) => Promise<void> | void;
   onUndoDone: (jobId: string) => void;
+  onDeleteJob: (jobId: string) => Promise<void> | void;
 };
 
 function CompletedJobsSection({
@@ -42,6 +43,7 @@ function CompletedJobsSection({
   onClearLegacyPartsWaiting,
   onUpdateJobDetails,
   onUndoDone,
+  onDeleteJob,
 }: CompletedJobsSectionProps) {
   const [sectionOpen, setSectionOpen] = useState(false);
   const [openJobIds, setOpenJobIds] = useState<string[]>([]);
@@ -580,6 +582,9 @@ function CompletedJobsSection({
                         </ActionButton>
                         <ActionButton onClick={() => onUndoDone(job.id)}>
                           Reopen Job
+                        </ActionButton>
+                        <ActionButton danger onClick={() => void onDeleteJob(job.id)}>
+                          Hide Job
                         </ActionButton>
                       </div>
                     </div>

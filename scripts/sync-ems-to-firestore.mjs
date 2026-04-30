@@ -169,6 +169,13 @@ function mapEstimateLines(lines) {
       };
     }
 
+    if (mappedLine.isOrderablePart && mappedLine.partPrice <= 0) {
+      return {
+        ...mappedLine,
+        isOrderablePart: false,
+      };
+    }
+
     return mappedLine;
   });
 }

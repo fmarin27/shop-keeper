@@ -647,12 +647,15 @@ function sortPartRows(rows: PartBoardRow[], sort: PartsSort) {
 
 function isOrderableEstimatePart(line: EmsEstimateLine) {
   if (isRefinishEstimateLine(line)) return false;
+
+  const partAmount = getEstimatePartAmount(line);
+  if (partAmount <= 0) return false;
   if (line.isOrderablePart) return true;
 
   const kind = String(line.lineKind ?? '').trim().toLowerCase();
   if (kind) return kind === 'part';
 
-  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+  return Boolean(line.partNumber);
 }
 
 function isRefinishEstimateLine(line: EmsEstimateLine) {

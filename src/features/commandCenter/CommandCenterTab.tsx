@@ -1541,12 +1541,15 @@ function getEstimatePartItems(job: Job) {
 
 function isOrderableEstimatePart(line: EmsEstimateLine) {
   if (isRefinishEstimateLine(line)) return false;
+
+  const partPrice = Number(line.partPrice ?? 0);
+  if (!Number.isFinite(partPrice) || partPrice <= 0) return false;
   if (line.isOrderablePart) return true;
 
   const kind = String(line.lineKind ?? '').trim().toLowerCase();
   if (kind) return kind === 'part';
 
-  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+  return Boolean(line.partNumber);
 }
 
 function isRefinishEstimateLine(line: EmsEstimateLine) {

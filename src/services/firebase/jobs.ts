@@ -370,6 +370,13 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
       };
     }
 
+    if (mappedLine.isOrderablePart && mappedLine.partPrice <= 0) {
+      return {
+        ...mappedLine,
+        isOrderablePart: false,
+      };
+    }
+
     return mappedLine;
   });
 }

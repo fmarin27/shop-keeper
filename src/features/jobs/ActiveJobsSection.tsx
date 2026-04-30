@@ -3512,12 +3512,15 @@ function isRefinishEstimateLine(line: EstimateLineForDisplay) {
 
 function isOrderableEstimatePart(line: EstimateLineForDisplay) {
   if (isRefinishEstimateLine(line)) return false;
+
+  const partPrice = Number(line.partPrice ?? 0);
+  if (!Number.isFinite(partPrice) || partPrice <= 0) return false;
   if (line.isOrderablePart) return true;
 
   const kind = String(getEstimateDisplayLineKind(line) ?? '').trim().toLowerCase();
   if (kind) return kind === 'part';
 
-  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+  return Boolean(line.partNumber);
 }
 
 function getEstimatePartAmount(line: EstimateLineForDisplay) {

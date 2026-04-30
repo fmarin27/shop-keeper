@@ -288,56 +288,12 @@ function isEmsSeededPart(part) {
   );
 }
 
-function seedPartsFromEstimate(estimateLines, existingParts) {
+function seedPartsFromEstimate(_estimateLines, existingParts) {
   const previousParts = Array.isArray(existingParts) ? existingParts : [];
-  const manualParts = previousParts.filter((part) => !isEmsSeededPart(part));
-  const previousEmsPartsById = new Map(
-    previousParts.filter(isEmsSeededPart).map((part) => [part.id, part]),
-  );
-  const previousEmsPartsByIdentity = new Map();
 
-  previousParts.filter(isEmsSeededPart).forEach((part) => {
-    const identity = seededPartIdentityFromPart(part);
-    previousEmsPartsByIdentity.set(
-      identity,
-      pickPreferredPart(previousEmsPartsByIdentity.get(identity), part),
-    );
-  });
-
-  const seededPartsByIdentity = new Map();
-
-  estimateLines
-    .filter((line) => isPartCandidate(line) || isSubletCandidate(line))
-    .forEach((line) => {
-      const kind = isSubletCandidate(line) ? 'sublet' : 'part';
-      const identity = seededPartIdentityFromLine(line, kind);
-      const legacyId = `ems-part-${slug(line.id)}`;
-      const previous =
-        previousEmsPartsByIdentity.get(identity) || previousEmsPartsById.get(legacyId);
-      const generatedNote = `Seeded from EMS line ${line.lineNumber}. Verify ${
-        kind === 'sublet' ? 'invoice/payment' : 'order status'
-      }.`;
-      const seededPart = {
-        id: `ems-part-${identity}`,
-        kind,
-        name: seededPartName(line),
-        quantity: String(line.quantity || 1),
-        requestedBy: previous?.requestedBy || 'manager',
-        status: previous?.status || 'requested',
-        invoiceNumber: previous?.invoiceNumber || '',
-        note: previous?.note?.trim() ? previous.note : generatedNote,
-        createdAt: previous?.createdAt || new Date().toISOString(),
-        ...(previous?.receivedAt ? { receivedAt: previous.receivedAt } : {}),
-        ...(previous?.paidAt ? { paidAt: previous.paidAt } : {}),
-      };
-
-      seededPartsByIdentity.set(
-        identity,
-        pickPreferredPart(seededPartsByIdentity.get(identity), seededPart),
-      );
-    });
-
-  return [...manualParts, ...seededPartsByIdentity.values()];
+  // EMS estimate lines are reference data. Only manually requested parts/sublets
+  // should enter the live ordering workflow.
+  return previousParts.filter((part) => !isEmsSeededPart(part));
 }
 
 function buildJobPayload(normalized, existing, sourceFile) {

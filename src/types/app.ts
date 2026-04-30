@@ -281,6 +281,13 @@ export type EmsImportCandidate = {
   primaryFile: string;
   fileCount: number;
   lastModifiedAt: string;
+  roNumber?: string;
+  customerName?: string;
+  amount?: number;
+  vehicle?: string;
+  insuranceCompany?: string;
+  claimNumber?: string;
+  previewError?: string;
 };
 
 export type EmsWatchedSourceStatus = {

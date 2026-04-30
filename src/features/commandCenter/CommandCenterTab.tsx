@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { subscribeToJobs } from '../../services/firebase/jobs';
 import type { Job } from '../../types/app';
+import EmsImportPanel from '../ems/EmsImportPanel';
 
 type CommandCenterTabProps = {
   compact?: boolean;
@@ -144,6 +145,8 @@ function CommandCenterTab({
             <SummaryCard label="Appraiser Wait" value={String(appraiserCount)} tone="green" />
           </div>
         </div>
+
+        <EmsImportPanel compact={compact} mobile={mobile} />
 
         <div
           style={{

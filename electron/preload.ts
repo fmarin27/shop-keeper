@@ -70,6 +70,13 @@ contextBridge.exposeInMainWorld('appBridge', {
     primaryFile: string;
     fileCount: number;
     lastModifiedAt: string;
+    roNumber?: string;
+    customerName?: string;
+    amount?: number;
+    vehicle?: string;
+    insuranceCompany?: string;
+    claimNumber?: string;
+    previewError?: string;
   }) => ipcRenderer.invoke('ems:convertImportCandidate', candidate),
   saveJobPhotoToRoFolder: (payload: {
     roNumber: string;

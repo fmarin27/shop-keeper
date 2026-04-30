@@ -218,6 +218,13 @@ type EmsImportCandidate = {
   primaryFile: string;
   fileCount: number;
   lastModifiedAt: string;
+  roNumber?: string;
+  customerName?: string;
+  amount?: number;
+  vehicle?: string;
+  insuranceCompany?: string;
+  claimNumber?: string;
+  previewError?: string;
 };
 
 type EmsWatchedSourceStatus = {
@@ -248,6 +255,10 @@ type OfficeEmsFamilyFiles = {
     bytesBase64: string;
     lastModifiedAt: string;
   }>;
+};
+
+type SyncOfficeEmsFamilyOptions = {
+  overwrite?: boolean;
 };
 
 type MaterialsManagerSummary = {
@@ -1084,6 +1095,117 @@ async function normalizeEmsBundle(source: string, familyId: string) {
   return runPythonJson(['-c', script, source, familyId]);
 }
 
+const emsCandidatePreviewCache = new Map<string, EmsImportCandidate>();
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function previewText(value: unknown) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim();
+}
+
+function firstPreviewText(...values: unknown[]) {
+  for (const value of values) {
+    const clean = previewText(value);
+    if (clean) return clean;
+  }
+
+  return '';
+}
+
+function previewNumber(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/[$,]/g, '').trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function getEmsRepairOrderPreview(repairOrder: Record<string, unknown>) {
+  const customer = recordValue(repairOrder.customer);
+  const vehicle = recordValue(repairOrder.vehicle);
+  const claim = recordValue(repairOrder.claim);
+  const totals = recordValue(repairOrder.totals);
+  const customerName = firstPreviewText(
+    customer.full_name,
+    [customer.first_name, customer.last_name]
+      .map(previewText)
+      .filter(Boolean)
+      .join(' '),
+  );
+  const vehicleLabel = [vehicle.year, vehicle.make, vehicle.model]
+    .map(previewText)
+    .filter(Boolean)
+    .join(' ');
+
+  return {
+    roNumber: firstPreviewText(repairOrder.ro_number, repairOrder.external_estimate_id),
+    customerName,
+    amount: previewNumber(totals.grand_total),
+    vehicle: vehicleLabel,
+    insuranceCompany: previewText(claim.insurance_company),
+    claimNumber: previewText(claim.claim_number),
+  };
+}
+
+async function enrichEmsImportCandidatePreview(
+  candidate: EmsImportCandidate,
+): Promise<EmsImportCandidate> {
+  const cacheKey = `${candidate.id}:${candidate.lastModifiedAt}`;
+  const cached = emsCandidatePreviewCache.get(cacheKey);
+  if (cached) {
+    return {
+      ...candidate,
+      roNumber: cached.roNumber,
+      customerName: cached.customerName,
+      amount: cached.amount,
+      vehicle: cached.vehicle,
+      insuranceCompany: cached.insuranceCompany,
+      claimNumber: cached.claimNumber,
+      previewError: cached.previewError,
+    };
+  }
+
+  try {
+    if (candidate.location === 'office') {
+      await syncOfficeEmsFamilyToLocal(
+        candidate.source,
+        candidate.familyId,
+        candidate.primaryFile,
+        { overwrite: false },
+      );
+    }
+
+    const repairOrder = await normalizeEmsBundle(candidate.source, candidate.familyId);
+    const enriched = {
+      ...candidate,
+      ...getEmsRepairOrderPreview(repairOrder as Record<string, unknown>),
+    };
+    emsCandidatePreviewCache.set(cacheKey, enriched);
+    return enriched;
+  } catch (error) {
+    const enriched = {
+      ...candidate,
+      previewError:
+        error instanceof Error ? error.message : 'Could not preview this EMS bundle.',
+    };
+    emsCandidatePreviewCache.set(cacheKey, enriched);
+    return enriched;
+  }
+}
+
 function getOfficeEmsScanScript() {
   return `
 $ErrorActionPreference = 'Stop'
@@ -1169,6 +1291,7 @@ async function syncOfficeEmsFamilyToLocal(
   source: EmsSource,
   familyId: string,
   primaryFile: string,
+  options: SyncOfficeEmsFamilyOptions = {},
 ) {
   const officeRoot =
     source === 'ccc' ? OFFICE_CCC_EMS_ROOT_PATH : OFFICE_MITCHELL_EMS_ROOT_PATH;
@@ -1218,10 +1341,19 @@ if (-not $files.Count) {
   let selectedPath = path.join(localRoot, path.basename(primaryFile));
   for (const file of payload.files) {
     const targetPath = path.join(localRoot, path.basename(file.name));
+    const lastModifiedAt = new Date(file.lastModifiedAt);
+    const canUseRemoteMtime = !Number.isNaN(lastModifiedAt.getTime());
+
+    if (options.overwrite === false && fs.existsSync(targetPath)) {
+      const localModifiedAt = fs.statSync(targetPath).mtime;
+      if (!canUseRemoteMtime || localModifiedAt.getTime() >= lastModifiedAt.getTime()) {
+        continue;
+      }
+    }
+
     fs.writeFileSync(targetPath, Buffer.from(file.bytesBase64, 'base64'));
 
-    const lastModifiedAt = new Date(file.lastModifiedAt);
-    if (!Number.isNaN(lastModifiedAt.getTime())) {
+    if (canUseRemoteMtime) {
       fs.utimesSync(targetPath, lastModifiedAt, lastModifiedAt);
     }
   }
@@ -1281,11 +1413,16 @@ async function listEmsImportCandidates(): Promise<EmsImportCandidatesSnapshot> {
     };
   }
 
-  const candidates = [
+  const discoveredCandidates = [
     ...localCcc.candidates,
     ...localMitchell.candidates,
     ...officeSnapshot.candidates,
   ].sort((left, right) => right.lastModifiedAt.localeCompare(left.lastModifiedAt));
+  const candidates: EmsImportCandidate[] = [];
+
+  for (const candidate of discoveredCandidates) {
+    candidates.push(await enrichEmsImportCandidatePreview(candidate));
+  }
 
   return {
     generatedAt: new Date().toISOString(),

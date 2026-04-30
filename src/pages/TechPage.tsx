@@ -3,6 +3,7 @@ import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
 import PartsTab from '../features/parts/PartsTab';
+import CommandCenterTab from '../features/commandCenter/CommandCenterTab';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 type TechPageProps = {
@@ -15,7 +16,7 @@ type TechPageProps = {
   updateStatus: string | null;
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
-  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
   overlayFocusTarget: OverlayFocusTarget | null;
@@ -69,16 +70,20 @@ function TechPage({
         onOpenAttentionJob={onOpenAttentionJob}
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
+        showCommandCenter={!isMobile}
       />
 
       <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
-        {selectedTab === 'jobs' ? (
+        {selectedTab === 'commandCenter' && !isMobile ? (
+          <CommandCenterTab compact={isCompact} mobile={isMobile} />
+        ) : selectedTab === 'jobs' ? (
           <JobsTab
             showAddJob={false}
             compact={isCompact}
             mobile={isMobile}
             appMode="tech"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
+            focusedJobDone={overlayFocusTarget?.tab === 'jobs' ? !!overlayFocusTarget.done : false}
             onFocusedJobHandled={onOverlayFocusHandled}
           />
         ) : selectedTab === 'parts' ? (
@@ -94,7 +99,8 @@ function TechPage({
         ) : (
           <MaterialsMessagesTab
             appMode="tech"
-            compact={isCompact || isMobile}
+            compact={isCompact}
+            mobile={isMobile}
             focusedMaterialId={
               overlayFocusTarget?.tab === 'materialsMessages' &&
               overlayFocusTarget.itemType === 'material'

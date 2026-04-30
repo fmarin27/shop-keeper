@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRef } from 'react';
 import ActiveJobsSection from './ActiveJobsSection';
 import CompletedJobsSection from './CompletedJobsSection';
+import { appBridge } from '../../services/platform/appBridge';
 import type {
   AppMode,
   AmountStatus,
@@ -14,6 +16,9 @@ import {
   addAudioNoteToJob,
   addPhotoToJob,
   clearLegacyPartsWaiting,
+  deleteJobNote,
+  deleteJobPart,
+  deletePhotoFromJob,
   markJobPartReceived,
   addTextNoteToJob,
   createJob,
@@ -23,6 +28,7 @@ import {
   saveJobPartNote,
   setActiveJobPosition,
   subscribeToJobs,
+  syncJobsFromMitchell,
   undoJobDone,
   updateJobPartStatus,
   updateJobDetails,
@@ -35,6 +41,7 @@ type JobsTabProps = {
   mobile?: boolean;
   appMode: AppMode;
   focusedJobId?: string | null;
+  focusedJobDone?: boolean;
   onFocusedJobHandled?: () => void;
 };
 
@@ -42,6 +49,7 @@ type AddJobFormState = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   paintCode: string;
   amount: string;
   amountStatus: AmountStatus;
@@ -59,6 +67,7 @@ const initialFormState: AddJobFormState = {
   vehicle: '',
   roNumber: '',
   customerName: '',
+  phoneNumber: '',
   paintCode: '',
   amount: '',
   amountStatus: 'notFinal',
@@ -72,12 +81,22 @@ const initialFormState: AddJobFormState = {
   initialNote: '',
 };
 
+const MITCHELL_SYNC_INTERVAL_MS = 1000 * 30;
+const ACTIVE_JOB_STATUSES: Exclude<JobStatus, 'done'>[] = [
+  'notStarted',
+  'inProgress',
+  'waiting',
+  'waitingOnAppraiser',
+  'supplementNeeded',
+];
+
 function JobsTab({
   showAddJob = false,
   compact = false,
   mobile = false,
   appMode,
   focusedJobId = null,
+  focusedJobDone = false,
   onFocusedJobHandled,
 }: JobsTabProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -87,6 +106,11 @@ function JobsTab({
   const [addJobForm, setAddJobForm] = useState<AddJobFormState>(initialFormState);
   const [savingJob, setSavingJob] = useState(false);
   const [addJobError, setAddJobError] = useState<string | null>(null);
+  const [mitchellSyncMessage, setMitchellSyncMessage] = useState<string | null>(null);
+  const [mitchellSyncError, setMitchellSyncError] = useState<string | null>(null);
+  const [lastMitchellSyncAt, setLastMitchellSyncAt] = useState<string | null>(null);
+  const [isMitchellSyncing, setIsMitchellSyncing] = useState(false);
+  const runMitchellSyncRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
 
   const applyOptimisticActiveOrder = (
     sourceJobs: Job[],
@@ -117,6 +141,80 @@ function JobsTab({
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!appBridge.isDesktop()) {
+      return;
+    }
+
+    let mounted = true;
+    let syncing = false;
+    let lastSourceModifiedAt: string | null = null;
+
+    const runMitchellSync = async (force = false) => {
+      if (syncing) {
+        return;
+      }
+
+      try {
+        syncing = true;
+        if (mounted) {
+          setIsMitchellSyncing(true);
+        }
+        if (force && mounted) {
+          setMitchellSyncMessage('Syncing Mitchell active jobs...');
+        }
+
+        const snapshot = await appBridge.getMitchellJobsSnapshot();
+        if (!force && snapshot.lastModifiedAt === lastSourceModifiedAt) {
+          if (mounted) {
+            setMitchellSyncMessage(
+              `Mitchell sync active. Last checked ${formatDateTime(new Date().toISOString())}.`,
+            );
+            setMitchellSyncError(null);
+          }
+          return;
+        }
+
+        await syncJobsFromMitchell(snapshot);
+        lastSourceModifiedAt = snapshot.lastModifiedAt;
+
+        if (mounted) {
+          const now = new Date().toISOString();
+          setLastMitchellSyncAt(now);
+          setMitchellSyncError(null);
+          setMitchellSyncMessage(
+            `Mitchell sync active. ${snapshot.jobs.length} jobs checked from ${snapshot.sourcePath}.`,
+          );
+        }
+      } catch (error) {
+        if (mounted) {
+          setMitchellSyncError(
+            error instanceof Error
+              ? error.message
+              : 'Mitchell sync failed.',
+          );
+        }
+      } finally {
+        syncing = false;
+        if (mounted) {
+          setIsMitchellSyncing(false);
+        }
+      }
+    };
+
+    runMitchellSyncRef.current = runMitchellSync;
+
+    void runMitchellSync(true);
+    const timer = window.setInterval(() => {
+      void runMitchellSync(false);
+    }, MITCHELL_SYNC_INTERVAL_MS);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const activeJobs = useMemo(
     () =>
       [...jobs]
@@ -144,10 +242,7 @@ function JobsTab({
     [jobs],
   );
 
-  const visibleActiveJobs = useMemo(
-    () => (compact ? activeJobs.slice(0, 1) : activeJobs),
-    [activeJobs, compact],
-  );
+  const visibleActiveJobs = useMemo(() => activeJobs, [activeJobs]);
 
   const topPriorityJob = visibleActiveJobs[0] ?? null;
 
@@ -203,6 +298,20 @@ function JobsTab({
     await markJobNotesRead(job);
   };
 
+  const handleDeleteNote = async (jobId: string, noteId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deleteJobNote(job, noteId);
+  };
+
+  const handleDeletePhoto = async (jobId: string, photoId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deletePhotoFromJob(job, photoId);
+  };
+
   const handleRequestPart = async (
     jobId: string,
     input: { name: string; quantity: string; note?: string },
@@ -241,6 +350,13 @@ function JobsTab({
     await saveJobPartNote(job, partId, note);
   };
 
+  const handleDeletePart = async (jobId: string, partId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await deleteJobPart(job, partId);
+  };
+
   const handleSetPartReorderNeeded = async (jobId: string, partId: string) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
@@ -273,6 +389,10 @@ function JobsTab({
     input: UpdateJobDetailsInput,
   ) => {
     await updateJobDetails(jobId, input);
+  };
+
+  const handleManualMitchellSync = async () => {
+    await runMitchellSyncRef.current(true);
   };
 
   const openAddJobModal = () => {
@@ -329,6 +449,7 @@ function JobsTab({
       vehicle,
       roNumber,
       customerName,
+      phoneNumber: addJobForm.phoneNumber.trim(),
       paintCode: addJobForm.paintCode.trim(),
       amount: parsedAmount,
       amountStatus: addJobForm.amountStatus,
@@ -377,6 +498,65 @@ function JobsTab({
   return (
     <>
       <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
+        {appBridge.isDesktop() ? (
+          <div
+            style={{
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            <div
+              style={{
+                borderRadius: compact ? 14 : 18,
+                padding: compact ? '10px 12px' : '12px 16px',
+                background: mitchellSyncError
+                  ? 'rgba(127,29,29,0.32)'
+                  : 'rgba(22,163,74,0.14)',
+                border: mitchellSyncError
+                  ? '1px solid rgba(248,113,113,0.34)'
+                  : '1px solid rgba(74,222,128,0.24)',
+                color: mitchellSyncError ? '#fecaca' : '#dcfce7',
+                fontSize: compact ? 12 : 13,
+                fontWeight: 800,
+                lineHeight: 1.5,
+              }}
+            >
+              {mitchellSyncError
+                ? `Mitchell sync error: ${mitchellSyncError}`
+                : mitchellSyncMessage ?? 'Mitchell sync is starting...'}
+              {lastMitchellSyncAt && !mitchellSyncError
+                ? ` Last synced ${formatDateTime(lastMitchellSyncAt)}.`
+                : ''}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleManualMitchellSync();
+                }}
+                disabled={isMitchellSyncing}
+                style={{
+                  border: '1px solid rgba(96,165,250,0.45)',
+                  background: isMitchellSyncing
+                    ? 'rgba(51,65,85,0.92)'
+                    : 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
+                  color: '#eff6ff',
+                  fontWeight: 800,
+                  fontSize: mobile ? 13 : 14,
+                  padding: mobile ? '10px 14px' : '10px 16px',
+                  borderRadius: 12,
+                  cursor: isMitchellSyncing ? 'not-allowed' : 'pointer',
+                  opacity: isMitchellSyncing ? 0.75 : 1,
+                  width: mobile ? '100%' : 'auto',
+                }}
+              >
+                {isMitchellSyncing ? 'Syncing Repair Center...' : 'Sync Repair Center Now'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {showAddJob ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -400,7 +580,7 @@ function JobsTab({
           </div>
         ) : null}
 
-        {compact ? (
+        {compact && topPriorityJob ? (
           <div
             style={{
               borderRadius: 16,
@@ -412,9 +592,7 @@ function JobsTab({
               fontWeight: 800,
             }}
           >
-            {topPriorityJob
-              ? 'Compact view shows only the top priority job.'
-              : 'No active jobs right now.'}
+            Compact view is active. Jobs stay fully visible, with {topPriorityJob.vehicle} still at the top.
           </div>
         ) : null}
 
@@ -423,31 +601,44 @@ function JobsTab({
           compact={compact}
           mobile={mobile}
           appMode={appMode}
-          focusedJobId={focusedJobId}
-          onFocusedJobHandled={onFocusedJobHandled}
+          focusedJobId={focusedJobDone ? null : focusedJobId}
+          onFocusedJobHandled={focusedJobDone ? undefined : onFocusedJobHandled}
           onChangeStatus={handleChangeStatus}
           onMarkDone={handleMarkDone}
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
           onAddPhoto={handleAddPhoto}
           onMarkNotesRead={handleMarkNotesRead}
+          onDeleteNote={handleDeleteNote}
+          onDeletePhoto={handleDeletePhoto}
           onRequestPart={handleRequestPart}
           onSetPartOrdered={handleSetPartOrdered}
           onSetPartReorderNeeded={handleSetPartReorderNeeded}
           onMarkPartReceived={handleMarkPartReceived}
           onSavePartNote={handleSavePartNote}
+          onDeletePart={handleDeletePart}
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
           onSetPriorityPosition={handleSetPriorityPosition}
           onUpdateJobDetails={handleUpdateJobDetails}
         />
 
-        {!compact ? (
-          <CompletedJobsSection
-            jobs={completedJobs}
-            compact={compact || mobile}
-            onUndoDone={handleUndoDone}
-          />
-        ) : null}
+        <CompletedJobsSection
+          jobs={completedJobs}
+          compact={compact}
+          focusedJobId={focusedJobDone ? focusedJobId : null}
+          onFocusedJobHandled={focusedJobDone ? onFocusedJobHandled : undefined}
+          onAddTextNote={handleAddTextNote}
+          onMarkNotesRead={handleMarkNotesRead}
+          onSetPartOrdered={handleSetPartOrdered}
+          onSetPartReorderNeeded={handleSetPartReorderNeeded}
+          onMarkPartReceived={handleMarkPartReceived}
+          onSavePartNote={handleSavePartNote}
+          onDeleteNote={handleDeleteNote}
+          onDeletePart={handleDeletePart}
+          onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
+          onUpdateJobDetails={handleUpdateJobDetails}
+          onUndoDone={handleUndoDone}
+        />
       </div>
 
       {showAddJobModal ? (
@@ -575,6 +766,13 @@ function JobsTab({
                 />
 
                 <Field
+                  label="Phone Number"
+                  value={addJobForm.phoneNumber}
+                  onChange={(value) => updateForm('phoneNumber', value)}
+                  placeholder="(555) 555-5555"
+                />
+
+                <Field
                   label="Paint Code"
                   value={addJobForm.paintCode}
                   onChange={(value) => updateForm('paintCode', value)}
@@ -609,6 +807,8 @@ function JobsTab({
                     { value: 'notStarted', label: 'Not Started' },
                     { value: 'inProgress', label: 'In Progress' },
                     { value: 'waiting', label: 'Waiting' },
+                    { value: 'waitingOnAppraiser', label: 'Waiting on Appraiser' },
+                    { value: 'supplementNeeded', label: 'Supplement Needed' },
                   ]}
                 />
 
@@ -928,19 +1128,29 @@ function inputStyle(compact: boolean): React.CSSProperties {
   };
 }
 
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    year: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
 function getNextStatus(status: JobStatus): JobStatus {
-  switch (status) {
-    case 'notStarted':
-      return 'inProgress';
-    case 'inProgress':
-      return 'waiting';
-    case 'waiting':
-      return 'notStarted';
-    case 'done':
-      return 'done';
-    default:
-      return 'notStarted';
+  if (status === 'done') {
+    return 'done';
   }
+
+  const currentIndex = ACTIVE_JOB_STATUSES.indexOf(status);
+  if (currentIndex === -1) {
+    return 'notStarted';
+  }
+
+  return ACTIVE_JOB_STATUSES[(currentIndex + 1) % ACTIVE_JOB_STATUSES.length];
 }
 
 export default JobsTab;

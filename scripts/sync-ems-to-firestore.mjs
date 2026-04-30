@@ -201,6 +201,7 @@ function buildJobPayload(normalized, existing, sourceFile) {
   const totals = normalized.totals || {};
   const estimateLines = mapEstimateLines(normalized.line_items);
   const seededParts = seedPartsFromEstimate(estimateLines, existing?.partsRequests);
+  const customerPhone = text(customer.phone);
   const nowIso = new Date().toISOString();
 
   const payload = {
@@ -211,7 +212,8 @@ function buildJobPayload(normalized, existing, sourceFile) {
       customer.full_name,
       [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
     ),
-    customerPhone: text(customer.phone),
+    phoneNumber: existing?.phoneNumber ?? customerPhone,
+    customerPhone,
     customerEmail: text(customer.email),
     vehicle: buildVehicleLabel(vehicle),
     vehicleYear: text(vehicle.year),
@@ -223,6 +225,7 @@ function buildJobPayload(normalized, existing, sourceFile) {
     insuranceCompany: text(claim.insurance_company),
     claimNumber: text(claim.claim_number),
     policyNumber: text(claim.policy_number),
+    sourceEstimateId: externalEstimateId,
     amount: toNumber(totals.grand_total),
     amountStatus: existing?.amountStatus ?? 'notFinal',
     status: existing?.status ?? 'notStarted',

@@ -2,12 +2,19 @@ export type AppMode = 'manager' | 'tech';
 
 export type DisplayMode = 'normal' | 'compact' | 'overlay';
 
-export type MainTab = 'jobs' | 'parts' | 'materialsMessages' | 'leads';
+export type MainTab =
+  | 'commandCenter'
+  | 'jobs'
+  | 'parts'
+  | 'materialsMessages'
+  | 'leads'
+  | 'materialsManager';
 
 export type OverlayFocusTarget =
   | {
       tab: 'jobs';
       itemId: string;
+      done?: boolean;
     }
   | {
       tab: 'materialsMessages';
@@ -22,9 +29,16 @@ export type LocalAppSettings = {
   overlayHeight: number;
   overlayX: number | null;
   overlayY: number | null;
+  materialsManagerUnlocked: boolean;
 };
 
-export type JobStatus = 'notStarted' | 'inProgress' | 'waiting' | 'done';
+export type JobStatus =
+  | 'notStarted'
+  | 'inProgress'
+  | 'waiting'
+  | 'waitingOnAppraiser'
+  | 'supplementNeeded'
+  | 'done';
 
 export type AmountStatus = 'final' | 'notFinal';
 
@@ -95,6 +109,7 @@ export type Job = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   customerPhone?: string;
   customerEmail?: string;
   paintCode: string;
@@ -122,12 +137,23 @@ export type Job = {
   estimateLines?: EmsEstimateLine[];
   emsLineItemCount?: number;
   lastEmsSyncAt?: string;
+  sourceJobUid?: string;
+  sourceEstimateId?: string;
+  sourceOpportunityNumber?: string;
+  mitchellEstimatorName?: string;
+  mitchellInsuranceCompany?: string;
+  mitchellClaimNumber?: string;
+  mitchellDepartmentName?: string;
+  mitchellLeadTechName?: string;
+  mitchellProductionStatus?: string;
+  mitchellLastSourceModifiedAt?: string;
 };
 
 export type CreateJobInput = {
   vehicle: string;
   roNumber: string;
   customerName: string;
+  phoneNumber: string;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
@@ -142,10 +168,83 @@ export type CreateJobInput = {
 };
 
 export type UpdateJobDetailsInput = {
+  phoneNumber: string;
+  status: JobStatus;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
   promiseDate: string;
+};
+
+export type MitchellJobImport = {
+  jobUid: string;
+  roNumber: string;
+  customerName: string;
+  phoneNumber: string;
+  vehicle: string;
+  amount: number;
+  promiseDate: string;
+  partsWaiting: boolean;
+  status: Exclude<JobStatus, 'done'>;
+  estimatorName: string;
+  insuranceCompany: string;
+  claimNumber: string;
+  departmentName: string;
+  leadTechName: string;
+  productionStatus: string;
+  estimateId: string;
+  opportunityNumber: string;
+  lastModifiedAt: string;
+};
+
+export type MitchellJobsSnapshot = {
+  sourcePath: string;
+  lastModifiedAt: string;
+  jobs: MitchellJobImport[];
+};
+
+export type MaterialsManagerSummary = {
+  materialCount: number;
+  invoiceCount: number;
+  invoiceItemCount: number;
+  refundCount: number;
+  catalogValue: number;
+  totalInvoiceSpend: number;
+  latestInvoiceDate: string;
+  latestUpdatedAt: string;
+};
+
+export type MaterialsManagerInvoice = {
+  id: number;
+  number: string;
+  date: string;
+  isRefund: boolean;
+  sourceDevice: string;
+  updatedAt: string;
+  lineItemCount: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  materialNames: string[];
+};
+
+export type MaterialsManagerMaterial = {
+  id: number;
+  name: string;
+  partNumber: string;
+  netPrice: number;
+  usageCount: number;
+  totalPurchasedQty: number;
+  averageUnitCost: number;
+  lastInvoiceDate: string;
+};
+
+export type MaterialsManagerSnapshot = {
+  sourcePath: string;
+  generatedAt: string;
+  summary: MaterialsManagerSummary;
+  recentInvoices: MaterialsManagerInvoice[];
+  materials: MaterialsManagerMaterial[];
 };
 
 export type LeadStatus =

@@ -17,6 +17,7 @@ export type MaterialRequest = {
   emailConfirmedAt?: string;
   emailReplyText?: string;
   status: MaterialStatus;
+  archived?: boolean;
 };
 
 export type GeneralMessage = {
@@ -28,4 +29,5 @@ export type GeneralMessage = {
   createdBy?: MessageAudienceMode;
   unreadByManager?: boolean;
   unreadByTech?: boolean;
+  archived?: boolean;
 };

@@ -13,6 +13,7 @@ import type {
   MaterialRequest,
 } from '../features/messages/types';
 import type { Lead } from '../types/app';
+import packageJson from '../../package.json';
 
 type AppTopBarProps = {
   modeLabel: 'Manager' | 'Tech';
@@ -26,9 +27,11 @@ type AppTopBarProps = {
   updateButtonLabel: string;
   updateButtonDisabled: boolean;
   mobile?: boolean;
-  onOpenAttentionJob: (jobId: string) => void;
+  onOpenAttentionJob: (jobId: string, done?: boolean) => void;
   onOpenAttentionMaterial: (itemId: string) => void;
   onOpenAttentionMessage: (itemId: string) => void;
+  showCommandCenter?: boolean;
+  showMaterialsManager?: boolean;
 };
 
 function AppTopBar({
@@ -46,10 +49,13 @@ function AppTopBar({
   onOpenAttentionJob,
   onOpenAttentionMaterial,
   onOpenAttentionMessage,
+  showCommandCenter = false,
+  showMaterialsManager = false,
 }: AppTopBarProps) {
-  const isCompact = displayMode === 'compact' || mobile;
+  const isCompact = displayMode === 'compact';
   const appMode: MessageAudienceMode =
     modeLabel === 'Manager' ? 'manager' : 'tech';
+  const versionLabel = `v${packageJson.version}`;
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -121,6 +127,7 @@ function AppTopBar({
           id: note.id,
           type: 'job' as const,
           itemId: job.id,
+          jobDone: job.done,
           label: 'Unread Job Note',
           title: job.vehicle,
           description: note.text ?? 'Unread audio note',
@@ -142,6 +149,7 @@ function AppTopBar({
           id: `${job.id}-parts`,
           type: 'job' as const,
           itemId: job.id,
+          jobDone: job.done,
           label: nextPart?.status === 'ordered' ? 'Part Ordered' : 'Part Waiting',
           title: job.vehicle,
           description: nextPart
@@ -253,6 +261,17 @@ function AppTopBar({
             Priority View
           </span>
         ) : null}
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: mobile ? 10 : isCompact ? 10 : 11,
+            fontWeight: 700,
+            color: 'rgba(226,232,240,0.78)',
+            letterSpacing: 0.4,
+          }}
+        >
+          {versionLabel}
+        </span>
       </div>
 
       <div
@@ -268,7 +287,9 @@ function AppTopBar({
           onTabChange={onTabChange}
           compact={isCompact}
           mobile={mobile}
+          showCommandCenter={showCommandCenter}
           showLeads={modeLabel === 'Manager'}
+          showMaterialsManager={showMaterialsManager}
           jobsUnreadCount={jobsUnreadCount}
           partsUnreadCount={partsUnreadCount}
           materialsMessagesUnreadCount={materialsMessagesUnreadCount}
@@ -297,7 +318,7 @@ function AppTopBar({
             opacity: updateButtonDisabled ? 0.8 : 1,
           }}
         >
-          {updateButtonLabel}
+          {mobile ? 'Play Store' : updateButtonLabel}
         </button>
 
         <button
@@ -331,7 +352,7 @@ function AppTopBar({
       ) : null}
 
       {!isCompact ? (
-        <AttentionPanel
+    <AttentionPanel
           items={attentionItems}
           onOpenJob={onOpenAttentionJob}
           onOpenMaterial={onOpenAttentionMaterial}
@@ -352,11 +373,12 @@ function AttentionPanel({
     id: string;
     type: 'job' | 'material' | 'message';
     itemId: string;
+    jobDone?: boolean;
     label: string;
     title: string;
     description: string;
   }>;
-  onOpenJob: (jobId: string) => void;
+  onOpenJob: (jobId: string, done?: boolean) => void;
   onOpenMaterial: (itemId: string) => void;
   onOpenMessage: (itemId: string) => void;
 }) {
@@ -422,7 +444,7 @@ function AttentionPanel({
               key={item.id}
               onClick={() => {
                 if (item.type === 'job') {
-                  onOpenJob(item.itemId);
+                  onOpenJob(item.itemId, item.jobDone);
                   return;
                 }
 

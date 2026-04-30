@@ -9,14 +9,20 @@ import type {
 } from './types';
 import {
   addMaterialRequest,
+  deleteMaterialRequest,
   markMaterialRead,
+  setMaterialArchived,
   setMaterialEmailStatus,
   subscribeToMaterials,
   updateMaterialStatus,
 } from '../../services/firebase/materials';
 import {
   addAudioGeneralMessage,
+  addTextGeneralMessage,
+  deleteGeneralMessage,
   markGeneralMessageRead,
+  setGeneralMessageUnreadState,
+  setGeneralMessageArchived,
   subscribeToGeneralMessages,
 } from '../../services/firebase/messages';
 import { appBridge } from '../../services/platform/appBridge';
@@ -24,6 +30,7 @@ import { appBridge } from '../../services/platform/appBridge';
 type MaterialsMessagesTabProps = {
   appMode: MessageAudienceMode;
   compact?: boolean;
+  mobile?: boolean;
   focusedMaterialId?: string | null;
   focusedMessageId?: string | null;
   onFocusHandled?: () => void;
@@ -32,6 +39,7 @@ type MaterialsMessagesTabProps = {
 function MaterialsMessagesTab({
   appMode,
   compact = false,
+  mobile = false,
   focusedMaterialId = null,
   focusedMessageId = null,
   onFocusHandled,
@@ -69,16 +77,9 @@ function MaterialsMessagesTab({
   );
 
   const totalUnreadCount = unreadMaterialsCount + unreadMessagesCount;
+  const visibleMaterials = useMemo(() => materials, [materials]);
 
-  const visibleMaterials = useMemo(
-    () => (compact ? materials.filter((item) => item.unread) : materials),
-    [compact, materials],
-  );
-
-  const visibleMessages = useMemo(
-    () => (compact ? messages.filter((item) => item.unread) : messages),
-    [compact, messages],
-  );
+  const visibleMessages = useMemo(() => messages, [messages]);
 
   const handleAddMaterial = async (
     itemName: string,
@@ -148,12 +149,35 @@ function MaterialsMessagesTab({
     await markMaterialRead(id, appMode);
   };
 
+  const handleArchiveMaterial = async (id: string, archived: boolean) => {
+    await setMaterialArchived(id, archived);
+  };
+
+  const handleDeleteMaterial = async (id: string) => {
+    await deleteMaterialRequest(id);
+  };
+
   const handleAddTextMessage = async (text: string) => {
     await addTextGeneralMessage(text, appMode);
   };
 
   const handleMarkMessageRead = async (id: string) => {
     await markGeneralMessageRead(id, appMode);
+  };
+
+  const handleArchiveMessage = async (id: string, archived: boolean) => {
+    await setGeneralMessageArchived(id, archived);
+  };
+
+  const handleSetMessageUnreadState = async (id: string, unread: boolean) => {
+    await setGeneralMessageUnreadState(id, appMode, unread);
+  };
+
+  const handleDeleteMessage = async (id: string) => {
+    const message = messages.find((item) => item.id === id);
+    if (!message) return;
+
+    await deleteGeneralMessage(message);
   };
 
   if (loadingMaterials || loadingMessages) {
@@ -218,7 +242,7 @@ function MaterialsMessagesTab({
             }}
           >
             {compact
-              ? 'Compact view only shows unread shop activity.'
+              ? 'Compact view keeps the same activity, just in a tighter layout.'
               : 'Live shop communication, because yelling across the building is apparently not a proper workflow.'}
           </div>
         </div>
@@ -256,23 +280,31 @@ function MaterialsMessagesTab({
         materials={visibleMaterials}
         appMode={appMode}
         compact={compact}
+        mobile={mobile}
         unreadCount={unreadMaterialsCount}
         focusedMaterialId={focusedMaterialId}
         onFocusedMaterialHandled={onFocusHandled}
         onAddMaterial={handleAddMaterial}
         onSetMaterialStatus={handleSetMaterialStatus}
         onMarkMaterialRead={handleMarkMaterialRead}
+        onArchiveMaterial={handleArchiveMaterial}
+        onDeleteMaterial={handleDeleteMaterial}
       />
 
       <GeneralMessagesSection
         messages={visibleMessages}
+        appMode={appMode}
         compact={compact}
+        mobile={mobile}
         unreadCount={unreadMessagesCount}
         focusedMessageId={focusedMessageId}
         onFocusedMessageHandled={onFocusHandled}
         onAddTextMessage={handleAddTextMessage}
         onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
         onMarkMessageRead={handleMarkMessageRead}
+        onArchiveMessage={handleArchiveMessage}
+        onSetMessageUnreadState={handleSetMessageUnreadState}
+        onDeleteMessage={handleDeleteMessage}
       />
     </div>
   );

@@ -9,7 +9,7 @@ import {
   doc,
 } from 'firebase/firestore';
 import { db } from './config';
-import { uploadLeadPhoto } from './storage';
+import { deleteStorageFile, uploadLeadPhoto } from './storage';
 import type { CreateLeadInput, Lead, LeadPhoto, LeadStatus, LeadUpdate } from '../../types/app';
 
 const leadsCollection = collection(db, 'leads');
@@ -111,6 +111,15 @@ export async function addLeadUpdate(lead: Lead, text: string) {
   });
 }
 
+export async function deleteLeadUpdate(lead: Lead, updateId: string) {
+  const nextUpdates = (lead.updates ?? []).filter((update) => update.id !== updateId);
+
+  await updateDoc(doc(db, 'leads', lead.id), {
+    updates: nextUpdates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function addPhotoToLead(
   lead: Pick<Lead, 'id' | 'photos'>,
   input: {
@@ -135,6 +144,20 @@ export async function addPhotoToLead(
     },
     ...(lead.photos ?? []),
   ];
+
+  await updateDoc(doc(db, 'leads', lead.id), {
+    photos: nextPhotos,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deletePhotoFromLead(lead: Pick<Lead, 'id' | 'photos'>, photoId: string) {
+  const targetPhoto = (lead.photos ?? []).find((photo) => photo.id === photoId);
+  if (!targetPhoto) return;
+
+  await deleteStorageFile(targetPhoto.url);
+
+  const nextPhotos = (lead.photos ?? []).filter((photo) => photo.id !== photoId);
 
   await updateDoc(doc(db, 'leads', lead.id), {
     photos: nextPhotos,

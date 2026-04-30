@@ -4,10 +4,12 @@ export const APP_TITLE = 'Shop Floor';
 export const MANAGER_MODE_PASSWORD = '1981';
 
 export const TAB_LABELS = {
+  commandCenter: 'RO Command Center',
   jobs: 'Jobs',
   parts: 'Parts',
   materialsMessages: 'Materials & Messages',
   leads: 'Leads',
+  materialsManager: 'Materials Manager',
 } as const;
 
 export const MODE_LABELS = {
@@ -28,4 +30,5 @@ export const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayHeight: 260,
   overlayX: null,
   overlayY: null,
+  materialsManagerUnlocked: false,
 };

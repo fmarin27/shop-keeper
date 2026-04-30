@@ -1,4 +1,6 @@
+import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { ImapFlow } from 'imapflow';
@@ -20,6 +22,10 @@ const betaAppName = 'Shop Keeper Beta';
 const releaseAppName = 'Shop Keeper';
 const appDisplayName = isPackagedApp ? releaseAppName : betaAppName;
 
+// This office PC was showing intermittent black Electron windows.
+// Disabling GPU acceleration is a reliable fallback for that class of issue.
+app.disableHardwareAcceleration();
+
 if (!isPackagedApp) {
   app.setName(betaAppName);
   app.setPath('userData', path.join(app.getPath('appData'), betaAppName));
@@ -36,6 +42,34 @@ const MATERIALS_EMAIL_CC = 'fernandomarin27@gmail.com, repecueso@hotmail.com';
 const MATERIAL_REPLY_CHECK_INTERVAL_MS = 1000 * 60 * 2;
 const MATERIAL_REQUEST_TOKEN_PREFIX = 'SK-MAT';
 let materialReplyCheckStarted = false;
+const MITCHELL_JOBS_CSV_PATH = path.join(
+  app.getPath('home'),
+  'Mitchell EMS',
+  'Mitchell Data',
+  'jobs.csv',
+);
+const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
+const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
+const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
+const MATERIALS_MANAGER_UNLOCK_CODE = 'UAB-MATERIALS-PRO';
+const MATERIALS_APP_ROOT_PATH = path.join(app.getPath('home'), 'APPS', 'Business Apps', 'Materials App');
+const MATERIALS_APP_ENTRY_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'main.py');
+const MATERIALS_APP_DB_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'bodyshop_materials.db');
+const MATERIALS_APP_VENV_PYTHON_PATH = path.join(
+  MATERIALS_APP_ROOT_PATH,
+  '.venv',
+  'Scripts',
+  'python.exe',
+);
+const USER_PYTHON_PATH = path.join(
+  app.getPath('home'),
+  'AppData',
+  'Local',
+  'Programs',
+  'Python',
+  'Python311',
+  'python.exe',
+);
 
 type UpdaterStatus =
   | {
@@ -76,31 +110,856 @@ let updaterStatus: UpdaterStatus = {
   phase: 'idle',
 };
 
-function installSafeConsole() {
-  const wrap = <T extends (...args: any[]) => void>(fn: T) => {
-    return (...args: Parameters<T>) => {
-      try {
-        fn(...args);
-      } catch (error) {
-        if (
-          error &&
-          typeof error === 'object' &&
-          'code' in error &&
-          (error as { code?: string }).code === 'EPIPE'
-        ) {
-          return;
+function getMainLogPath() {
+  try {
+    return path.join(app.getPath('userData'), 'main-process.log');
+  } catch {
+    return path.join(process.cwd(), 'shop-keeper-main.log');
+  }
+}
+
+function writeMainLog(level: 'INFO' | 'WARN' | 'ERROR', args: unknown[]) {
+  try {
+    const message = args
+      .map((value) => {
+        if (value instanceof Error) {
+          return value.stack || value.message;
         }
 
-        throw error;
-      }
-    };
-  };
+        if (typeof value === 'string') {
+          return value;
+        }
 
-  console.log = wrap(console.log.bind(console));
-  console.error = wrap(console.error.bind(console));
-  console.warn = wrap(console.warn.bind(console));
-  console.info = wrap(console.info.bind(console));
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      })
+      .join(' ');
+
+    fs.appendFileSync(
+      getMainLogPath(),
+      `[${new Date().toISOString()}] [${level}] ${message}\r\n`,
+      'utf8',
+    );
+  } catch {
+    // Never let logging crash the main process.
+  }
 }
+
+type MitchellJobImport = {
+  jobUid: string;
+  roNumber: string;
+  customerName: string;
+  phoneNumber: string;
+  vehicle: string;
+  amount: number;
+  promiseDate: string;
+  partsWaiting: boolean;
+  status: 'notStarted' | 'inProgress' | 'waiting';
+  estimatorName: string;
+  insuranceCompany: string;
+  claimNumber: string;
+  departmentName: string;
+  leadTechName: string;
+  productionStatus: string;
+  estimateId: string;
+  opportunityNumber: string;
+  lastModifiedAt: string;
+};
+
+type MitchellJobsSnapshot = {
+  sourcePath: string;
+  lastModifiedAt: string;
+  jobs: MitchellJobImport[];
+};
+
+type MaterialsManagerSummary = {
+  materialCount: number;
+  invoiceCount: number;
+  invoiceItemCount: number;
+  refundCount: number;
+  catalogValue: number;
+  totalInvoiceSpend: number;
+  latestInvoiceDate: string;
+  latestUpdatedAt: string;
+};
+
+type MaterialsManagerInvoice = {
+  id: number;
+  number: string;
+  date: string;
+  isRefund: boolean;
+  sourceDevice: string;
+  updatedAt: string;
+  lineItemCount: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  materialNames: string[];
+};
+
+type MaterialsManagerMaterial = {
+  id: number;
+  name: string;
+  partNumber: string;
+  netPrice: number;
+  usageCount: number;
+  totalPurchasedQty: number;
+  averageUnitCost: number;
+  lastInvoiceDate: string;
+};
+
+type MaterialsManagerSnapshot = {
+  sourcePath: string;
+  generatedAt: string;
+  summary: MaterialsManagerSummary;
+  recentInvoices: MaterialsManagerInvoice[];
+  materials: MaterialsManagerMaterial[];
+};
+
+type RoFolderJobRecord = {
+  id: string;
+  vehicle: string;
+  roNumber: string;
+  customerName: string;
+  phoneNumber?: string;
+  paintCode: string;
+  amount: number;
+  amountStatus: string;
+  status: string;
+  done: boolean;
+  promiseDate: string;
+  partsWaiting: boolean;
+  partsRequests: Array<{
+    id: string;
+    name: string;
+    quantity: string;
+    requestedBy: string;
+    status: string;
+    note?: string;
+    createdAt: string;
+    receivedAt?: string;
+  }>;
+  textNotes: Array<{
+    id: string;
+    type: 'text' | 'audio';
+    text?: string;
+    audioUrl?: string;
+    createdAt: string;
+    read: boolean;
+  }>;
+  photos: Array<{
+    id: string;
+    url: string;
+    createdAt: string;
+    fileSize: number;
+    width: number;
+    height: number;
+    timestampIncluded: boolean;
+  }>;
+  sortOrder?: number;
+};
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === '"') {
+      const nextChar = line[index + 1];
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current);
+  return values.map((value) => value.trim());
+}
+
+function parseMitchellDate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function parseMitchellNumber(value: string) {
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseMitchellBoolean(value: string) {
+  return value.trim().toLowerCase() === 'true';
+}
+
+function buildMitchellVehicle(row: Record<string, string>) {
+  return [
+    row.VehicleYear?.trim(),
+    row.VehicleMake?.trim(),
+    row.VehicleModel?.trim(),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function buildMitchellCustomerName(row: Record<string, string>) {
+  return [row.CustomerFirstName?.trim(), row.CustomerLastOrCompanyName?.trim()]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function buildMitchellPhoneNumber(row: Record<string, string>) {
+  return (
+    row.CustomerCellPhone?.trim() ||
+    row.CustomerMobilePhone?.trim() ||
+    row.CustomerPhone?.trim() ||
+    row.CustomerDayPhone?.trim() ||
+    row.CustomerEveningPhone?.trim() ||
+    row.CustomerHomePhone?.trim() ||
+    ''
+  );
+}
+
+function getMitchellJobStatus(
+  row: Record<string, string>,
+): MitchellJobImport['status'] {
+  const productionStatus = row.ProductionStatus?.trim().toLowerCase() ?? '';
+  const partsStatus = row.PartsStatus?.trim().toLowerCase() ?? '';
+  const hasTasks = parseMitchellBoolean(row.HasTasks ?? '');
+  const laborCompletedPercent = parseMitchellNumber(row.LaborCompletedPercent ?? '');
+  const isPartsOrdered = parseMitchellBoolean(row.IsPartsOrdered ?? '');
+  const partsReceivedPercent = parseMitchellNumber(row.PartsReceivedPercent ?? '');
+
+  if (
+    productionStatus.includes('wait') ||
+    partsStatus.includes('wait') ||
+    (isPartsOrdered && partsReceivedPercent < 100)
+  ) {
+    return 'waiting';
+  }
+
+  if (productionStatus.includes('progress') || hasTasks || laborCompletedPercent > 0) {
+    return 'inProgress';
+  }
+
+  return 'notStarted';
+}
+
+function parseMitchellJobsCsv(csvText: string, lastModifiedAt: string): MitchellJobImport[] {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return [];
+  }
+
+  const headers = parseCsvLine(lines[0]);
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = headers.reduce<Record<string, string>>((result, header, index) => {
+      result[header] = values[index] ?? '';
+      return result;
+    }, {});
+
+    const partsReceivedPercent = parseMitchellNumber(row.PartsReceivedPercent ?? '');
+    const isPartsOrdered = parseMitchellBoolean(row.IsPartsOrdered ?? '');
+
+    return {
+      jobUid: row.JobUid?.trim() ?? '',
+      roNumber: row.RONumber?.trim() ?? '',
+      customerName: buildMitchellCustomerName(row),
+      phoneNumber: buildMitchellPhoneNumber(row),
+      vehicle: buildMitchellVehicle(row),
+      amount: parseMitchellNumber(row.TotalAmount ?? ''),
+      promiseDate: parseMitchellDate(row.DueOutDate ?? ''),
+      partsWaiting: isPartsOrdered && partsReceivedPercent < 100,
+      status: getMitchellJobStatus(row),
+      estimatorName: row.EstimatorFullName?.trim() ?? '',
+      insuranceCompany: row.InsuranceCompanyName?.trim() ?? '',
+      claimNumber: row.ClaimNumber?.trim() ?? '',
+      departmentName: row.DepartmentName?.trim() ?? '',
+      leadTechName: row.LeadTechName?.trim() ?? '',
+      productionStatus: row.ProductionStatus?.trim() ?? '',
+      estimateId: row.EstimateId?.trim() ?? '',
+      opportunityNumber: row.OpportunityNumber?.trim() ?? '',
+      lastModifiedAt,
+    };
+  }).filter((job) => job.roNumber && job.vehicle);
+}
+
+function getMaterialsManagerPythonPath() {
+  if (fs.existsSync(MATERIALS_APP_VENV_PYTHON_PATH)) {
+    return MATERIALS_APP_VENV_PYTHON_PATH;
+  }
+
+  if (fs.existsSync(USER_PYTHON_PATH)) {
+    return USER_PYTHON_PATH;
+  }
+
+  return 'python';
+}
+
+async function launchMaterialsManagerApp() {
+  if (!fs.existsSync(MATERIALS_APP_ENTRY_PATH)) {
+    throw new Error(`Materials App entry file was not found at ${MATERIALS_APP_ENTRY_PATH}.`);
+  }
+
+  const pythonPath = getMaterialsManagerPythonPath();
+  const child = spawn(pythonPath, [MATERIALS_APP_ENTRY_PATH], {
+    cwd: MATERIALS_APP_ROOT_PATH,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+
+  child.unref();
+}
+
+async function getMaterialsManagerSnapshot(): Promise<MaterialsManagerSnapshot> {
+  if (!fs.existsSync(MATERIALS_APP_DB_PATH)) {
+    throw new Error(`Materials database not found at ${MATERIALS_APP_DB_PATH}.`);
+  }
+
+  const pythonPath = getMaterialsManagerPythonPath();
+  const snapshotScript = `
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+db_path = Path(sys.argv[1])
+if not db_path.exists():
+    raise FileNotFoundError('Materials database not found at ' + str(db_path))
+
+connection = sqlite3.connect(str(db_path))
+connection.row_factory = sqlite3.Row
+cursor = connection.cursor()
+
+def query_one(sql):
+    cursor.execute(sql)
+    row = cursor.fetchone()
+    return dict(row) if row else {}
+
+def query_all(sql):
+    cursor.execute(sql)
+    return [dict(row) for row in cursor.fetchall()]
+
+summary = query_one("""
+SELECT
+  (SELECT COUNT(*) FROM materials) AS materialCount,
+  (SELECT COUNT(*) FROM invoices) AS invoiceCount,
+  (SELECT COUNT(*) FROM invoice_items) AS invoiceItemCount,
+  (SELECT COUNT(*) FROM invoices WHERE COALESCE(is_refund, 0) = 1) AS refundCount,
+  (SELECT COALESCE(SUM(COALESCE(net_price, 0)), 0) FROM materials) AS catalogValue,
+  (
+    SELECT COALESCE(
+      SUM(
+        COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) +
+        CASE
+          WHEN COALESCE(ii.taxable, 0) = 1
+            THEN COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) * COALESCE(ii.tax_rate, 0)
+          ELSE 0
+        END
+      ),
+      0
+    )
+    FROM invoice_items ii
+  ) AS totalInvoiceSpend,
+  (SELECT COALESCE(MAX(date), '') FROM invoices) AS latestInvoiceDate,
+  (SELECT COALESCE(MAX(updated_at), '') FROM invoices) AS latestUpdatedAt
+""")
+
+recent_invoices = query_all("""
+SELECT
+  i.id,
+  COALESCE(i.number, '') AS number,
+  COALESCE(i.date, '') AS date,
+  COALESCE(i.is_refund, 0) AS isRefund,
+  COALESCE(i.source_device, '') AS sourceDevice,
+  COALESCE(i.updated_at, '') AS updatedAt,
+  COUNT(ii.id) AS lineItemCount,
+  COALESCE(SUM(COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0)), 0) AS subtotal,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN COALESCE(ii.taxable, 0) = 1
+          THEN COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0) * COALESCE(ii.tax_rate, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS tax,
+  COALESCE(GROUP_CONCAT(DISTINCT m.name), '') AS materialNames
+FROM invoices i
+LEFT JOIN invoice_items ii ON ii.invoice_id = i.id
+LEFT JOIN materials m ON m.id = ii.material_id
+GROUP BY i.id
+ORDER BY COALESCE(i.date, '') DESC, i.id DESC
+LIMIT 40
+""")
+
+materials = query_all("""
+SELECT
+  m.id,
+  COALESCE(m.name, '') AS name,
+  COALESCE(m.part_no, '') AS partNumber,
+  COALESCE(m.net_price, 0) AS netPrice,
+  COUNT(ii.id) AS usageCount,
+  COALESCE(SUM(COALESCE(ii.qty, 0)), 0) AS totalPurchasedQty,
+  COALESCE(AVG(COALESCE(ii.unit_cost, 0)), 0) AS averageUnitCost,
+  COALESCE(MAX(i.date), '') AS lastInvoiceDate
+FROM materials m
+LEFT JOIN invoice_items ii ON ii.material_id = m.id
+LEFT JOIN invoices i ON i.id = ii.invoice_id
+GROUP BY m.id
+ORDER BY LOWER(COALESCE(m.name, '')) ASC
+""")
+
+payload = {
+    'sourcePath': str(db_path),
+    'generatedAt': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+    'summary': {
+        'materialCount': int(summary.get('materialCount') or 0),
+        'invoiceCount': int(summary.get('invoiceCount') or 0),
+        'invoiceItemCount': int(summary.get('invoiceItemCount') or 0),
+        'refundCount': int(summary.get('refundCount') or 0),
+        'catalogValue': float(summary.get('catalogValue') or 0),
+        'totalInvoiceSpend': float(summary.get('totalInvoiceSpend') or 0),
+        'latestInvoiceDate': summary.get('latestInvoiceDate') or '',
+        'latestUpdatedAt': summary.get('latestUpdatedAt') or '',
+    },
+    'recentInvoices': [],
+    'materials': [],
+}
+
+for invoice in recent_invoices:
+    subtotal = float(invoice.get('subtotal') or 0)
+    tax = float(invoice.get('tax') or 0)
+    names = [name.strip() for name in (invoice.get('materialNames') or '').split(',') if name.strip()]
+    payload['recentInvoices'].append({
+        'id': int(invoice.get('id') or 0),
+        'number': invoice.get('number') or '',
+        'date': invoice.get('date') or '',
+        'isRefund': bool(invoice.get('isRefund') or 0),
+        'sourceDevice': invoice.get('sourceDevice') or '',
+        'updatedAt': invoice.get('updatedAt') or '',
+        'lineItemCount': int(invoice.get('lineItemCount') or 0),
+        'subtotal': subtotal,
+        'tax': tax,
+        'total': subtotal + tax,
+        'materialNames': names,
+    })
+
+for material in materials:
+    payload['materials'].append({
+        'id': int(material.get('id') or 0),
+        'name': material.get('name') or '',
+        'partNumber': material.get('partNumber') or '',
+        'netPrice': float(material.get('netPrice') or 0),
+        'usageCount': int(material.get('usageCount') or 0),
+        'totalPurchasedQty': float(material.get('totalPurchasedQty') or 0),
+        'averageUnitCost': float(material.get('averageUnitCost') or 0),
+        'lastInvoiceDate': material.get('lastInvoiceDate') or '',
+    })
+
+print(json.dumps(payload))
+`;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(pythonPath, ['-c', snapshotScript, MATERIALS_APP_DB_PATH], {
+      cwd: MATERIALS_APP_ROOT_PATH,
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            stderr.trim() || `Materials Manager snapshot exited with code ${code ?? 'unknown'}.`,
+          ),
+        );
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout.trim()) as MaterialsManagerSnapshot;
+        resolve(parsed);
+      } catch (error) {
+        reject(
+          new Error(
+            `Could not parse Materials Manager snapshot JSON. ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+function getMitchellJobsSnapshot(): MitchellJobsSnapshot {
+  const stats = fs.statSync(MITCHELL_JOBS_CSV_PATH);
+  const csvText = fs.readFileSync(MITCHELL_JOBS_CSV_PATH, 'utf8');
+  const lastModifiedAt = stats.mtime.toISOString();
+
+  return {
+    sourcePath: MITCHELL_JOBS_CSV_PATH,
+    lastModifiedAt,
+    jobs: parseMitchellJobsCsv(csvText, lastModifiedAt),
+  };
+}
+
+function sanitizeFolderSegment(value: string) {
+  return value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ensureRoRoots() {
+  fs.mkdirSync(ACTIVE_RO_ROOT_PATH, { recursive: true });
+  fs.mkdirSync(CLOSED_RO_ROOT_PATH, { recursive: true });
+}
+
+function getFolderNameForRo(roNumber: string, customerName: string) {
+  return customerName.trim()
+    ? `${roNumber.trim()} - ${sanitizeFolderSegment(customerName)}`
+    : roNumber.trim();
+}
+
+function findRoFolder(
+  rootPath: string,
+  roNumber: string,
+) {
+  if (!fs.existsSync(rootPath)) {
+    return null;
+  }
+
+  const folderPrefix = `${roNumber.trim()} - `;
+  const existingFolder = fs
+    .readdirSync(rootPath, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && (entry.name === roNumber.trim() || entry.name.startsWith(folderPrefix)));
+
+  return existingFolder ? path.join(rootPath, existingFolder.name) : null;
+}
+
+function moveFolderIfNeeded(sourcePath: string, destinationPath: string) {
+  if (sourcePath === destinationPath) {
+    return destinationPath;
+  }
+
+  if (fs.existsSync(destinationPath)) {
+    const sourceEntries = fs.readdirSync(sourcePath, { withFileTypes: true });
+    sourceEntries.forEach((entry) => {
+      const from = path.join(sourcePath, entry.name);
+      const to = path.join(destinationPath, entry.name);
+      fs.renameSync(from, to);
+    });
+    fs.rmdirSync(sourcePath);
+    return destinationPath;
+  }
+
+  fs.renameSync(sourcePath, destinationPath);
+  return destinationPath;
+}
+
+function resolveRoFolderPath(
+  roNumber: string,
+  customerName: string,
+  done = false,
+) {
+  const trimmedRo = roNumber.trim();
+  if (!trimmedRo) {
+    throw new Error('RO number is required to save the photo.');
+  }
+
+  if (!fs.existsSync(UAB_ROOT_PATH)) {
+    throw new Error(`UAB folder not found at ${UAB_ROOT_PATH}.`);
+  }
+
+  ensureRoRoots();
+
+  const targetRoot = done ? CLOSED_RO_ROOT_PATH : ACTIVE_RO_ROOT_PATH;
+  const destinationPath = path.join(targetRoot, getFolderNameForRo(trimmedRo, customerName));
+
+  const existingTarget = findRoFolder(targetRoot, trimmedRo);
+  if (existingTarget) {
+    return existingTarget;
+  }
+
+  const legacyRootFolder = findRoFolder(UAB_ROOT_PATH, trimmedRo);
+  if (legacyRootFolder) {
+    return moveFolderIfNeeded(legacyRootFolder, destinationPath);
+  }
+
+  const alternateRoot = done ? ACTIVE_RO_ROOT_PATH : CLOSED_RO_ROOT_PATH;
+  const existingAlternate = findRoFolder(alternateRoot, trimmedRo);
+  if (existingAlternate) {
+    return moveFolderIfNeeded(existingAlternate, destinationPath);
+  }
+
+  fs.mkdirSync(destinationPath, { recursive: true });
+  return destinationPath;
+}
+
+function saveJobPhotoToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  bytes: number[];
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const fileName = `shop-keeper-photo-${new Date()
+    .toISOString()
+    .replace(/[:.]/g, '-')}.jpg`;
+  const savedPath = path.join(folderPath, fileName);
+
+  fs.writeFileSync(savedPath, Buffer.from(payload.bytes));
+
+  return {
+    savedPath,
+  };
+}
+
+function saveJobAudioToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  bytes: number[];
+  extension: string;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const audioFolderPath = path.join(folderPath, 'Audio Notes');
+  fs.mkdirSync(audioFolderPath, { recursive: true });
+
+  const safeExtension = sanitizeFolderSegment(payload.extension).replace(/\./g, '') || 'webm';
+  const fileName = `audio-note-${new Date().toISOString().replace(/[:.]/g, '-')}.${safeExtension}`;
+  const savedPath = path.join(audioFolderPath, fileName);
+
+  fs.writeFileSync(savedPath, Buffer.from(payload.bytes));
+
+  return {
+    savedPath,
+  };
+}
+
+function saveJobTextNoteToRoFolder(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+  text: string;
+  createdAt?: string;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+  const notesFolderPath = path.join(folderPath, 'Notes');
+  fs.mkdirSync(notesFolderPath, { recursive: true });
+
+  const timestamp = payload.createdAt
+    ? new Date(payload.createdAt).toISOString()
+    : new Date().toISOString();
+  const fileName = `note-${timestamp.replace(/[:.]/g, '-')}.txt`;
+  const savedPath = path.join(notesFolderPath, fileName);
+
+  fs.writeFileSync(savedPath, payload.text, 'utf8');
+
+  return {
+    savedPath,
+  };
+}
+
+function moveRoFolderForJob(payload: {
+  roNumber: string;
+  customerName: string;
+  done: boolean;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done,
+  );
+
+  return {
+    folderPath,
+  };
+}
+
+function ensureRoFolderForJob(payload: {
+  roNumber: string;
+  customerName: string;
+  done?: boolean;
+}) {
+  const folderPath = resolveRoFolderPath(
+    payload.roNumber,
+    payload.customerName,
+    payload.done ?? false,
+  );
+
+  return {
+    folderPath,
+  };
+}
+
+function buildJobNotesText(job: RoFolderJobRecord) {
+  const lines: string[] = [
+    `RO: ${job.roNumber}`,
+    `Customer: ${job.customerName}`,
+    `Phone: ${job.phoneNumber || 'Not set'}`,
+    `Vehicle: ${job.vehicle}`,
+    `Status: ${job.done ? 'Closed' : 'Active'} / ${job.status}`,
+    `Promise Date: ${job.promiseDate || 'Not set'}`,
+    `Amount: ${job.amount}`,
+    '',
+    'Notes',
+    '-----',
+  ];
+
+  if (!job.textNotes.length) {
+    lines.push('No notes yet.');
+  } else {
+    job.textNotes.forEach((note, index) => {
+      lines.push(`[${index + 1}] ${new Date(note.createdAt).toLocaleString()}`);
+      lines.push(`Type: ${note.type}`);
+      lines.push(`Read: ${note.read ? 'Yes' : 'No'}`);
+      lines.push(note.type === 'text' ? `Text: ${note.text ?? ''}` : `Audio URL: ${note.audioUrl ?? ''}`);
+      lines.push('');
+    });
+  }
+
+  lines.push('Parts');
+  lines.push('-----');
+
+  if (!job.partsRequests.length) {
+    lines.push('No parts requests.');
+  } else {
+    job.partsRequests.forEach((part, index) => {
+      lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.status} | ${part.requestedBy}`);
+      if (part.note?.trim()) {
+        lines.push(`Note: ${part.note.trim()}`);
+      }
+      lines.push(`Created: ${new Date(part.createdAt).toLocaleString()}`);
+      if (part.receivedAt) {
+        lines.push(`Received: ${new Date(part.receivedAt).toLocaleString()}`);
+      }
+      lines.push('');
+    });
+  }
+
+  lines.push('Photos');
+  lines.push('------');
+
+  if (!job.photos.length) {
+    lines.push('No photos yet.');
+  } else {
+    job.photos.forEach((photo, index) => {
+      lines.push(`[${index + 1}] ${new Date(photo.createdAt).toLocaleString()} | ${photo.width}x${photo.height} | ${photo.fileSize} bytes`);
+      lines.push(`URL: ${photo.url}`);
+      lines.push('');
+    });
+  }
+
+  return lines.join('\r\n');
+}
+
+function saveJobRecordToRoFolder(payload: { job: RoFolderJobRecord }) {
+  const { job } = payload;
+  const folderPath = resolveRoFolderPath(job.roNumber, job.customerName, job.done);
+  const summaryPath = path.join(folderPath, 'shop-keeper-summary.txt');
+
+  fs.writeFileSync(summaryPath, buildJobNotesText(job), 'utf8');
+
+  return {
+    folderPath,
+    summaryPath,
+  };
+}
+
+function installSafeConsole() {
+  const isBrokenPipeError = (error: unknown) =>
+    !!(
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'EPIPE'
+    );
+
+  console.log = (...args: unknown[]) => writeMainLog('INFO', args);
+  console.info = (...args: unknown[]) => writeMainLog('INFO', args);
+  console.warn = (...args: unknown[]) => writeMainLog('WARN', args);
+  console.error = (...args: unknown[]) => writeMainLog('ERROR', args);
+
+  process.on('uncaughtException', (error) => {
+    if (isBrokenPipeError(error)) {
+      return;
+    }
+
+    console.error('[main] Uncaught exception:', error);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    if (isBrokenPipeError(reason)) {
+      return;
+    }
+
+    console.error('[main] Unhandled rejection:', reason);
+  });
+}
+
+installSafeConsole();
 
 function publishUpdaterStatus(nextStatus: UpdaterStatus) {
   updaterStatus = nextStatus;
@@ -220,7 +1079,7 @@ async function checkMaterialReplyConfirmations() {
       }
     }
   } catch (error) {
-    console.error('[mail] Failed to check material reply confirmations:', error);
+    writeMainLog('ERROR', ['[mail] Failed to check material reply confirmations:', error]);
   } finally {
     await client.logout().catch(() => undefined);
   }
@@ -442,7 +1301,6 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  installSafeConsole();
   app.setAppUserModelId(
     isPackagedApp ? 'com.shopkeeper.app' : 'com.shopkeeper.beta',
   );
@@ -497,6 +1355,23 @@ app.whenReady().then(async () => {
       },
     ) => settingsStore.setOverlayBounds(bounds),
   );
+
+  ipcMain.handle('settings:getMaterialsManagerAccess', () => ({
+    unlocked: settingsStore.getSettings().materialsManagerUnlocked,
+  }));
+
+  ipcMain.handle('settings:unlockMaterialsManager', (_event, accessCode: string) => {
+    const unlocked = accessCode.trim() === MATERIALS_MANAGER_UNLOCK_CODE;
+    const nextSettings = settingsStore.setMaterialsManagerUnlocked(unlocked);
+
+    return {
+      ok: unlocked,
+      message: unlocked
+        ? 'Materials Manager unlocked on this device.'
+        : 'That access code did not work.',
+      settings: nextSettings,
+    };
+  });
 
   ipcMain.handle('window:switchToNormal', () => {
     const nextSettings = settingsStore.setDisplayMode('normal');
@@ -592,11 +1467,209 @@ app.whenReady().then(async () => {
     },
   );
 
+  ipcMain.handle('mitchell:getJobsSnapshot', async () => {
+    try {
+      return getMitchellJobsSnapshot();
+    } catch (error) {
+      console.error('[mitchell] Failed to load jobs snapshot:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not read Mitchell jobs data.',
+      );
+    }
+  });
+
+  ipcMain.handle(
+    'jobs:savePhotoToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        bytes: number[];
+      },
+    ) => {
+      try {
+        return saveJobPhotoToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save photo to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save photo to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveAudioToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        bytes: number[];
+        extension: string;
+      },
+    ) => {
+      try {
+        return saveJobAudioToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save audio to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save audio to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveTextNoteToRoFolder',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+        text: string;
+        createdAt?: string;
+      },
+    ) => {
+      try {
+        return saveJobTextNoteToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save text note to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save text note to the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:moveRoFolderForJob',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done: boolean;
+      },
+    ) => {
+      try {
+        return moveRoFolderForJob(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to move RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not move the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:ensureRoFolderForJob',
+    async (
+      _event,
+      payload: {
+        roNumber: string;
+        customerName: string;
+        done?: boolean;
+      },
+    ) => {
+      try {
+        return ensureRoFolderForJob(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to ensure RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not ensure the RO folder.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'jobs:saveJobRecordToRoFolder',
+    async (
+      _event,
+      payload: {
+        job: RoFolderJobRecord;
+      },
+    ) => {
+      try {
+        return saveJobRecordToRoFolder(payload);
+      } catch (error) {
+        console.error('[jobs] Failed to save job record to RO folder:', error);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Could not save the job record to the RO folder.',
+        );
+      }
+    },
+  );
+
   ipcMain.handle('app:getInfo', () => ({
     name: appDisplayName,
     version: app.getVersion(),
     owner: 'Fernando Marin',
   }));
+
+  ipcMain.handle('materialsManager:getSnapshot', async () => {
+    const settings = settingsStore.getSettings();
+    if (!settings.materialsManagerUnlocked) {
+      throw new Error('Materials Manager is locked until the add-on is unlocked.');
+    }
+
+    try {
+      return await getMaterialsManagerSnapshot();
+    } catch (error) {
+      console.error('[materials-manager] Failed to load embedded snapshot:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not load the embedded Materials Manager data.',
+      );
+    }
+  });
+
+  ipcMain.handle('materialsManager:launch', async () => {
+    const settings = settingsStore.getSettings();
+    if (!settings.materialsManagerUnlocked) {
+      return {
+        ok: false,
+        message: 'Materials Manager is locked until the add-on is unlocked.',
+      };
+    }
+
+    try {
+      await launchMaterialsManagerApp();
+      return {
+        ok: true,
+        message: 'Materials Manager launched.',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not launch Materials Manager.',
+      };
+    }
+  });
 
   await createWindow();
   setupAutoUpdates();

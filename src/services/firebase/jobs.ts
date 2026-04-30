@@ -2,6 +2,8 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -10,7 +12,13 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './config';
-import { uploadJobAudioNote, uploadJobPhoto } from './storage';
+import {
+  deleteStorageFile,
+  getJobAudioExtension,
+  uploadJobAudioNote,
+  uploadJobPhoto,
+} from './storage';
+import { appBridge } from '../platform/appBridge';
 import type {
   AppMode,
   CreateJobInput,
@@ -20,9 +28,11 @@ import type {
   JobPartRequest,
   JobStatus,
   UpdateJobDetailsInput,
+  MitchellJobsSnapshot,
 } from '../../types/app';
 
 const jobsCollection = collection(db, 'jobs');
+const FIRESTORE_WRITE_TIMEOUT_MS = 15000;
 
 type FirestoreJobInput = Omit<Job, 'id'>;
 
@@ -54,7 +64,8 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
-            customerPhone: data.customerPhone ?? '',
+            phoneNumber: data.phoneNumber ?? data.customerPhone ?? '',
+            customerPhone: data.customerPhone ?? data.phoneNumber ?? '',
             customerEmail: data.customerEmail ?? '',
             paintCode: data.paintCode ?? '',
             amount: data.amount ?? 0,
@@ -72,8 +83,8 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
             sourceSystem: data.sourceSystem ?? '',
             externalEstimateId: data.externalEstimateId ?? '',
-            insuranceCompany: data.insuranceCompany ?? '',
-            claimNumber: data.claimNumber ?? '',
+            insuranceCompany: data.insuranceCompany ?? data.mitchellInsuranceCompany ?? '',
+            claimNumber: data.claimNumber ?? data.mitchellClaimNumber ?? '',
             policyNumber: data.policyNumber ?? '',
             vehicleYear: data.vehicleYear ?? '',
             vehicleMake: data.vehicleMake ?? '',
@@ -89,6 +100,16 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
                 ? data.emsLineItemCount
                 : undefined,
             lastEmsSyncAt: data.lastEmsSyncAt ?? '',
+            sourceJobUid: data.sourceJobUid ?? '',
+            sourceEstimateId: data.sourceEstimateId ?? '',
+            sourceOpportunityNumber: data.sourceOpportunityNumber ?? '',
+            mitchellEstimatorName: data.mitchellEstimatorName ?? '',
+            mitchellInsuranceCompany: data.mitchellInsuranceCompany ?? data.insuranceCompany ?? '',
+            mitchellClaimNumber: data.mitchellClaimNumber ?? data.claimNumber ?? '',
+            mitchellDepartmentName: data.mitchellDepartmentName ?? '',
+            mitchellLeadTechName: data.mitchellLeadTechName ?? '',
+            mitchellProductionStatus: data.mitchellProductionStatus ?? '',
+            mitchellLastSourceModifiedAt: data.mitchellLastSourceModifiedAt ?? '',
           },
         };
       },
@@ -164,6 +185,7 @@ export async function createJob(input: CreateJobInput) {
     vehicle: input.vehicle.trim(),
     roNumber: input.roNumber.trim(),
     customerName: input.customerName.trim(),
+    phoneNumber: input.phoneNumber.trim(),
     paintCode: input.paintCode.trim(),
     amount: Number.isFinite(input.amount) ? input.amount : 0,
     amountStatus: input.amountStatus,
@@ -180,6 +202,14 @@ export async function createJob(input: CreateJobInput) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  if (appBridge.isDesktop()) {
+    await appBridge.ensureRoFolderForJob({
+      roNumber: input.roNumber.trim(),
+      customerName: input.customerName.trim(),
+      done: false,
+    });
+  }
 }
 
 export async function reorderActiveJobs(
@@ -214,6 +244,273 @@ export async function reorderActiveJobs(
   });
 
   await batch.commit();
+}
+
+function normalizeText(value: string) {
+  return value.trim();
+}
+
+function normalizePromiseDate(value: string) {
+  return value.trim();
+}
+
+function normalizeAmount(value: number) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function selectMitchellJobMatch(
+  existingJobs: Array<{ id: string; data: Record<string, any> }>,
+  mitchellJob: MitchellJobsSnapshot['jobs'][number],
+) {
+  const normalizedRo = mitchellJob.roNumber.trim();
+  const normalizedVehicle = normalizeText(mitchellJob.vehicle);
+  const normalizedCustomer = normalizeText(mitchellJob.customerName);
+
+  const exactSourceUidMatch = existingJobs.find(
+    (entry) => String(entry.data.sourceJobUid ?? '').trim() === mitchellJob.jobUid,
+  );
+  if (exactSourceUidMatch) {
+    return exactSourceUidMatch;
+  }
+
+  const sameRoJobs = existingJobs.filter(
+    (entry) => String(entry.data.roNumber ?? '').trim() === normalizedRo,
+  );
+  if (!sameRoJobs.length) {
+    return null;
+  }
+
+  const activeSameRoJob = sameRoJobs.find((entry) => !Boolean(entry.data.done));
+  if (activeSameRoJob) {
+    return activeSameRoJob;
+  }
+
+  const exactVehicleAndCustomerMatch = sameRoJobs.find(
+    (entry) =>
+      normalizeText(String(entry.data.vehicle ?? '')) === normalizedVehicle &&
+      normalizeText(String(entry.data.customerName ?? '')) === normalizedCustomer,
+  );
+  if (exactVehicleAndCustomerMatch) {
+    return exactVehicleAndCustomerMatch;
+  }
+
+  return sameRoJobs[0];
+}
+
+function isMitchellManagedJob(data: Record<string, any>) {
+  if (String(data.sourceSystem ?? '').trim() === 'mitchell') {
+    return true;
+  }
+
+  if (String(data.sourceJobUid ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.sourceEstimateId ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.mitchellLastSourceModifiedAt ?? '').trim()) {
+    return true;
+  }
+
+  if (String(data.mitchellSourcePath ?? '').trim()) {
+    return true;
+  }
+
+  if (data.lastMitchellSyncAt) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
+  const existingSnapshot = await getDocs(jobsCollection);
+  const existingJobs = existingSnapshot.docs.map((snap) => ({
+    id: snap.id,
+    data: snap.data() as Record<string, any>,
+  }));
+  const matchedExistingJobIds = new Set<string>();
+
+  let maxSortOrder = existingJobs.reduce((highest, entry) => {
+    const sortOrder = entry.data.sortOrder;
+    return typeof sortOrder === 'number' ? Math.max(highest, sortOrder) : highest;
+  }, 0);
+
+  const operations: Promise<unknown>[] = [];
+
+  snapshot.jobs.forEach((mitchellJob) => {
+    const existing = selectMitchellJobMatch(existingJobs, mitchellJob);
+
+    if (existing) {
+      matchedExistingJobIds.add(existing.id);
+      const reopeningClosedJob = Boolean(existing.data.done);
+      if (reopeningClosedJob) {
+        maxSortOrder += 1;
+      }
+
+      const nextData: Record<string, unknown> = {
+        vehicle: mitchellJob.vehicle,
+        roNumber: mitchellJob.roNumber,
+        customerName: mitchellJob.customerName,
+        phoneNumber: mitchellJob.phoneNumber,
+        amount: mitchellJob.amount,
+        promiseDate: mitchellJob.promiseDate,
+        partsWaiting: mitchellJob.partsWaiting,
+        status: mitchellJob.status,
+        insuranceCompany: mitchellJob.insuranceCompany,
+        claimNumber: mitchellJob.claimNumber,
+        sourceSystem: 'mitchell',
+        externalEstimateId: mitchellJob.estimateId,
+        sourceJobUid: mitchellJob.jobUid,
+        sourceEstimateId: mitchellJob.estimateId,
+        sourceOpportunityNumber: mitchellJob.opportunityNumber,
+        mitchellEstimatorName: mitchellJob.estimatorName,
+        mitchellInsuranceCompany: mitchellJob.insuranceCompany,
+        mitchellClaimNumber: mitchellJob.claimNumber,
+        mitchellDepartmentName: mitchellJob.departmentName,
+        mitchellLeadTechName: mitchellJob.leadTechName,
+        mitchellProductionStatus: mitchellJob.productionStatus,
+        mitchellLastSourceModifiedAt: mitchellJob.lastModifiedAt,
+        mitchellSourcePath: snapshot.sourcePath,
+        lastMitchellSyncAt: serverTimestamp(),
+        done: false,
+        ...(reopeningClosedJob ? { sortOrder: maxSortOrder } : {}),
+      };
+
+      const changed = (
+        normalizeText(String(existing.data.vehicle ?? '')) !== normalizeText(mitchellJob.vehicle) ||
+        normalizeText(String(existing.data.customerName ?? '')) !== normalizeText(mitchellJob.customerName) ||
+        normalizeAmount(Number(existing.data.amount ?? 0)) !== normalizeAmount(mitchellJob.amount) ||
+        normalizePromiseDate(String(existing.data.promiseDate ?? '')) !==
+          normalizePromiseDate(mitchellJob.promiseDate) ||
+        normalizeText(String(existing.data.insuranceCompany ?? existing.data.mitchellInsuranceCompany ?? '')) !==
+          normalizeText(mitchellJob.insuranceCompany) ||
+        normalizeText(String(existing.data.claimNumber ?? existing.data.mitchellClaimNumber ?? '')) !==
+          normalizeText(mitchellJob.claimNumber) ||
+        Boolean(existing.data.partsWaiting) !== mitchellJob.partsWaiting ||
+        String(existing.data.status ?? 'notStarted') !== mitchellJob.status ||
+        String(existing.data.sourceJobUid ?? '') !== mitchellJob.jobUid ||
+        String(existing.data.sourceEstimateId ?? '') !== mitchellJob.estimateId ||
+        String(existing.data.mitchellLastSourceModifiedAt ?? '') !== mitchellJob.lastModifiedAt ||
+        Boolean(existing.data.done)
+      );
+
+      if (!changed) {
+        return;
+      }
+
+      if (reopeningClosedJob && appBridge.isDesktop()) {
+        operations.push(
+          appBridge.moveRoFolderForJob({
+            roNumber: mitchellJob.roNumber,
+            customerName: mitchellJob.customerName,
+            done: false,
+          }),
+        );
+      } else if (appBridge.isDesktop()) {
+        operations.push(
+          appBridge.ensureRoFolderForJob({
+            roNumber: mitchellJob.roNumber,
+            customerName: mitchellJob.customerName,
+            done: false,
+          }),
+        );
+      }
+
+      operations.push(
+        updateDoc(doc(db, 'jobs', existing.id), {
+          ...nextData,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      return;
+    }
+
+    maxSortOrder += 1;
+    if (appBridge.isDesktop()) {
+      operations.push(
+        appBridge.ensureRoFolderForJob({
+          roNumber: mitchellJob.roNumber,
+          customerName: mitchellJob.customerName,
+          done: false,
+        }),
+      );
+    }
+    operations.push(
+      addDoc(jobsCollection, {
+        vehicle: mitchellJob.vehicle,
+        roNumber: mitchellJob.roNumber,
+        customerName: mitchellJob.customerName,
+        phoneNumber: mitchellJob.phoneNumber,
+        paintCode: '',
+        amount: mitchellJob.amount,
+        amountStatus: 'notFinal',
+        status: mitchellJob.status,
+        done: false,
+        promiseDate: mitchellJob.promiseDate,
+        partsWaiting: mitchellJob.partsWaiting,
+        partsRequests: [],
+        textNotes: [],
+        photos: [],
+        sortOrder: maxSortOrder,
+        insuranceCompany: mitchellJob.insuranceCompany,
+        claimNumber: mitchellJob.claimNumber,
+        sourceSystem: 'mitchell',
+        externalEstimateId: mitchellJob.estimateId,
+        sourceJobUid: mitchellJob.jobUid,
+        sourceEstimateId: mitchellJob.estimateId,
+        sourceOpportunityNumber: mitchellJob.opportunityNumber,
+        mitchellEstimatorName: mitchellJob.estimatorName,
+        mitchellInsuranceCompany: mitchellJob.insuranceCompany,
+        mitchellClaimNumber: mitchellJob.claimNumber,
+        mitchellDepartmentName: mitchellJob.departmentName,
+        mitchellLeadTechName: mitchellJob.leadTechName,
+        mitchellProductionStatus: mitchellJob.productionStatus,
+        mitchellLastSourceModifiedAt: mitchellJob.lastModifiedAt,
+        mitchellSourcePath: snapshot.sourcePath,
+        lastMitchellSyncAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  const mitchellJobsToClose = existingJobs.filter((entry) => {
+    if (Boolean(entry.data.done)) {
+      return false;
+    }
+
+    if (!isMitchellManagedJob(entry.data)) {
+      return false;
+    }
+
+    return !matchedExistingJobIds.has(entry.id);
+  });
+
+  mitchellJobsToClose.forEach((entry) => {
+    if (appBridge.isDesktop()) {
+      operations.push(
+        appBridge.moveRoFolderForJob({
+          roNumber: String(entry.data.roNumber ?? ''),
+          customerName: String(entry.data.customerName ?? ''),
+          done: true,
+        }),
+      );
+    }
+
+    operations.push(
+      updateDoc(doc(db, 'jobs', entry.id), {
+        done: true,
+        status: 'done',
+        lastMitchellSyncAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  await Promise.all(operations);
 }
 
 export async function setActiveJobPriority(
@@ -298,6 +595,8 @@ export async function updateJobDetails(
   input: UpdateJobDetailsInput,
 ) {
   await updateDoc(doc(db, 'jobs', jobId), {
+    phoneNumber: input.phoneNumber.trim(),
+    status: input.status,
     paintCode: input.paintCode.trim(),
     amount: input.amount,
     amountStatus: input.amountStatus,
@@ -307,6 +606,17 @@ export async function updateJobDetails(
 }
 
 export async function markJobDone(jobId: string) {
+  const jobSnapshot = await getDoc(doc(db, 'jobs', jobId));
+  const jobData = jobSnapshot.data() as Record<string, any> | undefined;
+
+  if (appBridge.isDesktop() && jobData?.roNumber) {
+    await appBridge.moveRoFolderForJob({
+      roNumber: String(jobData.roNumber ?? ''),
+      customerName: String(jobData.customerName ?? ''),
+      done: true,
+    });
+  }
+
   await updateDoc(doc(db, 'jobs', jobId), {
     done: true,
     status: 'done',
@@ -315,6 +625,17 @@ export async function markJobDone(jobId: string) {
 }
 
 export async function undoJobDone(jobId: string) {
+  const jobSnapshot = await getDoc(doc(db, 'jobs', jobId));
+  const jobData = jobSnapshot.data() as Record<string, any> | undefined;
+
+  if (appBridge.isDesktop() && jobData?.roNumber) {
+    await appBridge.moveRoFolderForJob({
+      roNumber: String(jobData.roNumber ?? ''),
+      customerName: String(jobData.customerName ?? ''),
+      done: false,
+    });
+  }
+
   await updateDoc(doc(db, 'jobs', jobId), {
     done: false,
     status: 'inProgress',
@@ -326,12 +647,24 @@ export async function addTextNoteToJob(job: Job, text: string) {
   const trimmed = text.trim();
   if (!trimmed) return;
 
+  const createdAt = new Date().toISOString();
+
+  if (appBridge.isDesktop() && job.roNumber) {
+    await appBridge.saveJobTextNoteToRoFolder({
+      roNumber: job.roNumber,
+      customerName: job.customerName,
+      done: job.done,
+      text: trimmed,
+      createdAt,
+    });
+  }
+
   const nextNotes: JobNote[] = [
     {
       id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       type: 'text',
       text: trimmed,
-      createdAt: new Date().toISOString(),
+      createdAt,
       read: false,
     },
     ...job.textNotes,
@@ -344,6 +677,19 @@ export async function addTextNoteToJob(job: Job, text: string) {
 }
 
 export async function addAudioNoteToJob(job: Job, file: Blob) {
+  const createdAt = new Date().toISOString();
+
+  if (appBridge.isDesktop() && job.roNumber) {
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    await appBridge.saveJobAudioToRoFolder({
+      roNumber: job.roNumber,
+      customerName: job.customerName,
+      done: job.done,
+      bytes,
+      extension: getJobAudioExtension(file),
+    });
+  }
+
   const audioUrl = await uploadJobAudioNote(job.id, file);
 
   const nextNotes: JobNote[] = [
@@ -351,7 +697,7 @@ export async function addAudioNoteToJob(job: Job, file: Blob) {
       id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       type: 'audio',
       audioUrl,
-      createdAt: new Date().toISOString(),
+      createdAt,
       read: false,
     },
     ...job.textNotes,
@@ -378,6 +724,22 @@ export async function markJobNotesRead(job: Job) {
   });
 }
 
+export async function deleteJobNote(job: Job, noteId: string) {
+  const targetNote = job.textNotes.find((note) => note.id === noteId);
+  if (!targetNote) return;
+
+  if (targetNote.type === 'audio' && targetNote.audioUrl) {
+    await deleteStorageFile(targetNote.audioUrl);
+  }
+
+  const nextNotes = job.textNotes.filter((note) => note.id !== noteId);
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    textNotes: nextNotes,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function addPhotoToJob(
   job: Job,
   input: {
@@ -388,7 +750,11 @@ export async function addPhotoToJob(
     timestampIncluded: boolean;
   },
 ) {
-  const url = await uploadJobPhoto(job.id, input.file);
+  const url = await uploadJobPhoto(job.id, input.file, {
+    roNumber: job.roNumber,
+    customerName: job.customerName,
+    done: job.done,
+  });
 
   const nextPhotos: JobPhoto[] = [
     {
@@ -403,9 +769,50 @@ export async function addPhotoToJob(
     ...(job.photos ?? []),
   ];
 
+  await withTimeout(
+    updateDoc(doc(db, 'jobs', job.id), {
+      photos: nextPhotos,
+      updatedAt: serverTimestamp(),
+    }),
+    FIRESTORE_WRITE_TIMEOUT_MS,
+    'Saving the photo in Shop Keeper took too long. Please try again.',
+  );
+}
+
+export async function deletePhotoFromJob(job: Job, photoId: string) {
+  const targetPhoto = (job.photos ?? []).find((photo) => photo.id === photoId);
+  if (!targetPhoto) return;
+
+  await deleteStorageFile(targetPhoto.url);
+
+  const nextPhotos = (job.photos ?? []).filter((photo) => photo.id !== photoId);
+
   await updateDoc(doc(db, 'jobs', job.id), {
     photos: nextPhotos,
     updatedAt: serverTimestamp(),
+  });
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+) {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
   });
 }
 
@@ -499,6 +906,17 @@ export async function saveJobPartNote(
   );
 
   await updateDoc(doc(db, 'jobs', job.id), {
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteJobPart(job: Job, partId: string) {
+  const nextPartsRequests = (job.partsRequests ?? []).filter((part) => part.id !== partId);
+  const stillWaiting = nextPartsRequests.some((part) => part.status !== 'received');
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsWaiting: stillWaiting,
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
   });

@@ -1,6 +1,13 @@
 /// <reference types="vite/client" />
 
-import type { AppMode, DisplayMode, LocalAppSettings } from './types/app';
+import type {
+  AppMode,
+  DisplayMode,
+  Job,
+  LocalAppSettings,
+  MaterialsManagerSnapshot,
+  MitchellJobsSnapshot,
+} from './types/app';
 
 declare global {
   const __APP_VERSION__: string;
@@ -15,6 +22,15 @@ declare global {
       x: number | null;
       y: number | null;
     }) => Promise<LocalAppSettings>;
+    unlockMaterialsManager: (accessCode: string) => Promise<{
+      ok: boolean;
+      message: string;
+      settings: LocalAppSettings;
+    }>;
+    getMaterialsManagerAccess: () => Promise<{
+      unlocked: boolean;
+    }>;
+    getMaterialsManagerSnapshot: () => Promise<MaterialsManagerSnapshot>;
     switchToNormalWindow: () => Promise<void>;
     checkForUpdates: () => Promise<UpdateCheckResult>;
     getUpdaterStatus: () => Promise<UpdaterStatus>;
@@ -26,8 +42,49 @@ declare global {
       note?: string;
       requestedBy: AppMode;
     }) => Promise<SendMaterialEmailResult>;
+    getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
+    saveJobPhotoToRoFolder: (payload: {
+      roNumber: string;
+      customerName: string;
+      done?: boolean;
+      bytes: number[];
+    }) => Promise<{ savedPath: string }>;
+    saveJobAudioToRoFolder: (payload: {
+      roNumber: string;
+      customerName: string;
+      done?: boolean;
+      bytes: number[];
+      extension: string;
+    }) => Promise<{ savedPath: string }>;
+    saveJobTextNoteToRoFolder: (payload: {
+      roNumber: string;
+      customerName: string;
+      done?: boolean;
+      text: string;
+      createdAt?: string;
+    }) => Promise<{ savedPath: string }>;
+    moveRoFolderForJob: (payload: {
+      roNumber: string;
+      customerName: string;
+      done: boolean;
+    }) => Promise<{ folderPath: string }>;
+    ensureRoFolderForJob: (payload: {
+      roNumber: string;
+      customerName: string;
+      done?: boolean;
+    }) => Promise<{ folderPath: string }>;
+    saveJobRecordToRoFolder: (payload: {
+      job: Job;
+    }) => Promise<{
+      folderPath: string;
+      summaryPath: string;
+    }>;
     onUpdaterStatus: (listener: (status: UpdaterStatus) => void) => () => void;
     getAppInfo: () => Promise<AppInfo>;
+    launchMaterialsManager: () => Promise<{
+      ok: boolean;
+      message: string;
+    }>;
   }
 
   type AppInfo = {

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { processJobImage } from '../../services/media/imageProcessor';
+import {
+  canUseNativeMobileCamera,
+  getNativeMobilePhoto,
+} from '../../services/media/mobileCamera';
 import type {
   AppMode,
   AmountStatus,
@@ -33,6 +37,8 @@ type ActiveJobsSectionProps = {
     },
   ) => Promise<void> | void;
   onMarkNotesRead: (jobId: string) => void;
+  onDeleteNote: (jobId: string, noteId: string) => Promise<void> | void;
+  onDeletePhoto: (jobId: string, photoId: string) => Promise<void> | void;
   onRequestPart: (
     jobId: string,
     input: {
@@ -46,6 +52,7 @@ type ActiveJobsSectionProps = {
   onSetPartReorderNeeded: (jobId: string, partId: string) => void;
   onMarkPartReceived: (jobId: string, partId: string) => void;
   onSavePartNote: (jobId: string, partId: string, note: string) => void;
+  onDeletePart: (jobId: string, partId: string) => Promise<void> | void;
   onClearLegacyPartsWaiting: (jobId: string) => void;
   onSetPriorityPosition: (jobId: string, position: number) => Promise<void> | void;
   onUpdateJobDetails: (
@@ -67,11 +74,14 @@ function ActiveJobsSection({
   onAddAudioNote,
   onAddPhoto,
   onMarkNotesRead,
+  onDeleteNote,
+  onDeletePhoto,
   onRequestPart,
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onDeletePart,
   onClearLegacyPartsWaiting,
   onSetPriorityPosition,
   onUpdateJobDetails,
@@ -87,6 +97,8 @@ function ActiveJobsSection({
     Record<
       string,
       {
+        phoneNumber: string;
+        status: JobStatus;
         paintCode: string;
         amount: string;
         amountStatus: AmountStatus;
@@ -114,6 +126,7 @@ function ActiveJobsSection({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const photoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const galleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
@@ -320,6 +333,8 @@ function ActiveJobsSection({
 
   const handleSaveJobDetails = async (job: Job) => {
     const draft = jobDetailDrafts[job.id] ?? {
+      phoneNumber: job.phoneNumber,
+      status: job.status,
       paintCode: job.paintCode,
       amount: String(job.amount),
       amountStatus: job.amountStatus,
@@ -335,6 +350,8 @@ function ActiveJobsSection({
     try {
       setSavingJobDetailsId(job.id);
       await onUpdateJobDetails(job.id, {
+        phoneNumber: draft.phoneNumber,
+        status: draft.status,
         paintCode: draft.paintCode,
         amount: parsedAmount,
         amountStatus: draft.amountStatus,
@@ -348,14 +365,18 @@ function ActiveJobsSection({
   const handlePhotoFileSelected = async (jobId: string, file: File | null) => {
     if (!file) return;
 
-    try {
-      setPhotoActionState({ jobId, phase: 'processing' });
-      const processed = await processJobImage(file, {
-        addTimestamp: photoTimestampEnabled[jobId] ?? false,
-      });
-      setPhotoActionState({ jobId, phase: 'uploading' });
-      await onAddPhoto(jobId, {
-        file: processed.blob,
+      try {
+        setPhotoActionState({ jobId, phase: 'processing' });
+        const processed = await processJobImage(file, {
+          addTimestamp: photoTimestampEnabled[jobId] ?? false,
+          maxDimension: mobile ? 800 : 1280,
+          quality: mobile ? 0.5 : 0.68,
+          targetMaxBytes: mobile ? 180 * 1024 : 300 * 1024,
+          minDimension: mobile ? 420 : 640,
+        });
+        setPhotoActionState({ jobId, phase: 'uploading' });
+        await onAddPhoto(jobId, {
+          file: processed.blob,
         width: processed.width,
         height: processed.height,
         fileSize: processed.fileSize,
@@ -374,6 +395,23 @@ function ActiveJobsSection({
       if (input) {
         input.value = '';
       }
+    }
+  };
+
+  const handleNativeMobilePhoto = async (
+    jobId: string,
+    source: 'camera' | 'gallery',
+  ) => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      await handlePhotoFileSelected(jobId, file);
+    } catch (error) {
+      console.error('Failed to pick mobile photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
     }
   };
 
@@ -413,7 +451,10 @@ function ActiveJobsSection({
           const isFocused = focusedJobId === job.id;
           const isEven = index % 2 === 0;
           const hasPartsWaiting = getHasPartsWaiting(job);
+          const showCompactMobileSummary = mobile && !isOpen;
           const detailDraft = jobDetailDrafts[job.id] ?? {
+            phoneNumber: job.phoneNumber,
+            status: job.status,
             paintCode: job.paintCode,
             amount: String(job.amount),
             amountStatus: job.amountStatus,
@@ -550,24 +591,80 @@ function ActiveJobsSection({
                     >
                       RO {job.roNumber}
                     </div>
-                    {job.paintCode ? (
-                      <div style={{ marginTop: 8 }}>
+                    <div
+                      style={{
+                        marginTop: 4,
+                        color: '#dbe7f5',
+                        display: 'flex',
+                        gap: 6,
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: compact ? 12 : 13,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {job.customerName}
+                      </span>
+                      {job.phoneNumber?.trim() ? (
+                        <>
+                          <span style={{ fontSize: compact ? 12 : 13 }}>•</span>
+                          <a
+                            href={`tel:${sanitizePhoneNumber(job.phoneNumber)}`}
+                            style={phoneLinkStyle(compact)}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {job.phoneNumber}
+                          </a>
+                        </>
+                      ) : null}
+                    </div>
+                    {showCompactMobileSummary ? (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          color: '#dbe7f5',
+                          display: 'flex',
+                          gap: 6,
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                        }}
+                      >
                         <span
                           style={{
-                            fontSize: compact ? 12 : 13,
-                            fontWeight: 900,
-                            color: '#e0f2fe',
-                            background: 'rgba(8,145,178,0.22)',
-                            border: '1px solid rgba(34,211,238,0.3)',
-                            borderRadius: 999,
-                            padding: compact ? '6px 9px' : '7px 11px',
-                            display: 'inline-flex',
+                            fontSize: 13,
+                            fontWeight: 600,
                           }}
                         >
-                          Paint Code: {job.paintCode}
+                          {job.customerName}
+                        </span>
+                        {job.phoneNumber?.trim() ? (
+                          <>
+                            <span style={{ fontSize: 13 }}>•</span>
+                            <a
+                              href={`tel:${sanitizePhoneNumber(job.phoneNumber)}`}
+                              style={phoneLinkStyle(compact)}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {job.phoneNumber}
+                            </a>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {!showCompactMobileSummary ? (
+                      <div style={{ marginTop: 8 }}>
+                        <span
+                          style={paintCodeBadgeStyle(job.paintCode, compact)}
+                        >
+                          {job.paintCode ? `Paint Code: ${job.paintCode}` : 'NEED PAINTCODE'}
                         </span>
                       </div>
                     ) : null}
+                    {!showCompactMobileSummary ? (
                     <div
                       style={{
                         marginTop: 6,
@@ -631,6 +728,7 @@ function ActiveJobsSection({
                         }}
                       />
                     </div>
+                    ) : null}
                   </div>
 
                   <div
@@ -657,7 +755,7 @@ function ActiveJobsSection({
                       </button>
                     ) : null}
 
-                    {job.status !== 'done' ? (
+                    {!showCompactMobileSummary && job.status !== 'done' ? (
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
@@ -695,6 +793,34 @@ function ActiveJobsSection({
                   </div>
                 </div>
 
+                {showCompactMobileSummary ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: narrowLayout ? 8 : 10,
+                      marginBottom: unreadNotes > 0 ? 10 : 0,
+                    }}
+                  >
+                  {job.promiseDate ? (
+                    <InfoPill compact={compact}>
+                      Promise: {formatDate(job.promiseDate)}
+                    </InfoPill>
+                  ) : null}
+                  {!job.paintCode ? (
+                    <InfoPill compact={compact} highlight>
+                      NEED PAINTCODE
+                    </InfoPill>
+                  ) : null}
+                  {hasPartsWaiting ? (
+                    <InfoPill compact={compact} highlight>
+                      {getPartsWorkflowSummary(job)}
+                    </InfoPill>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {!showCompactMobileSummary ? (
                 <div
                   style={{
                     display: 'flex',
@@ -716,7 +842,11 @@ function ActiveJobsSection({
                     <InfoPill compact={compact} highlight>
                       Paint: {job.paintCode}
                     </InfoPill>
-                  ) : null}
+                  ) : (
+                    <InfoPill compact={compact} highlight>
+                      NEED PAINTCODE
+                    </InfoPill>
+                  )}
 
                   {job.claimNumber ? (
                     <InfoPill compact={compact}>
@@ -746,6 +876,7 @@ function ActiveJobsSection({
                     {getPartsReceiptSummary(job)}
                   </InfoPill>
                 </div>
+                ) : null}
 
                 {unreadNotes > 0 ? (
                   <div
@@ -800,6 +931,11 @@ function ActiveJobsSection({
                         compact={narrowLayout}
                       />
                     ) : null}
+                    <DetailBox
+                      label="Phone"
+                      value={job.phoneNumber || 'Not set'}
+                      compact={narrowLayout}
+                    />
                     <DetailBox
                       label="Paint Code"
                       value={job.paintCode || 'Not set'}
@@ -868,11 +1004,31 @@ function ActiveJobsSection({
                     <>
                       <JobDetailsEditor
                         compact={narrowLayout}
+                        phoneNumber={detailDraft.phoneNumber}
+                        status={detailDraft.status}
                         paintCode={detailDraft.paintCode}
                         amount={detailDraft.amount}
                         amountStatus={detailDraft.amountStatus}
                         promiseDate={detailDraft.promiseDate}
                         saving={isSavingDetailsThisJob}
+                        onPhoneNumberChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              phoneNumber: value,
+                            },
+                          }))
+                        }
+                        onStatusChange={(value) =>
+                          setJobDetailDrafts((current) => ({
+                            ...current,
+                            [job.id]: {
+                              ...detailDraft,
+                              status: value,
+                            },
+                          }))
+                        }
                         onPaintCodeChange={(value) =>
                           setJobDetailDrafts((current) => ({
                             ...current,
@@ -974,6 +1130,7 @@ function ActiveJobsSection({
                         setSavingPartNoteId(null);
                       }
                     }}
+                    onDeletePart={(partId) => void onDeletePart(job.id, partId)}
                     savingPartNoteId={savingPartNoteId}
                     onClearLegacyPartsWaiting={() => onClearLegacyPartsWaiting(job.id)}
                   />
@@ -994,11 +1151,16 @@ function ActiveJobsSection({
                       setSelectedPhoto(photo);
                       setPhotoZoom(1);
                     }}
+                    onDeletePhoto={(photoId) => void onDeletePhoto(job.id, photoId)}
                   />
 
                   <SectionDivider />
 
-                  <NotesPanel job={job} compact={narrowLayout} />
+                  <NotesPanel
+                    job={job}
+                    compact={narrowLayout}
+                    onDeleteNote={(noteId) => void onDeleteNote(job.id, noteId)}
+                  />
 
                   <SectionDivider />
 
@@ -1125,14 +1287,55 @@ function ActiveJobsSection({
                           )
                         }
                       />
+                      <input
+                        ref={(element) => {
+                          galleryInputRefs.current[job.id] = element;
+                        }}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={(event) =>
+                          void handlePhotoFileSelected(
+                            job.id,
+                            event.target.files?.[0] ?? null,
+                          )
+                        }
+                      />
 
-                      <ActionButton
-                        compact={narrowLayout}
-                        onClick={() => photoInputRefs.current[job.id]?.click()}
-                        disabled={isSavingPhotoThisJob}
-                      >
-                        {mobile ? 'Add Photo' : 'Add / Take Photo'}
-                      </ActionButton>
+                        {mobile ? (
+                          <>
+                            <ActionButton
+                              compact={narrowLayout}
+                              onClick={() =>
+                                canUseNativeMobileCamera()
+                                  ? void handleNativeMobilePhoto(job.id, 'camera')
+                                  : photoInputRefs.current[job.id]?.click()
+                              }
+                              disabled={isSavingPhotoThisJob}
+                            >
+                              Take Photo
+                            </ActionButton>
+                            <ActionButton
+                              compact={narrowLayout}
+                              onClick={() =>
+                                canUseNativeMobileCamera()
+                                  ? void handleNativeMobilePhoto(job.id, 'gallery')
+                                  : galleryInputRefs.current[job.id]?.click()
+                              }
+                              disabled={isSavingPhotoThisJob}
+                            >
+                              From Gallery
+                          </ActionButton>
+                        </>
+                      ) : (
+                        <ActionButton
+                          compact={narrowLayout}
+                          onClick={() => photoInputRefs.current[job.id]?.click()}
+                          disabled={isSavingPhotoThisJob}
+                        >
+                          Add / Take Photo
+                        </ActionButton>
+                      )}
 
                     </div>
                   </div>
@@ -1326,11 +1529,15 @@ function SectionLabel({
 
 function JobDetailsEditor({
   compact,
+  phoneNumber,
+  status,
   paintCode,
   amount,
   amountStatus,
   promiseDate,
   saving,
+  onPhoneNumberChange,
+  onStatusChange,
   onPaintCodeChange,
   onAmountChange,
   onAmountStatusChange,
@@ -1338,11 +1545,15 @@ function JobDetailsEditor({
   onSave,
 }: {
   compact: boolean;
+  phoneNumber: string;
+  status: JobStatus;
   paintCode: string;
   amount: string;
   amountStatus: AmountStatus;
   promiseDate: string;
   saving: boolean;
+  onPhoneNumberChange: (value: string) => void;
+  onStatusChange: (value: JobStatus) => void;
   onPaintCodeChange: (value: string) => void;
   onAmountChange: (value: string) => void;
   onAmountStatusChange: (value: AmountStatus) => void;
@@ -1380,6 +1591,32 @@ function JobDetailsEditor({
           alignItems: 'end',
         }}
       >
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Phone Number</span>
+          <input
+            value={phoneNumber}
+            onChange={(event) => onPhoneNumberChange(event.target.value)}
+            inputMode="tel"
+            placeholder="(555) 555-5555"
+            style={inputStyle(compact)}
+          />
+        </label>
+
+        <label style={{ display: 'grid', gap: 6 }}>
+          <span style={fieldLabelStyle(compact)}>Status</span>
+          <select
+            value={status}
+            onChange={(event) => onStatusChange(event.target.value as JobStatus)}
+            style={inputStyle(compact)}
+          >
+            <option value="notStarted">Not Started</option>
+            <option value="inProgress">In Progress</option>
+            <option value="waiting">Waiting</option>
+            <option value="waitingOnAppraiser">Waiting on Appraiser</option>
+            <option value="supplementNeeded">Supplement Needed</option>
+          </select>
+        </label>
+
         <label style={{ display: 'grid', gap: 6 }}>
           <span style={fieldLabelStyle(compact)}>Paint Code</span>
           <input
@@ -1696,6 +1933,7 @@ function PartsPanel({
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onDeletePart,
   savingPartNoteId,
   onClearLegacyPartsWaiting,
 }: {
@@ -1711,6 +1949,7 @@ function PartsPanel({
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
   onSavePartNote: (partId: string) => Promise<void> | void;
+  onDeletePart: (partId: string) => Promise<void> | void;
   savingPartNoteId: string | null;
   onClearLegacyPartsWaiting: () => void;
 }) {
@@ -1911,6 +2150,9 @@ function PartsPanel({
                     <ActionButton compact={compact} onClick={() => onSavePartNote(part.id)}>
                       {savingPartNoteId === part.id ? 'Saving...' : 'Save Part Note'}
                     </ActionButton>
+                    <ActionButton compact={compact} danger onClick={() => onDeletePart(part.id)}>
+                      Delete Part
+                    </ActionButton>
                     {part.status === 'requested' ? (
                       <ActionButton compact={compact} onClick={() => onSetPartOrdered(part.id)}>
                         Mark Ordered
@@ -1959,12 +2201,14 @@ function PhotosPanel({
   addTimestamp,
   onToggleTimestamp,
   onOpenPhoto,
+  onDeletePhoto,
 }: {
   job: Job;
   compact: boolean;
   addTimestamp: boolean;
   onToggleTimestamp: (checked: boolean) => void;
   onOpenPhoto: (photo: JobPhoto) => void;
+  onDeletePhoto: (photoId: string) => void;
 }) {
   return (
     <div
@@ -2016,30 +2260,39 @@ function PhotosPanel({
           }}
         >
           {job.photos.map((photo) => (
-            <button
+            <div
               key={photo.id}
-              onClick={() => onOpenPhoto(photo)}
               style={{
                 borderRadius: 14,
                 border: '2px solid rgba(148,163,184,0.28)',
                 background: 'rgba(15,24,42,0.98)',
                 overflow: 'hidden',
-                padding: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
+                display: 'grid',
               }}
             >
-              <img
-                src={photo.url}
-                alt="Job upload"
+              <button
+                onClick={() => onOpenPhoto(photo)}
                 style={{
-                  width: '100%',
-                  aspectRatio: '1 / 1',
-                  objectFit: 'cover',
-                  display: 'block',
+                  border: 'none',
+                  background: 'transparent',
+                  overflow: 'hidden',
+                  padding: 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
                 }}
-              />
-              <div style={{ padding: '8px 10px', display: 'grid', gap: 4 }}>
+              >
+                <img
+                  src={photo.url}
+                  alt="Job upload"
+                  style={{
+                    width: '100%',
+                    aspectRatio: '1 / 1',
+                    objectFit: 'cover',
+                    display: 'block',
+                  }}
+                />
+              </button>
+              <div style={{ padding: '8px 10px', display: 'grid', gap: 8 }}>
                 <div
                   style={{
                     fontSize: compact ? 10 : 11,
@@ -2068,8 +2321,11 @@ function PhotosPanel({
                     Timestamp included
                   </div>
                 ) : null}
+                <ActionButton compact={compact} danger onClick={() => onDeletePhoto(photo.id)}>
+                  Delete Photo
+                </ActionButton>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -2089,9 +2345,11 @@ function PhotosPanel({
 function NotesPanel({
   job,
   compact = false,
+  onDeleteNote,
 }: {
   job: Job;
   compact?: boolean;
+  onDeleteNote: (noteId: string) => void;
 }) {
   return (
     <div
@@ -2115,7 +2373,12 @@ function NotesPanel({
       {job.textNotes.length ? (
         <div style={{ display: 'grid', gap: 10 }}>
           {job.textNotes.map((note) => (
-            <NoteRow key={note.id} note={note} compact={compact} />
+            <NoteRow
+              key={note.id}
+              note={note}
+              compact={compact}
+              onDelete={() => onDeleteNote(note.id)}
+            />
           ))}
         </div>
       ) : (
@@ -2225,9 +2488,11 @@ function PhotoViewerModal({
 function NoteRow({
   note,
   compact = false,
+  onDelete,
 }: {
   note: JobNote;
   compact?: boolean;
+  onDelete: () => void;
 }) {
   return (
     <div
@@ -2288,6 +2553,11 @@ function NoteRow({
         {note.type === 'audio' ? 'Audio note • ' : ''}
         {formatDateTime(note.createdAt)}
       </div>
+      <div style={{ marginTop: 8 }}>
+        <ActionButton compact={compact} danger onClick={onDelete}>
+          Delete
+        </ActionButton>
+      </div>
     </div>
   );
 }
@@ -2339,12 +2609,14 @@ function ActionButton({
   children,
   compact = false,
   primary = false,
+  danger = false,
   disabled = false,
   onClick,
 }: {
   children: React.ReactNode;
   compact?: boolean;
   primary?: boolean;
+  danger?: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }) {
@@ -2353,10 +2625,14 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        border: primary
+        border: danger
+          ? '1px solid rgba(248,113,113,0.42)'
+          : primary
           ? '1px solid rgba(96,165,250,0.4)'
           : '1px solid rgba(148,163,184,0.34)',
-        background: primary
+        background: danger
+          ? 'rgba(127,29,29,0.42)'
+          : primary
           ? 'rgba(37,99,235,0.38)'
           : 'rgba(51,65,85,0.92)',
         color: '#f8fafc',
@@ -2409,6 +2685,10 @@ function statusLabel(status: JobStatus) {
       return 'In Progress';
     case 'waiting':
       return 'Waiting';
+    case 'waitingOnAppraiser':
+      return 'Waiting on Appraiser';
+    case 'supplementNeeded':
+      return 'Supplement Needed';
     case 'done':
       return 'Done';
     default:
@@ -2433,6 +2713,16 @@ function statusBadgeStyle(status: JobStatus, compact: boolean): React.CSSPropert
       border: '1px solid rgba(251,191,36,0.28)',
       color: '#fde68a',
     },
+    waitingOnAppraiser: {
+      background: 'rgba(124,58,237,0.22)',
+      border: '1px solid rgba(196,181,253,0.32)',
+      color: '#ede9fe',
+    },
+    supplementNeeded: {
+      background: 'rgba(190,24,93,0.22)',
+      border: '1px solid rgba(251,113,133,0.32)',
+      color: '#ffe4e6',
+    },
     done: {
       background: 'rgba(22,163,74,0.22)',
       border: '1px solid rgba(74,222,128,0.28)',
@@ -2447,6 +2737,27 @@ function statusBadgeStyle(status: JobStatus, compact: boolean): React.CSSPropert
     borderRadius: 999,
     padding: compact ? '6px 10px' : '7px 12px',
     whiteSpace: 'nowrap',
+  };
+}
+
+function paintCodeBadgeStyle(
+  paintCode: string,
+  compact: boolean,
+): React.CSSProperties {
+  const missing = !paintCode.trim();
+
+  return {
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+    color: missing ? '#fff7ed' : '#e0f2fe',
+    background: missing ? 'rgba(194,65,12,0.28)' : 'rgba(8,145,178,0.22)',
+    border: missing
+      ? '1px solid rgba(251,146,60,0.44)'
+      : '1px solid rgba(34,211,238,0.3)',
+    borderRadius: 999,
+    padding: compact ? '6px 9px' : '7px 11px',
+    display: 'inline-flex',
+    boxShadow: missing ? '0 0 18px rgba(251,146,60,0.18)' : 'none',
   };
 }
 
@@ -2636,7 +2947,15 @@ function formatDate(value: string) {
 }
 
 function formatDateTime(value: string) {
+  if (!value) {
+    return 'Not set';
+  }
+
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Not set';
+  }
+
   return new Intl.DateTimeFormat('en-US', {
     month: 'numeric',
     day: 'numeric',
@@ -2644,6 +2963,20 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function phoneLinkStyle(compact: boolean): React.CSSProperties {
+  return {
+    color: '#93c5fd',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 800,
+    textDecoration: 'none',
+  };
+}
+
+function sanitizePhoneNumber(value: string) {
+  const cleaned = value.replace(/[^\d+]/g, '');
+  return cleaned || value;
 }
 
 function formatFileSize(bytes: number) {

@@ -16,7 +16,7 @@ function MaterialsManagerTab({
   compact = false,
   mobile = false,
 }: MaterialsManagerTabProps) {
-  const [unlocked, setUnlocked] = useState(false);
+  const [unlocked, setUnlocked] = useState(true);
   const [accessCode, setAccessCode] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -197,7 +197,7 @@ function MaterialsManagerTab({
           }}
         >
           <div style={featurePanelStyle(mobile)}>
-            <div style={eyebrowStyle('#9fc2ff')}>PREMIUM ADD-ON</div>
+            <div style={eyebrowStyle('#9fc2ff')}>PROJECT WORKSPACE</div>
             <h2
               style={{
                 margin: '8px 0 10px',
@@ -231,7 +231,7 @@ function MaterialsManagerTab({
             >
               {[
                 'Review the live materials catalog and recent invoices without leaving Shop Keeper',
-                'Keep the premium tools behind a paid unlock instead of bundling them into the base app',
+                'Keep the embedded materials tools open while we finish the app',
                 'Open the original Materials App only when you need the legacy workflow',
               ].map((item) => (
                 <div

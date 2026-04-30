@@ -30,5 +30,5 @@ export const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayHeight: 260,
   overlayX: null,
   overlayY: null,
-  materialsManagerUnlocked: false,
+  materialsManagerUnlocked: true,
 };

@@ -78,6 +78,7 @@ const MATERIALS_APP_VENV_PYTHON_PATH = path.join(
   'Scripts',
   'python.exe',
 );
+const MATERIALS_MANAGER_LOCK_ENABLED = false;
 const USER_PYTHON_PATH = path.join(
   app.getPath('home'),
   'AppData',
@@ -2066,17 +2067,21 @@ app.whenReady().then(async () => {
   );
 
   ipcMain.handle('settings:getMaterialsManagerAccess', () => ({
-    unlocked: settingsStore.getSettings().materialsManagerUnlocked,
+    unlocked:
+      !MATERIALS_MANAGER_LOCK_ENABLED ||
+      settingsStore.getSettings().materialsManagerUnlocked,
   }));
 
   ipcMain.handle('settings:unlockMaterialsManager', (_event, accessCode: string) => {
-    const unlocked = accessCode.trim() === MATERIALS_MANAGER_UNLOCK_CODE;
+    const unlocked =
+      !MATERIALS_MANAGER_LOCK_ENABLED ||
+      accessCode.trim() === MATERIALS_MANAGER_UNLOCK_CODE;
     const nextSettings = settingsStore.setMaterialsManagerUnlocked(unlocked);
 
     return {
       ok: unlocked,
       message: unlocked
-        ? 'Materials Manager unlocked on this device.'
+        ? 'Materials Manager is unlocked while the project is in progress.'
         : 'That access code did not work.',
       settings: nextSettings,
     };
@@ -2380,7 +2385,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('materialsManager:getSnapshot', async () => {
     const settings = settingsStore.getSettings();
-    if (!settings.materialsManagerUnlocked) {
+    if (MATERIALS_MANAGER_LOCK_ENABLED && !settings.materialsManagerUnlocked) {
       throw new Error('Materials Manager is locked until the add-on is unlocked.');
     }
 
@@ -2398,7 +2403,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('materialsManager:launch', async () => {
     const settings = settingsStore.getSettings();
-    if (!settings.materialsManagerUnlocked) {
+    if (MATERIALS_MANAGER_LOCK_ENABLED && !settings.materialsManagerUnlocked) {
       return {
         ok: false,
         message: 'Materials Manager is locked until the add-on is unlocked.',

@@ -27,8 +27,10 @@ const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayHeight: 720,
   overlayX: null,
   overlayY: null,
-  materialsManagerUnlocked: false,
+  materialsManagerUnlocked: true,
 };
+
+const MATERIALS_MANAGER_LOCK_ENABLED = false;
 
 type AppInfo = {
   name: string;
@@ -383,13 +385,14 @@ export const appBridge = {
     const trimmed = accessCode.trim();
     const settings = updateWebSettings((current) => ({
       ...current,
-      materialsManagerUnlocked: trimmed === 'UAB-MATERIALS-PRO',
+      materialsManagerUnlocked:
+        !MATERIALS_MANAGER_LOCK_ENABLED || trimmed === 'UAB-MATERIALS-PRO',
     }));
 
     return {
       ok: settings.materialsManagerUnlocked,
       message: settings.materialsManagerUnlocked
-        ? 'Materials Manager unlocked on this device.'
+        ? 'Materials Manager is unlocked while the project is in progress.'
         : 'That access code did not work.',
       settings,
     };
@@ -402,7 +405,9 @@ export const appBridge = {
     }
 
     return {
-      unlocked: readWebSettings().materialsManagerUnlocked,
+      unlocked:
+        !MATERIALS_MANAGER_LOCK_ENABLED ||
+        readWebSettings().materialsManagerUnlocked,
     };
   },
 

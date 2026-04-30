@@ -133,7 +133,7 @@ function mapEstimateLines(lines) {
     const lineNumber = firstText(line.line_number, index + 1);
     const partNumber = getLinePartNumber(line);
 
-    return {
+    const mappedLine = {
       id: `ems-line-${slug(lineNumber)}-${index + 1}`,
       lineNumber,
       sourceFile: text(line.source_file || 'lin'),
@@ -157,6 +157,19 @@ function mapEstimateLines(lines) {
       isSublet: line.is_sublet === true,
       rawFields: raw,
     };
+
+    if (isRefinishOnlyOperation(mappedLine)) {
+      return {
+        ...mappedLine,
+        lineKind: mappedLine.lineKind === 'part' || !mappedLine.lineKind
+          ? 'paint'
+          : mappedLine.lineKind,
+        isOrderablePart: false,
+        partPrice: 0,
+      };
+    }
+
+    return mappedLine;
   });
 }
 

@@ -334,7 +334,7 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
     const partNumber = getLinePartNumber(line);
     const raw = line.raw_fields ?? {};
 
-    return {
+    const mappedLine = {
       id: `ems-line-${slug(lineNumber)}-${index + 1}`,
       lineNumber,
       sourceFile: text(line.source_file || 'lin'),
@@ -358,6 +358,19 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
       isSublet: line.is_sublet === true,
       rawFields: raw,
     };
+
+    if (isRefinishOnlyOperation(mappedLine)) {
+      return {
+        ...mappedLine,
+        lineKind: mappedLine.lineKind === 'part' || !mappedLine.lineKind
+          ? 'paint'
+          : mappedLine.lineKind,
+        isOrderablePart: false,
+        partPrice: 0,
+      };
+    }
+
+    return mappedLine;
   });
 }
 

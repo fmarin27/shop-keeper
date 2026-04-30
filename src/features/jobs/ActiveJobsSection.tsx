@@ -3338,7 +3338,7 @@ function compareEstimateSortValues(left: string | number, right: string | number
 }
 
 function formatEstimateOperation(line: EstimateLineForDisplay) {
-  const kind = formatEstimateLineKind(line.lineKind);
+  const kind = formatEstimateLineKind(getEstimateDisplayLineKind(line));
   const label = formatOperationLabel(line.operationLabel, line.operationCode, kind);
   const parts = [label, kind].filter(Boolean);
   const uniqueParts = parts.filter(
@@ -3392,10 +3392,31 @@ function isRawEmsCode(value: string) {
   return /^(?:OP\d+|LAB|PAE|PAN|false|true)$/i.test(value.trim());
 }
 
+function getEstimateDisplayLineKind(line: EstimateLineForDisplay) {
+  if (isRefinishEstimateLine(line)) {
+    return 'paint';
+  }
+
+  return line.lineKind;
+}
+
+function isRefinishEstimateLine(line: EstimateLineForDisplay) {
+  const label = [
+    line.operationLabel,
+    line.operationCategory,
+    line.laborType,
+  ]
+    .map((value) => String(value ?? '').toLowerCase())
+    .join(' ');
+
+  return label.includes('refinish') || label.includes('paint');
+}
+
 function isOrderableEstimatePart(line: EstimateLineForDisplay) {
+  if (isRefinishEstimateLine(line)) return false;
   if (line.isOrderablePart) return true;
 
-  const kind = String(line.lineKind ?? '').trim().toLowerCase();
+  const kind = String(getEstimateDisplayLineKind(line) ?? '').trim().toLowerCase();
   if (kind) return kind === 'part';
 
   return Boolean(line.partNumber) && Number(line.partPrice) > 0;

@@ -6,7 +6,7 @@ export const MANAGER_MODE_PASSWORD = '1981';
 export const TAB_LABELS = {
   commandCenter: 'RO Command Center',
   jobs: 'Jobs',
-  parts: 'Parts',
+  parts: 'Parts/Sublet',
   materialsMessages: 'Materials & Messages',
   leads: 'Leads',
   materialsManager: 'Materials Manager',

@@ -88,7 +88,7 @@ function TabBar({
       />
 
       <TabButton
-        label="Parts"
+        label="Parts/Sublet"
         active={selectedTab === 'parts'}
         compact={compact}
         mobile={mobile}

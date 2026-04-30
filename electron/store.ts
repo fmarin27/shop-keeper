@@ -13,6 +13,7 @@ export interface LocalAppSettings {
   overlayX: number | null;
   overlayY: number | null;
   materialsManagerUnlocked: boolean;
+  activeShopId?: string;
 }
 
 const DEFAULT_SETTINGS: LocalAppSettings = {
@@ -23,6 +24,7 @@ const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayX: null,
   overlayY: null,
   materialsManagerUnlocked: true,
+  activeShopId: 'ultimate-auto-body',
 };
 
 export class SettingsStore {

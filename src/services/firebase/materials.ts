@@ -10,6 +10,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './config';
+import { belongsToActiveShop, getActiveShopId, withActiveShopFields } from './shopProfile';
 import type {
   MaterialEmailStatus,
   MessageAudienceMode,
@@ -19,6 +20,10 @@ import type {
 
 const materialsCollection = collection(db, 'materials');
 
+function materialDoc(id: string) {
+  return doc(db, 'materials', id);
+}
+
 export function subscribeToMaterials(
   appMode: MessageAudienceMode,
   callback: (items: MaterialRequest[]) => void,
@@ -26,11 +31,16 @@ export function subscribeToMaterials(
   const q = query(materialsCollection, orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
-    const items: MaterialRequest[] = snapshot.docs.map((snap) => {
+    const items: MaterialRequest[] = snapshot.docs.flatMap((snap) => {
       const data = snap.data() as any;
+      if (!belongsToActiveShop(data)) {
+        return [];
+      }
 
       return {
         id: snap.id,
+        shopId: data.shopId ?? getActiveShopId(),
+        shopName: data.shopName ?? '',
         itemName: data.itemName ?? '',
         quantity: data.quantity ?? '',
         note: data.note ?? '',
@@ -75,7 +85,7 @@ export async function addMaterialRequest(
 
   if (!name || !qty) return;
 
-  const ref = await addDoc(materialsCollection, {
+  const ref = await addDoc(materialsCollection, withActiveShopFields({
     itemName: name,
     quantity: qty,
     note: note.trim() || '',
@@ -86,7 +96,7 @@ export async function addMaterialRequest(
     status: 'requested',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 
   return ref.id;
 }
@@ -95,20 +105,20 @@ export async function updateMaterialStatus(
   id: string,
   status: MaterialStatus,
 ) {
-  await updateDoc(doc(db, 'materials', id), {
+  await updateDoc(materialDoc(id), withActiveShopFields({
     status,
     unread: false,
     unreadByManager: false,
     unreadByTech: false,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function markMaterialRead(
   id: string,
   appMode: MessageAudienceMode,
 ) {
-  await updateDoc(doc(db, 'materials', id), appMode === 'manager'
+  await updateDoc(materialDoc(id), withActiveShopFields(appMode === 'manager'
     ? {
         unread: false,
         unreadByManager: false,
@@ -117,7 +127,7 @@ export async function markMaterialRead(
     : {
         unreadByTech: false,
         updatedAt: serverTimestamp(),
-      });
+      }));
 }
 
 export async function setMaterialEmailStatus(
@@ -135,16 +145,16 @@ export async function setMaterialEmailStatus(
     payload.emailSentAt = serverTimestamp();
   }
 
-  await updateDoc(doc(db, 'materials', id), payload);
+  await updateDoc(materialDoc(id), withActiveShopFields(payload));
 }
 
 export async function setMaterialArchived(id: string, archived: boolean) {
-  await updateDoc(doc(db, 'materials', id), {
+  await updateDoc(materialDoc(id), withActiveShopFields({
     archived,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function deleteMaterialRequest(id: string) {
-  await deleteDoc(doc(db, 'materials', id));
+  await deleteDoc(materialDoc(id));
 }

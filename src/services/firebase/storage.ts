@@ -1,6 +1,7 @@
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { ensureFirebaseSession, storage } from './config';
 import { appBridge } from '../platform/appBridge';
+import { scopedStoragePath } from './shopProfile';
 
 const DESKTOP_FOLDER_WRITE_TIMEOUT_MS = 15000;
 const DESKTOP_STORAGE_UPLOAD_TIMEOUT_MS = 20000;
@@ -12,7 +13,7 @@ export async function uploadJobAudioNote(jobId: string, file: Blob) {
   await ensureFirebaseSession();
   const extension = getAudioExtension(file.type);
   const fileName = `audio-${Date.now()}.${extension}`;
-  const fileRef = ref(storage, `jobs/${jobId}/audio-notes/${fileName}`);
+  const fileRef = ref(storage, scopedStoragePath(`jobs/${jobId}/audio-notes/${fileName}`));
 
   await retryWithTimeout(
     () =>
@@ -34,7 +35,7 @@ export async function uploadGeneralMessageAudio(file: Blob) {
   await ensureFirebaseSession();
   const extension = getAudioExtension(file.type);
   const fileName = `audio-${Date.now()}.${extension}`;
-  const fileRef = ref(storage, `generalMessages/audio/${fileName}`);
+  const fileRef = ref(storage, scopedStoragePath(`generalMessages/audio/${fileName}`));
 
   await retryWithTimeout(
     () =>
@@ -81,7 +82,7 @@ export async function uploadJobPhoto(
   }
 
   const fileName = `photo-${Date.now()}.jpg`;
-  const fileRef = ref(storage, `jobs/${jobId}/photos/${fileName}`);
+  const fileRef = ref(storage, scopedStoragePath(`jobs/${jobId}/photos/${fileName}`));
 
   await retryWithTimeout(
     () =>
@@ -102,7 +103,7 @@ export async function uploadJobPhoto(
 export async function uploadLeadPhoto(leadId: string, file: Blob) {
   await ensureFirebaseSession();
   const fileName = `photo-${Date.now()}.jpg`;
-  const fileRef = ref(storage, `leads/${leadId}/photos/${fileName}`);
+  const fileRef = ref(storage, scopedStoragePath(`leads/${leadId}/photos/${fileName}`));
 
   await retryWithTimeout(
     () =>

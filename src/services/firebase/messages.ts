@@ -11,12 +11,17 @@ import {
 } from 'firebase/firestore';
 import { db } from './config';
 import { deleteStorageFile, uploadGeneralMessageAudio } from './storage';
+import { belongsToActiveShop, getActiveShopId, withActiveShopFields } from './shopProfile';
 import type {
   GeneralMessage,
   MessageAudienceMode,
 } from '../../features/messages/types';
 
 const messagesCollection = collection(db, 'generalMessages');
+
+function messageDoc(id: string) {
+  return doc(db, 'generalMessages', id);
+}
 
 type GeneralMessageWithAudio = GeneralMessage & {
   audioUrl?: string;
@@ -29,11 +34,16 @@ export function subscribeToGeneralMessages(
   const q = query(messagesCollection, orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
-    const items: GeneralMessageWithAudio[] = snapshot.docs.map((snap) => {
+    const items: GeneralMessageWithAudio[] = snapshot.docs.flatMap((snap) => {
       const data = snap.data() as any;
+      if (!belongsToActiveShop(data)) {
+        return [];
+      }
 
       return {
         id: snap.id,
+        shopId: data.shopId ?? getActiveShopId(),
+        shopName: data.shopName ?? '',
         type: data.type ?? 'text',
         text: data.text ?? '',
         audioUrl: data.audioUrl ?? '',
@@ -63,7 +73,7 @@ export async function addTextGeneralMessage(
   const trimmed = text.trim();
   if (!trimmed) return;
 
-  await addDoc(messagesCollection, {
+  await addDoc(messagesCollection, withActiveShopFields({
     type: 'text',
     text: trimmed,
     createdBy,
@@ -73,7 +83,7 @@ export async function addTextGeneralMessage(
     archived: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function addAudioGeneralMessage(
@@ -82,7 +92,7 @@ export async function addAudioGeneralMessage(
 ) {
   const audioUrl = await uploadGeneralMessageAudio(file);
 
-  await addDoc(messagesCollection, {
+  await addDoc(messagesCollection, withActiveShopFields({
     type: 'audio',
     text: 'Audio message',
     audioUrl,
@@ -93,14 +103,14 @@ export async function addAudioGeneralMessage(
     archived: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function markGeneralMessageRead(
   id: string,
   appMode: MessageAudienceMode,
 ) {
-  await updateDoc(doc(db, 'generalMessages', id), appMode === 'manager'
+  await updateDoc(messageDoc(id), withActiveShopFields(appMode === 'manager'
     ? {
         unread: false,
         unreadByManager: false,
@@ -109,17 +119,17 @@ export async function markGeneralMessageRead(
     : {
         unreadByTech: false,
         updatedAt: serverTimestamp(),
-      });
+      }));
 }
 
 export async function setGeneralMessageArchived(
   id: string,
   archived: boolean,
 ) {
-  await updateDoc(doc(db, 'generalMessages', id), {
+  await updateDoc(messageDoc(id), withActiveShopFields({
     archived,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function setGeneralMessageUnreadState(
@@ -128,8 +138,8 @@ export async function setGeneralMessageUnreadState(
   unread: boolean,
 ) {
   await updateDoc(
-    doc(db, 'generalMessages', id),
-    appMode === 'manager'
+    messageDoc(id),
+    withActiveShopFields(appMode === 'manager'
       ? {
           unread,
           unreadByManager: unread,
@@ -138,7 +148,7 @@ export async function setGeneralMessageUnreadState(
       : {
           unreadByTech: unread,
           updatedAt: serverTimestamp(),
-        },
+        }),
   );
 }
 
@@ -147,5 +157,5 @@ export async function deleteGeneralMessage(message: GeneralMessageWithAudio) {
     await deleteStorageFile(message.audioUrl);
   }
 
-  await deleteDoc(doc(db, 'generalMessages', message.id));
+  await deleteDoc(messageDoc(message.id));
 }

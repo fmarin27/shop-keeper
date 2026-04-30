@@ -6,6 +6,7 @@ import ModeChooserPage from './pages/ModeChooserPage';
 import TechPage from './pages/TechPage';
 import { ensureFirebaseSession } from './services/firebase/config';
 import { subscribeToJobs } from './services/firebase/jobs';
+import { DEFAULT_SHOP_PROFILE, setActiveShopProfile } from './services/firebase/shopProfile';
 import { appBridge } from './services/platform/appBridge';
 import { MANAGER_MODE_PASSWORD } from './utils/constants';
 import type {
@@ -71,6 +72,13 @@ function App() {
         setAppInfo(info);
 
         const settings = await appBridge.getSettings();
+        setActiveShopProfile({
+          id: settings.activeShopId ?? DEFAULT_SHOP_PROFILE.id,
+          name:
+            settings.activeShopId && settings.activeShopId !== DEFAULT_SHOP_PROFILE.id
+              ? settings.activeShopId
+              : DEFAULT_SHOP_PROFILE.name,
+        });
         setAppMode(settings.appMode ?? null);
         if (settings.displayMode !== 'normal') {
           await appBridge.setDisplayMode('normal');

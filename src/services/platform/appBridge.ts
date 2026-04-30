@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS: LocalAppSettings = {
   overlayX: null,
   overlayY: null,
   materialsManagerUnlocked: true,
+  activeShopId: 'ultimate-auto-body',
 };
 
 const MATERIALS_MANAGER_LOCK_ENABLED = false;

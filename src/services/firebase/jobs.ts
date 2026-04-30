@@ -20,6 +20,12 @@ import {
   uploadJobPhoto,
 } from './storage';
 import { appBridge } from '../platform/appBridge';
+import {
+  belongsToActiveShop,
+  getActiveShopId,
+  shopScopedDocumentId,
+  withActiveShopFields,
+} from './shopProfile';
 import type {
   AppMode,
   CreateJobInput,
@@ -38,6 +44,18 @@ const jobsCollection = collection(db, 'jobs');
 const FIRESTORE_WRITE_TIMEOUT_MS = 15000;
 
 type FirestoreJobInput = Omit<Job, 'id'>;
+
+function jobDoc(jobId: string) {
+  return doc(db, 'jobs', jobId);
+}
+
+function isSoftDeletedJob(data: Record<string, any>) {
+  return Boolean(data.deletedAt) || data.deleted === true;
+}
+
+function shouldIncludeJob(data: Record<string, any>) {
+  return belongsToActiveShop(data) && !isSoftDeletedJob(data);
+}
 
 function toFirestorePartRequest(part: JobPartRequest) {
   return {
@@ -59,9 +77,13 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
   const q = query(jobsCollection, orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
-    const jobsWithIndex: Array<{ job: Job; index: number }> = snapshot.docs.map(
+    const jobsWithIndex: Array<{ job: Job; index: number }> = snapshot.docs.flatMap(
       (snap, index) => {
         const data = snap.data() as any;
+
+        if (!shouldIncludeJob(data)) {
+          return [];
+        }
 
         const estimateLines = Array.isArray(data.estimateLines)
           ? (data.estimateLines as Job['estimateLines'])
@@ -78,6 +100,9 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
           index,
           job: {
             id: snap.id,
+            shopId: data.shopId ?? getActiveShopId(),
+            shopName: data.shopName ?? '',
+            deletedAt: data.deletedAt ?? '',
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
@@ -154,11 +179,11 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
 }
 
 export async function seedJob(job: FirestoreJobInput) {
-  await addDoc(jobsCollection, {
+  await addDoc(jobsCollection, withActiveShopFields({
     ...job,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function createJob(input: CreateJobInput) {
@@ -194,7 +219,7 @@ export async function createJob(input: CreateJobInput) {
         ]
       : [];
 
-  await addDoc(jobsCollection, {
+  await addDoc(jobsCollection, withActiveShopFields({
     vehicle: input.vehicle.trim(),
     roNumber: input.roNumber.trim(),
     customerName: input.customerName.trim(),
@@ -214,7 +239,7 @@ export async function createJob(input: CreateJobInput) {
     sortOrder: Date.now() * -1,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 
   if (appBridge.isDesktop()) {
     await appBridge.ensureRoFolderForJob({
@@ -446,8 +471,8 @@ export async function convertEmsRepairOrderToJob(
     normalized.ro_number,
     sourceFile,
   );
-  const jobId = `ems-${slug(sourceSystem)}-${slug(externalEstimateId)}`;
-  const ref = doc(db, 'jobs', jobId);
+  const jobId = shopScopedDocumentId(`ems-${slug(sourceSystem)}-${slug(externalEstimateId)}`);
+  const ref = jobDoc(jobId);
   const existingSnapshot = await getDoc(ref);
   const existing = existingSnapshot.exists()
     ? (existingSnapshot.data() as Partial<Job>)
@@ -461,7 +486,7 @@ export async function convertEmsRepairOrderToJob(
   const customerPhone = text(customer.phone);
   const nowIso = new Date().toISOString();
 
-  const payload = {
+  const payload = withActiveShopFields({
     sourceSystem,
     externalEstimateId,
     sourceEstimateId: externalEstimateId,
@@ -509,7 +534,7 @@ export async function convertEmsRepairOrderToJob(
     lastEmsSyncAt: nowIso,
     ...(!existing ? { createdAt: serverTimestamp() } : {}),
     updatedAt: serverTimestamp(),
-  };
+  });
 
   await setDoc(ref, payload, { merge: true });
 
@@ -557,10 +582,10 @@ export async function reorderActiveJobs(
   const batch = writeBatch(db);
 
   reordered.forEach((job, index) => {
-    batch.update(doc(db, 'jobs', job.id), {
+    batch.update(jobDoc(job.id), withActiveShopFields({
       sortOrder: index + 1,
       updatedAt: serverTimestamp(),
-    });
+    }));
   });
 
   await batch.commit();
@@ -650,10 +675,14 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
   const existingJobs = existingSnapshot.docs.map((snap) => ({
     id: snap.id,
     data: snap.data() as Record<string, any>,
-  }));
+  })).filter((entry) => belongsToActiveShop(entry.data));
   const matchedExistingJobIds = new Set<string>();
 
   let maxSortOrder = existingJobs.reduce((highest, entry) => {
+    if (isSoftDeletedJob(entry.data)) {
+      return highest;
+    }
+
     const sortOrder = entry.data.sortOrder;
     return typeof sortOrder === 'number' ? Math.max(highest, sortOrder) : highest;
   }, 0);
@@ -665,12 +694,16 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
 
     if (existing) {
       matchedExistingJobIds.add(existing.id);
+      if (isSoftDeletedJob(existing.data)) {
+        return;
+      }
+
       const reopeningClosedJob = Boolean(existing.data.done);
       if (reopeningClosedJob) {
         maxSortOrder += 1;
       }
 
-      const nextData: Record<string, unknown> = {
+      const nextData: Record<string, unknown> = withActiveShopFields({
         vehicle: mitchellJob.vehicle,
         roNumber: mitchellJob.roNumber,
         customerName: mitchellJob.customerName,
@@ -697,7 +730,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         lastMitchellSyncAt: serverTimestamp(),
         done: false,
         ...(reopeningClosedJob ? { sortOrder: maxSortOrder } : {}),
-      };
+      });
 
       const changed = (
         normalizeText(String(existing.data.vehicle ?? '')) !== normalizeText(mitchellJob.vehicle) ||
@@ -740,7 +773,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
       }
 
       operations.push(
-        updateDoc(doc(db, 'jobs', existing.id), {
+        updateDoc(jobDoc(existing.id), {
           ...nextData,
           updatedAt: serverTimestamp(),
         }),
@@ -759,7 +792,7 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
       );
     }
     operations.push(
-      addDoc(jobsCollection, {
+      addDoc(jobsCollection, withActiveShopFields({
         vehicle: mitchellJob.vehicle,
         roNumber: mitchellJob.roNumber,
         customerName: mitchellJob.customerName,
@@ -793,11 +826,15 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
         lastMitchellSyncAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      }),
+      })),
     );
   });
 
   const mitchellJobsToClose = existingJobs.filter((entry) => {
+    if (isSoftDeletedJob(entry.data)) {
+      return false;
+    }
+
     if (Boolean(entry.data.done)) {
       return false;
     }
@@ -821,12 +858,12 @@ export async function syncJobsFromMitchell(snapshot: MitchellJobsSnapshot) {
     }
 
     operations.push(
-      updateDoc(doc(db, 'jobs', entry.id), {
+      updateDoc(jobDoc(entry.id), withActiveShopFields({
         done: true,
         status: 'done',
         lastMitchellSyncAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      }),
+      })),
     );
   });
 
@@ -860,10 +897,10 @@ export async function setActiveJobPriority(
   const batch = writeBatch(db);
 
   reordered.forEach((job, index) => {
-    batch.update(doc(db, 'jobs', job.id), {
+    batch.update(jobDoc(job.id), withActiveShopFields({
       sortOrder: index + 1,
       updatedAt: serverTimestamp(),
-    });
+    }));
   });
 
   await batch.commit();
@@ -894,29 +931,29 @@ export async function setActiveJobPosition(
   const batch = writeBatch(db);
 
   reordered.forEach((job, index) => {
-    batch.update(doc(db, 'jobs', job.id), {
+    batch.update(jobDoc(job.id), withActiveShopFields({
       sortOrder: index + 1,
       updatedAt: serverTimestamp(),
-    });
+    }));
   });
 
   await batch.commit();
 }
 
 export async function updateJobStatus(jobId: string, status: JobStatus) {
-  await updateDoc(doc(db, 'jobs', jobId), {
+  await updateDoc(jobDoc(jobId), withActiveShopFields({
     status,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function updateJobDetails(
   jobId: string,
   input: UpdateJobDetailsInput,
 ) {
-  const payload: Record<string, unknown> = {
+  const payload: Record<string, unknown> = withActiveShopFields({
     updatedAt: serverTimestamp(),
-  };
+  });
 
   if (input.roNumber !== undefined) payload.roNumber = input.roNumber.trim();
   if (input.customerName !== undefined) payload.customerName = input.customerName.trim();
@@ -944,11 +981,11 @@ export async function updateJobDetails(
   }
   if (input.policyNumber !== undefined) payload.policyNumber = input.policyNumber.trim();
 
-  await updateDoc(doc(db, 'jobs', jobId), payload);
+  await updateDoc(jobDoc(jobId), payload);
 }
 
 export async function markJobDone(jobId: string) {
-  const jobSnapshot = await getDoc(doc(db, 'jobs', jobId));
+  const jobSnapshot = await getDoc(jobDoc(jobId));
   const jobData = jobSnapshot.data() as Record<string, any> | undefined;
 
   if (appBridge.isDesktop() && jobData?.roNumber) {
@@ -959,15 +996,15 @@ export async function markJobDone(jobId: string) {
     });
   }
 
-  await updateDoc(doc(db, 'jobs', jobId), {
+  await updateDoc(jobDoc(jobId), withActiveShopFields({
     done: true,
     status: 'done',
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function undoJobDone(jobId: string) {
-  const jobSnapshot = await getDoc(doc(db, 'jobs', jobId));
+  const jobSnapshot = await getDoc(jobDoc(jobId));
   const jobData = jobSnapshot.data() as Record<string, any> | undefined;
 
   if (appBridge.isDesktop() && jobData?.roNumber) {
@@ -978,9 +1015,30 @@ export async function undoJobDone(jobId: string) {
     });
   }
 
-  await updateDoc(doc(db, 'jobs', jobId), {
+  await updateDoc(jobDoc(jobId), withActiveShopFields({
     done: false,
     status: 'inProgress',
+    updatedAt: serverTimestamp(),
+  }));
+}
+
+export async function deleteJob(jobId: string) {
+  const jobSnapshot = await getDoc(jobDoc(jobId));
+  const jobData = jobSnapshot.data() as Record<string, any> | undefined;
+
+  if (appBridge.isDesktop() && jobData?.roNumber) {
+    await appBridge.moveRoFolderForJob({
+      roNumber: String(jobData.roNumber ?? ''),
+      customerName: String(jobData.customerName ?? ''),
+      done: true,
+    });
+  }
+
+  await updateDoc(jobDoc(jobId), {
+    done: true,
+    status: 'done',
+    deletedAt: new Date().toISOString(),
+    ...withActiveShopFields({}),
     updatedAt: serverTimestamp(),
   });
 }
@@ -1012,10 +1070,10 @@ export async function addTextNoteToJob(job: Job, text: string) {
     ...job.textNotes,
   ];
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     textNotes: nextNotes,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function addAudioNoteToJob(job: Job, file: Blob) {
@@ -1045,10 +1103,10 @@ export async function addAudioNoteToJob(job: Job, file: Blob) {
     ...job.textNotes,
   ];
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     textNotes: nextNotes,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function markJobNotesRead(job: Job) {
@@ -1060,10 +1118,10 @@ export async function markJobNotesRead(job: Job) {
     read: true,
   }));
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     textNotes: nextNotes,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function deleteJobNote(job: Job, noteId: string) {
@@ -1076,10 +1134,10 @@ export async function deleteJobNote(job: Job, noteId: string) {
 
   const nextNotes = job.textNotes.filter((note) => note.id !== noteId);
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     textNotes: nextNotes,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function addPhotoToJob(
@@ -1112,10 +1170,10 @@ export async function addPhotoToJob(
   ];
 
   await withTimeout(
-    updateDoc(doc(db, 'jobs', job.id), {
+    updateDoc(jobDoc(job.id), withActiveShopFields({
       photos: nextPhotos,
       updatedAt: serverTimestamp(),
-    }),
+    })),
     FIRESTORE_WRITE_TIMEOUT_MS,
     'Saving the photo in Shop Keeper took too long. Please try again.',
   );
@@ -1129,10 +1187,10 @@ export async function deletePhotoFromJob(job: Job, photoId: string) {
 
   const nextPhotos = (job.photos ?? []).filter((photo) => photo.id !== photoId);
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     photos: nextPhotos,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 function withTimeout<T>(
@@ -1188,18 +1246,18 @@ export async function requestPartForJob(
     ...(job.partsRequests ?? []),
   ];
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsWaiting: true,
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function clearLegacyPartsWaiting(jobId: string) {
-  await updateDoc(doc(db, 'jobs', jobId), {
+  await updateDoc(jobDoc(jobId), withActiveShopFields({
     partsWaiting: false,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function markJobPartReceived(job: Job, partId: string) {
@@ -1225,11 +1283,11 @@ export async function updateJobPartStatus(
 
   const stillWaiting = hasOpenParts(nextPartsRequests);
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsWaiting: stillWaiting,
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function saveJobPartNote(
@@ -1248,10 +1306,10 @@ export async function saveJobPartNote(
       : part,
   );
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function saveJobPartInvoice(
@@ -1269,10 +1327,10 @@ export async function saveJobPartInvoice(
       : part,
   );
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function markJobPartPaid(
@@ -1293,19 +1351,19 @@ export async function markJobPartPaid(
       : part,
   );
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function deleteJobPart(job: Job, partId: string) {
   const nextPartsRequests = (job.partsRequests ?? []).filter((part) => part.id !== partId);
   const stillWaiting = hasOpenParts(nextPartsRequests);
 
-  await updateDoc(doc(db, 'jobs', job.id), {
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
     partsWaiting: stillWaiting,
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }

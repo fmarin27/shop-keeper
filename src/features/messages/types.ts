@@ -4,6 +4,8 @@ export type MaterialEmailStatus = 'sent' | 'confirmed' | 'failed';
 
 export type MaterialRequest = {
   id: string;
+  shopId?: string;
+  shopName?: string;
   itemName: string;
   quantity: string;
   note?: string;
@@ -22,6 +24,8 @@ export type MaterialRequest = {
 
 export type GeneralMessage = {
   id: string;
+  shopId?: string;
+  shopName?: string;
   type: 'text' | 'audio';
   text: string;
   createdAt: string;

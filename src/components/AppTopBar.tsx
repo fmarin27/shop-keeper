@@ -5,6 +5,7 @@ import { subscribeToJobs } from '../services/firebase/jobs';
 import { subscribeToLeads } from '../services/firebase/leads';
 import { subscribeToMaterials } from '../services/firebase/materials';
 import { subscribeToGeneralMessages } from '../services/firebase/messages';
+import { getActiveShopProfile } from '../services/firebase/shopProfile';
 import { syncUnreadWidgetCount } from '../services/platform/widgetBridge';
 import type {
   GeneralMessage,
@@ -53,6 +54,7 @@ function AppTopBar({
   const appMode: MessageAudienceMode =
     modeLabel === 'Manager' ? 'manager' : 'tech';
   const versionLabel = `v${packageJson.version}`;
+  const [shopProfile] = useState(() => getActiveShopProfile());
 
   const [jobs, setJobs] = useState<Job[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -265,6 +267,22 @@ function AppTopBar({
         <span
           style={{
             marginLeft: 'auto',
+            padding: mobile ? '5px 8px' : '6px 10px',
+            borderRadius: 999,
+            border: '1px solid rgba(147,197,253,0.28)',
+            background: 'rgba(15,23,42,0.28)',
+            fontSize: mobile ? 10 : isCompact ? 10 : 11,
+            fontWeight: 800,
+            color: 'rgba(226,232,240,0.84)',
+            letterSpacing: 0.3,
+          }}
+          title={`Cloud profile: ${shopProfile.id}`}
+        >
+          Shop: {shopProfile.name}
+        </span>
+
+        <span
+          style={{
             fontSize: mobile ? 10 : isCompact ? 10 : 11,
             fontWeight: 700,
             color: 'rgba(226,232,240,0.78)',

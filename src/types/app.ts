@@ -34,6 +34,12 @@ export type LocalAppSettings = {
   overlayX: number | null;
   overlayY: number | null;
   materialsManagerUnlocked: boolean;
+  activeShopId?: string;
+};
+
+export type ShopProfile = {
+  id: string;
+  name: string;
 };
 
 export type JobStatus =
@@ -119,6 +125,9 @@ export type EmsEstimateTotals = {
 
 export type Job = {
   id: string;
+  shopId?: string;
+  shopName?: string;
+  deletedAt?: string;
   vehicle: string;
   roNumber: string;
   customerName: string;
@@ -406,6 +415,8 @@ export type LeadPhoto = {
 
 export type Lead = {
   id: string;
+  shopId?: string;
+  shopName?: string;
   customerName: string;
   phoneNumber: string;
   vehicle: string;

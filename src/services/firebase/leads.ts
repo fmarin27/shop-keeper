@@ -10,20 +10,30 @@ import {
 } from 'firebase/firestore';
 import { db } from './config';
 import { deleteStorageFile, uploadLeadPhoto } from './storage';
+import { belongsToActiveShop, getActiveShopId, withActiveShopFields } from './shopProfile';
 import type { CreateLeadInput, Lead, LeadPhoto, LeadStatus, LeadUpdate } from '../../types/app';
 
 const leadsCollection = collection(db, 'leads');
+
+function leadDoc(leadId: string) {
+  return doc(db, 'leads', leadId);
+}
 
 export function subscribeToLeads(callback: (leads: Lead[]) => void) {
   const q = query(leadsCollection, orderBy('createdAt', 'desc'));
 
   return onSnapshot(q, (snapshot) => {
     callback(
-      snapshot.docs.map((snap) => {
+      snapshot.docs.flatMap((snap) => {
         const data = snap.data() as any;
+        if (!belongsToActiveShop(data)) {
+          return [];
+        }
 
         return {
           id: snap.id,
+          shopId: data.shopId ?? getActiveShopId(),
+          shopName: data.shopName ?? '',
           customerName: data.customerName ?? '',
           phoneNumber: data.phoneNumber ?? '',
           vehicle: data.vehicle ?? '',
@@ -48,7 +58,7 @@ export function subscribeToLeads(callback: (leads: Lead[]) => void) {
 }
 
 export async function createLead(input: CreateLeadInput) {
-  const leadRef = await addDoc(leadsCollection, {
+  const leadRef = await addDoc(leadsCollection, withActiveShopFields({
     customerName: input.customerName.trim(),
     phoneNumber: input.phoneNumber.trim(),
     vehicle: input.vehicle.trim(),
@@ -62,23 +72,23 @@ export async function createLead(input: CreateLeadInput) {
     photos: [],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 
   return leadRef.id;
 }
 
 export async function updateLeadStatus(leadId: string, status: LeadStatus) {
-  await updateDoc(doc(db, 'leads', leadId), {
+  await updateDoc(leadDoc(leadId), withActiveShopFields({
     status,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function updateLeadDetails(
   leadId: string,
   input: CreateLeadInput,
 ) {
-  await updateDoc(doc(db, 'leads', leadId), {
+  await updateDoc(leadDoc(leadId), withActiveShopFields({
     customerName: input.customerName.trim(),
     phoneNumber: input.phoneNumber.trim(),
     vehicle: input.vehicle.trim(),
@@ -89,7 +99,7 @@ export async function updateLeadDetails(
     status: input.status,
     notes: input.notes.trim(),
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function addLeadUpdate(lead: Lead, text: string) {
@@ -105,19 +115,19 @@ export async function addLeadUpdate(lead: Lead, text: string) {
     ...(lead.updates ?? []),
   ];
 
-  await updateDoc(doc(db, 'leads', lead.id), {
+  await updateDoc(leadDoc(lead.id), withActiveShopFields({
     updates: nextUpdates,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function deleteLeadUpdate(lead: Lead, updateId: string) {
   const nextUpdates = (lead.updates ?? []).filter((update) => update.id !== updateId);
 
-  await updateDoc(doc(db, 'leads', lead.id), {
+  await updateDoc(leadDoc(lead.id), withActiveShopFields({
     updates: nextUpdates,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function addPhotoToLead(
@@ -145,10 +155,10 @@ export async function addPhotoToLead(
     ...(lead.photos ?? []),
   ];
 
-  await updateDoc(doc(db, 'leads', lead.id), {
+  await updateDoc(leadDoc(lead.id), withActiveShopFields({
     photos: nextPhotos,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export async function deletePhotoFromLead(lead: Pick<Lead, 'id' | 'photos'>, photoId: string) {
@@ -159,8 +169,8 @@ export async function deletePhotoFromLead(lead: Pick<Lead, 'id' | 'photos'>, pho
 
   const nextPhotos = (lead.photos ?? []).filter((photo) => photo.id !== photoId);
 
-  await updateDoc(doc(db, 'leads', lead.id), {
+  await updateDoc(leadDoc(lead.id), withActiveShopFields({
     photos: nextPhotos,
     updatedAt: serverTimestamp(),
-  });
+  }));
 }

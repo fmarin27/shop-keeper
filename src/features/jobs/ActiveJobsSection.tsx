@@ -3428,8 +3428,7 @@ function getEstimatePartAmount(line: EstimateLineForDisplay) {
   const partPrice = Number(line.partPrice ?? 0);
   if (Number.isFinite(partPrice) && partPrice > 0) return partPrice;
 
-  const totalAmount = Number(line.totalAmount ?? 0);
-  return Number.isFinite(totalAmount) && totalAmount > 0 ? totalAmount : 0;
+  return 0;
 }
 
 function getOrderablePartsTotal(lines: EstimateLineForDisplay[]) {

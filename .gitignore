@@ -3,6 +3,7 @@ dist/
 dist-electron/
 .vite/
 release/
+backups/
 *.log
 android/keystore.properties
 android/app/*.jks

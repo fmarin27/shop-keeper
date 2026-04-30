@@ -7,3 +7,4 @@ release/
 android/keystore.properties
 android/app/*.jks
 android/app/*.keystore
+android/app/*upload-certificate.pem

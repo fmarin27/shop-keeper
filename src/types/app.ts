@@ -96,6 +96,10 @@ export type EmsEstimateLine = {
   paintAmount?: number;
   partPrice: number;
   totalAmount: number;
+  lineKind?: string;
+  operationLabel?: string;
+  isOrderablePart?: boolean;
+  isSublet?: boolean;
   partsStatus?: JobPartStatus | 'needed' | 'backordered' | 'notNeeded';
   rawFields?: Record<string, unknown>;
 };
@@ -232,6 +236,10 @@ export type EmsNormalizedLineItem = {
   paint_amount?: number | string;
   part_price?: number | string;
   total_amount?: number | string;
+  line_kind?: string;
+  operation_label?: string;
+  is_orderable_part?: boolean;
+  is_sublet?: boolean;
   raw_fields?: Record<string, unknown>;
 };
 

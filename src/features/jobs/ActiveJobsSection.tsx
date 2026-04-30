@@ -1785,7 +1785,7 @@ function EstimatePanel({
                 <tr key={line.id}>
                   <EstimateCell compact={compact}>{line.lineNumber || '-'}</EstimateCell>
                   <EstimateCell compact={compact}>
-                    {[line.operationCode, line.laborType, line.partType]
+                    {[line.operationLabel, line.lineKind, line.operationCode, line.laborType, line.partType]
                       .filter(Boolean)
                       .join(' / ') || '-'}
                   </EstimateCell>

@@ -296,12 +296,19 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
       paintAmount: toNumber(line.paint_amount),
       partPrice: toNumber(line.part_price) || toNumber(raw.ACT_PRICE),
       totalAmount: toNumber(line.total_amount),
+      lineKind: text(line.line_kind),
+      operationLabel: text(line.operation_label),
+      isOrderablePart: line.is_orderable_part === true,
+      isSublet: line.is_sublet === true,
       rawFields: raw,
     };
   });
 }
 
 function isPartCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
+  if (line.isOrderablePart) return true;
+  if (line.lineKind) return false;
+
   const description = text(line.description).toLowerCase();
   const partNumber = text(line.partNumber);
 
@@ -319,6 +326,8 @@ function isTruthyRawFlag(value: unknown) {
 }
 
 function isSubletCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
+  if (line.isSublet) return true;
+
   const raw = (line.rawFields ?? {}) as Record<string, unknown>;
   const description = text(line.description).toLowerCase();
   const partType = text(line.partType).toLowerCase();
@@ -337,25 +346,47 @@ function seedPartsFromEstimate(
   estimateLines: ReturnType<typeof mapEstimateLines>,
   existingParts: JobPartRequest[] | undefined,
 ) {
-  if (Array.isArray(existingParts) && existingParts.length) {
-    return existingParts;
-  }
+  const previousParts = Array.isArray(existingParts) ? existingParts : [];
+  const manualParts = previousParts.filter((part) => !isEmsSeededPart(part));
+  const previousEmsPartsById = new Map(
+    previousParts.filter(isEmsSeededPart).map((part) => [part.id, part]),
+  );
 
-  return estimateLines
+  const seededParts = estimateLines
     .filter((line) => isPartCandidate(line) || isSubletCandidate(line))
-    .map((line) => ({
-      id: `ems-part-${slug(line.id)}`,
-      kind: isSubletCandidate(line) ? 'sublet' as const : 'part' as const,
-      name: line.partNumber
-        ? `${line.description} (${line.partNumber})`
-        : line.description,
-      quantity: String(line.quantity || 1),
-      requestedBy: 'manager' as const,
-      status: 'requested' as const,
-      invoiceNumber: '',
-      note: `Seeded from EMS line ${line.lineNumber}. Verify ${isSubletCandidate(line) ? 'invoice/payment' : 'order status'}.`,
-      createdAt: new Date().toISOString(),
-    }));
+    .map((line) => {
+      const id = `ems-part-${slug(line.id)}`;
+      const previous = previousEmsPartsById.get(id);
+      const kind = isSubletCandidate(line) ? 'sublet' as const : 'part' as const;
+      const generatedNote = `Seeded from EMS line ${line.lineNumber}. Verify ${
+        kind === 'sublet' ? 'invoice/payment' : 'order status'
+      }.`;
+
+      return {
+        id,
+        kind,
+        name: line.partNumber
+          ? `${line.description} (${line.partNumber})`
+          : line.description,
+        quantity: String(line.quantity || 1),
+        requestedBy: previous?.requestedBy ?? ('manager' as const),
+        status: previous?.status ?? ('requested' as const),
+        invoiceNumber: previous?.invoiceNumber ?? '',
+        note: previous?.note?.trim() ? previous.note : generatedNote,
+        createdAt: previous?.createdAt ?? new Date().toISOString(),
+        ...(previous?.receivedAt ? { receivedAt: previous.receivedAt } : {}),
+        ...(previous?.paidAt ? { paidAt: previous.paidAt } : {}),
+      };
+    });
+
+  return [...manualParts, ...seededParts];
+}
+
+function isEmsSeededPart(part: JobPartRequest) {
+  return (
+    part.id.startsWith('ems-part-') ||
+    text(part.note).toLowerCase().startsWith('seeded from ems line')
+  );
 }
 
 function hasOpenParts(parts: JobPartRequest[]) {

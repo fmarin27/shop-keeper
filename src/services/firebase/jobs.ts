@@ -63,6 +63,17 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
       (snap, index) => {
         const data = snap.data() as any;
 
+        const estimateLines = Array.isArray(data.estimateLines)
+          ? (data.estimateLines as Job['estimateLines'])
+          : [];
+        const sourceSystem = data.sourceSystem ?? '';
+        const partsRequests = sanitizeEmsSeededParts(
+          Array.isArray(data.partsRequests)
+            ? (data.partsRequests as JobPartRequest[])
+            : [],
+          estimateLines,
+        );
+
         return {
           index,
           job: {
@@ -79,15 +90,13 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             status: data.status ?? 'notStarted',
             done: data.done ?? false,
             promiseDate: data.promiseDate ?? '',
-            partsWaiting: data.partsWaiting ?? false,
-            partsRequests: Array.isArray(data.partsRequests)
-              ? (data.partsRequests as JobPartRequest[])
-              : [],
+            partsWaiting: sourceSystem ? hasOpenParts(partsRequests) : data.partsWaiting ?? false,
+            partsRequests,
             textNotes: (data.textNotes ?? []) as JobNote[],
             photos: (data.photos ?? []) as JobPhoto[],
             sortOrder:
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
-            sourceSystem: data.sourceSystem ?? '',
+            sourceSystem,
             externalEstimateId: data.externalEstimateId ?? '',
             insuranceCompany: data.insuranceCompany ?? data.mitchellInsuranceCompany ?? '',
             claimNumber: data.claimNumber ?? data.mitchellClaimNumber ?? '',
@@ -98,9 +107,7 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicleVin: data.vehicleVin ?? '',
             vehicleColor: data.vehicleColor ?? '',
             estimateTotals: data.estimateTotals,
-            estimateLines: Array.isArray(data.estimateLines)
-              ? data.estimateLines
-              : [],
+            estimateLines,
             emsLineItemCount:
               typeof data.emsLineItemCount === 'number'
                 ? data.emsLineItemCount
@@ -389,6 +396,40 @@ function isEmsSeededPart(part: JobPartRequest) {
   );
 }
 
+function emsPartLineKey(part: JobPartRequest) {
+  if (!part.id.startsWith('ems-part-')) {
+    return '';
+  }
+
+  return part.id.slice('ems-part-'.length);
+}
+
+function sanitizeEmsSeededParts(
+  parts: JobPartRequest[],
+  estimateLines: Job['estimateLines'],
+) {
+  if (!estimateLines?.length || !parts.some(isEmsSeededPart)) {
+    return parts;
+  }
+
+  const linesByKey = new Map(
+    estimateLines.map((line) => [slug(line.id), line]),
+  );
+
+  return parts.filter((part) => {
+    if (!isEmsSeededPart(part)) {
+      return true;
+    }
+
+    const line = linesByKey.get(emsPartLineKey(part));
+    if (!line) {
+      return true;
+    }
+
+    return isPartCandidate(line) || isSubletCandidate(line);
+  });
+}
+
 function hasOpenParts(parts: JobPartRequest[]) {
   return parts.some(
     (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
@@ -447,9 +488,7 @@ export async function convertEmsRepairOrderToJob(
     status: existing?.status ?? 'notStarted',
     done: existing?.done ?? false,
     promiseDate: existing?.promiseDate ?? '',
-    partsWaiting:
-      existing?.partsWaiting ??
-      hasOpenParts(seededParts),
+    partsWaiting: hasOpenParts(seededParts),
     partsRequests: seededParts.map(toFirestorePartRequest),
     textNotes: existing?.textNotes ?? [],
     photos: existing?.photos ?? [],

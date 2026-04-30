@@ -860,7 +860,7 @@ function getPartItems(job: Job) {
 
 function getPartsOrderedLabel(job: Job) {
   const parts = getPartItems(job);
-  if (parts.length || job.partsWaiting || (job.estimateTotals?.partsTotal ?? 0) > 0) {
+  if (parts.length || job.partsWaiting) {
     return 'Yes';
   }
 

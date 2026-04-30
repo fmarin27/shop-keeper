@@ -322,11 +322,14 @@ type RoFolderJobRecord = {
     id: string;
     name: string;
     quantity: string;
+    kind?: string;
     requestedBy: string;
     status: string;
     note?: string;
+    invoiceNumber?: string;
     createdAt: string;
     receivedAt?: string;
+    paidAt?: string;
   }>;
   textNotes: Array<{
     id: string;
@@ -1734,13 +1737,19 @@ function buildJobNotesText(job: RoFolderJobRecord) {
     lines.push('No parts requests.');
   } else {
     job.partsRequests.forEach((part, index) => {
-      lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.status} | ${part.requestedBy}`);
+      lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.kind ?? 'part'} | ${part.status} | ${part.requestedBy}`);
+      if (part.invoiceNumber?.trim()) {
+        lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
+      }
       if (part.note?.trim()) {
         lines.push(`Note: ${part.note.trim()}`);
       }
       lines.push(`Created: ${new Date(part.createdAt).toLocaleString()}`);
       if (part.receivedAt) {
         lines.push(`Received: ${new Date(part.receivedAt).toLocaleString()}`);
+      }
+      if (part.paidAt) {
+        lines.push(`Paid: ${new Date(part.paidAt).toLocaleString()}`);
       }
       lines.push('');
     });

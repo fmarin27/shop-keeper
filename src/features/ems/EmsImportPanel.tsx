@@ -1,14 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { appBridge } from '../../services/platform/appBridge';
 import { convertEmsRepairOrderToJob } from '../../services/firebase/jobs';
 import type {
   EmsImportCandidate,
   EmsImportCandidatesSnapshot,
+  EmsNormalizedRepairOrder,
 } from '../../types/app';
 
 type EmsImportPanelProps = {
   compact?: boolean;
   mobile?: boolean;
+};
+
+type EmsImportDraft = {
+  roNumber: string;
+  customerName: string;
+  amount: string;
 };
 
 const DEFAULT_MESSAGE =
@@ -29,6 +36,7 @@ function EmsImportPanel({
   const [convertingEmsCandidateId, setConvertingEmsCandidateId] = useState<
     string | null
   >(null);
+  const [candidateDrafts, setCandidateDrafts] = useState<Record<string, EmsImportDraft>>({});
 
   const emsCandidateCount = emsCandidatesSnapshot?.candidates.length ?? 0;
   const isEmsImportBusy = loadingEmsCandidates || Boolean(convertingEmsCandidateId);
@@ -101,8 +109,12 @@ function EmsImportPanel({
 
     try {
       const conversion = await appBridge.convertEmsImportCandidate(candidate);
-      const result = await convertEmsRepairOrderToJob(
+      const repairOrder = applyEmsImportDraft(
         conversion.repairOrder,
+        getCandidateDraft(candidate, candidateDrafts),
+      );
+      const result = await convertEmsRepairOrderToJob(
+        repairOrder,
         conversion.selectedPath,
       );
 
@@ -275,6 +287,13 @@ function EmsImportPanel({
           onRefresh={() => {
             void refreshEmsCandidates();
           }}
+          candidateDrafts={candidateDrafts}
+          onCandidateDraftChange={(candidateId, draft) =>
+            setCandidateDrafts((current) => ({
+              ...current,
+              [candidateId]: draft,
+            }))
+          }
           onConvert={(candidate) => {
             void handleConvertEmsCandidate(candidate);
           }}
@@ -291,6 +310,8 @@ type EmsImportModalProps = {
   mobile: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  candidateDrafts: Record<string, EmsImportDraft>;
+  onCandidateDraftChange: (candidateId: string, draft: EmsImportDraft) => void;
   onConvert: (candidate: EmsImportCandidate) => void;
 };
 
@@ -301,11 +322,34 @@ function EmsImportModal({
   mobile,
   onClose,
   onRefresh,
+  candidateDrafts,
+  onCandidateDraftChange,
   onConvert,
 }: EmsImportModalProps) {
   const candidates = snapshot?.candidates ?? [];
   const sources = snapshot?.sources ?? [];
   const isConverting = Boolean(convertingCandidateId);
+  const [search, setSearch] = useState('');
+  const filteredCandidates = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return candidates;
+
+    return candidates.filter((candidate) =>
+      [
+        candidate.label,
+        candidate.familyId,
+        candidate.roNumber ?? '',
+        candidate.customerName ?? '',
+        candidate.vehicle ?? '',
+        candidate.insuranceCompany ?? '',
+        candidate.claimNumber ?? '',
+        candidate.primaryFile,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [candidates, search]);
 
   return (
     <div
@@ -479,7 +523,8 @@ function EmsImportModal({
                 fontWeight: 800,
               }}
             >
-              {candidates.length} EMS bundle{candidates.length === 1 ? '' : 's'}
+              {filteredCandidates.length} of {candidates.length} EMS bundle
+              {candidates.length === 1 ? '' : 's'}
             </div>
             <button
               type="button"
@@ -501,17 +546,35 @@ function EmsImportModal({
             </button>
           </div>
 
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search customer, RO, vehicle, insurance, claim, or EMS file..."
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              borderRadius: 14,
+              border: '1px solid rgba(148,163,184,0.26)',
+              background: 'rgba(15,23,42,0.78)',
+              color: '#f8fafc',
+              fontSize: 13,
+              fontWeight: 700,
+              padding: '12px 14px',
+              outline: 'none',
+            }}
+          />
+
           <div style={{ display: 'grid', gap: 10 }}>
-            {candidates.length ? (
-              candidates.map((candidate) => {
+            {filteredCandidates.length ? (
+              filteredCandidates.map((candidate) => {
                 const isCandidateConverting =
                   convertingCandidateId === candidate.id;
+                const draft = getCandidateDraft(candidate, candidateDrafts);
                 const customerName =
-                  candidate.customerName?.trim() || 'Customer not parsed';
+                  draft.customerName.trim() || candidate.customerName?.trim() || 'Customer not parsed';
                 const amountLabel =
-                  typeof candidate.amount === 'number' &&
-                  Number.isFinite(candidate.amount)
-                    ? formatCurrency(candidate.amount)
+                  draft.amount.trim() && !Number.isNaN(Number(draft.amount))
+                    ? formatCurrency(Number(draft.amount))
                     : 'Amount not parsed';
                 const vehicle = candidate.vehicle?.trim();
                 const claimDetail = candidate.claimNumber
@@ -628,6 +691,47 @@ function EmsImportModal({
                       >
                         {candidate.primaryFile}
                       </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: mobile
+                            ? '1fr'
+                            : 'minmax(120px, 0.7fr) minmax(160px, 1fr) minmax(110px, 0.6fr)',
+                          gap: 8,
+                          marginTop: 10,
+                        }}
+                      >
+                        <EditableImportField
+                          label="RO #"
+                          value={draft.roNumber}
+                          onChange={(value) =>
+                            onCandidateDraftChange(candidate.id, {
+                              ...draft,
+                              roNumber: value,
+                            })
+                          }
+                        />
+                        <EditableImportField
+                          label="Customer"
+                          value={draft.customerName}
+                          onChange={(value) =>
+                            onCandidateDraftChange(candidate.id, {
+                              ...draft,
+                              customerName: value,
+                            })
+                          }
+                        />
+                        <EditableImportField
+                          label="Amount"
+                          value={draft.amount}
+                          onChange={(value) =>
+                            onCandidateDraftChange(candidate.id, {
+                              ...draft,
+                              amount: value,
+                            })
+                          }
+                        />
+                      </div>
                     </div>
 
                     <button
@@ -668,6 +772,8 @@ function EmsImportModal({
               >
                 {loading
                   ? 'Scanning watched EMS folders...'
+                  : search.trim()
+                  ? 'No EMS bundles match that search.'
                   : 'No EMS bundles were found in the watched folders.'}
               </div>
             )}
@@ -676,6 +782,92 @@ function EmsImportModal({
       </div>
     </div>
   );
+}
+
+function EditableImportField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label style={{ display: 'grid', gap: 5 }}>
+      <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 900 }}>
+        {label}
+      </span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          borderRadius: 10,
+          border: '1px solid rgba(148,163,184,0.24)',
+          background: '#0f172a',
+          color: '#f8fafc',
+          fontSize: 12,
+          fontWeight: 750,
+          padding: '8px 9px',
+          outline: 'none',
+        }}
+      />
+    </label>
+  );
+}
+
+function getCandidateDraft(
+  candidate: EmsImportCandidate,
+  drafts: Record<string, EmsImportDraft>,
+): EmsImportDraft {
+  return (
+    drafts[candidate.id] ?? {
+      roNumber: candidate.roNumber ?? candidate.familyId,
+      customerName: candidate.customerName ?? '',
+      amount:
+        typeof candidate.amount === 'number' && Number.isFinite(candidate.amount)
+          ? String(candidate.amount)
+          : '',
+    }
+  );
+}
+
+function applyEmsImportDraft(
+  repairOrder: EmsNormalizedRepairOrder,
+  draft: EmsImportDraft,
+): EmsNormalizedRepairOrder {
+  const amount = draft.amount.trim() ? Number(draft.amount) : NaN;
+  const next: EmsNormalizedRepairOrder = {
+    ...repairOrder,
+    customer: {
+      ...(repairOrder.customer ?? {}),
+    },
+    totals: {
+      ...(repairOrder.totals ?? {}),
+    },
+  };
+
+  if (draft.roNumber.trim()) {
+    next.ro_number = draft.roNumber.trim();
+  }
+
+  if (draft.customerName.trim()) {
+    next.customer = {
+      ...(next.customer ?? {}),
+      full_name: draft.customerName.trim(),
+    };
+  }
+
+  if (Number.isFinite(amount) && amount >= 0) {
+    next.totals = {
+      ...(next.totals ?? {}),
+      grand_total: amount,
+    };
+  }
+
+  return next;
 }
 
 function formatCurrency(amount: number) {

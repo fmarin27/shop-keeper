@@ -44,11 +44,14 @@ function toFirestorePartRequest(part: JobPartRequest) {
     id: part.id,
     name: part.name,
     quantity: part.quantity,
+    kind: part.kind ?? 'part',
     requestedBy: part.requestedBy,
     status: part.status,
     note: part.note ?? '',
+    invoiceNumber: part.invoiceNumber ?? '',
     createdAt: part.createdAt,
     ...(part.receivedAt ? { receivedAt: part.receivedAt } : {}),
+    ...(part.paidAt ? { paidAt: part.paidAt } : {}),
   };
 }
 
@@ -273,6 +276,7 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
   return (Array.isArray(lines) ? lines : []).map((line, index) => {
     const lineNumber = firstText(line.line_number, index + 1);
     const partNumber = getLinePartNumber(line);
+    const raw = line.raw_fields ?? {};
 
     return {
       id: `ems-line-${slug(lineNumber)}-${index + 1}`,
@@ -290,8 +294,9 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
       laborAmount: toNumber(line.labor_amount),
       paintHours: toNumber(line.paint_hours),
       paintAmount: toNumber(line.paint_amount),
-      partPrice: toNumber(line.part_price),
+      partPrice: toNumber(line.part_price) || toNumber(raw.ACT_PRICE),
       totalAmount: toNumber(line.total_amount),
+      rawFields: raw,
     };
   });
 }
@@ -299,14 +304,33 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
 function isPartCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
   const description = text(line.description).toLowerCase();
   const partNumber = text(line.partNumber);
-  const partType = text(line.partType);
 
   if (!line.description && !partNumber) return false;
   if (description.includes('markup')) return false;
   if (description.includes('tow bill')) return false;
   if (description.includes('scan')) return false;
+  if (isSubletCandidate(line)) return false;
 
-  return Boolean(partNumber) || line.partPrice > 0 || /^pa/i.test(partType);
+  return line.partPrice > 0 && Boolean(partNumber);
+}
+
+function isTruthyRawFlag(value: unknown) {
+  return ['true', 'yes', '1', 'y'].includes(text(value).toLowerCase());
+}
+
+function isSubletCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
+  const raw = (line.rawFields ?? {}) as Record<string, unknown>;
+  const description = text(line.description).toLowerCase();
+  const partType = text(line.partType).toLowerCase();
+
+  return (
+    isTruthyRawFlag(raw.MISC_SUBLT) ||
+    partType.includes('sublet') ||
+    partType === 'sub' ||
+    description.includes('sublet') ||
+    description.includes('tow bill') ||
+    description.includes('towing')
+  );
 }
 
 function seedPartsFromEstimate(
@@ -318,18 +342,26 @@ function seedPartsFromEstimate(
   }
 
   return estimateLines
-    .filter(isPartCandidate)
+    .filter((line) => isPartCandidate(line) || isSubletCandidate(line))
     .map((line) => ({
       id: `ems-part-${slug(line.id)}`,
+      kind: isSubletCandidate(line) ? 'sublet' as const : 'part' as const,
       name: line.partNumber
         ? `${line.description} (${line.partNumber})`
         : line.description,
       quantity: String(line.quantity || 1),
       requestedBy: 'manager' as const,
       status: 'requested' as const,
-      note: `Seeded from EMS line ${line.lineNumber}. Verify order status.`,
+      invoiceNumber: '',
+      note: `Seeded from EMS line ${line.lineNumber}. Verify ${isSubletCandidate(line) ? 'invoice/payment' : 'order status'}.`,
       createdAt: new Date().toISOString(),
     }));
+}
+
+function hasOpenParts(parts: JobPartRequest[]) {
+  return parts.some(
+    (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
+  );
 }
 
 export async function convertEmsRepairOrderToJob(
@@ -386,7 +418,7 @@ export async function convertEmsRepairOrderToJob(
     promiseDate: existing?.promiseDate ?? '',
     partsWaiting:
       existing?.partsWaiting ??
-      seededParts.some((part) => part.status !== 'received'),
+      hasOpenParts(seededParts),
     partsRequests: seededParts.map(toFirestorePartRequest),
     textNotes: existing?.textNotes ?? [],
     photos: existing?.photos ?? [],
@@ -812,15 +844,37 @@ export async function updateJobDetails(
   jobId: string,
   input: UpdateJobDetailsInput,
 ) {
-  await updateDoc(doc(db, 'jobs', jobId), {
-    phoneNumber: input.phoneNumber.trim(),
-    status: input.status,
-    paintCode: input.paintCode.trim(),
-    amount: input.amount,
-    amountStatus: input.amountStatus,
-    promiseDate: input.promiseDate,
+  const payload: Record<string, unknown> = {
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  if (input.roNumber !== undefined) payload.roNumber = input.roNumber.trim();
+  if (input.customerName !== undefined) payload.customerName = input.customerName.trim();
+  if (input.vehicle !== undefined) payload.vehicle = input.vehicle.trim();
+  if (input.phoneNumber !== undefined) {
+    const phoneNumber = input.phoneNumber.trim();
+    payload.phoneNumber = phoneNumber;
+    payload.customerPhone = phoneNumber;
+  }
+  if (input.customerEmail !== undefined) payload.customerEmail = input.customerEmail.trim();
+  if (input.status !== undefined) payload.status = input.status;
+  if (input.paintCode !== undefined) payload.paintCode = input.paintCode.trim();
+  if (input.amount !== undefined) payload.amount = input.amount;
+  if (input.amountStatus !== undefined) payload.amountStatus = input.amountStatus;
+  if (input.promiseDate !== undefined) payload.promiseDate = input.promiseDate;
+  if (input.insuranceCompany !== undefined) {
+    const insuranceCompany = input.insuranceCompany.trim();
+    payload.insuranceCompany = insuranceCompany;
+    payload.mitchellInsuranceCompany = insuranceCompany;
+  }
+  if (input.claimNumber !== undefined) {
+    const claimNumber = input.claimNumber.trim();
+    payload.claimNumber = claimNumber;
+    payload.mitchellClaimNumber = claimNumber;
+  }
+  if (input.policyNumber !== undefined) payload.policyNumber = input.policyNumber.trim();
+
+  await updateDoc(doc(db, 'jobs', jobId), payload);
 }
 
 export async function markJobDone(jobId: string) {
@@ -1098,7 +1152,7 @@ export async function updateJobPartStatus(
       : part,
   );
 
-  const stillWaiting = nextPartsRequests.some((part) => part.status !== 'received');
+  const stillWaiting = hasOpenParts(nextPartsRequests);
 
   await updateDoc(doc(db, 'jobs', job.id), {
     partsWaiting: stillWaiting,
@@ -1129,9 +1183,54 @@ export async function saveJobPartNote(
   });
 }
 
+export async function saveJobPartInvoice(
+  job: Job,
+  partId: string,
+  invoiceNumber: string,
+) {
+  const trimmed = invoiceNumber.trim();
+  const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
+    part.id === partId
+      ? {
+          ...part,
+          invoiceNumber: trimmed,
+        }
+      : part,
+  );
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function markJobPartPaid(
+  job: Job,
+  partId: string,
+  invoiceNumber?: string,
+) {
+  const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
+    part.id === partId
+      ? {
+          ...part,
+          invoiceNumber:
+            invoiceNumber !== undefined
+              ? invoiceNumber.trim()
+              : part.invoiceNumber ?? '',
+          paidAt: new Date().toISOString(),
+        }
+      : part,
+  );
+
+  await updateDoc(doc(db, 'jobs', job.id), {
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function deleteJobPart(job: Job, partId: string) {
   const nextPartsRequests = (job.partsRequests ?? []).filter((part) => part.id !== partId);
-  const stillWaiting = nextPartsRequests.some((part) => part.status !== 'received');
+  const stillWaiting = hasOpenParts(nextPartsRequests);
 
   await updateDoc(doc(db, 'jobs', job.id), {
     partsWaiting: stillWaiting,

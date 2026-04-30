@@ -62,16 +62,20 @@ export type JobPhoto = {
 };
 
 export type JobPartStatus = 'requested' | 'ordered' | 'reorderNeeded' | 'received';
+export type JobPartKind = 'part' | 'sublet';
 
 export type JobPartRequest = {
   id: string;
   name: string;
   quantity: string;
+  kind?: JobPartKind;
   requestedBy: AppMode;
   status: JobPartStatus;
   note?: string;
+  invoiceNumber?: string;
   createdAt: string;
   receivedAt?: string;
+  paidAt?: string;
 };
 
 export type EmsEstimateLine = {
@@ -93,6 +97,7 @@ export type EmsEstimateLine = {
   partPrice: number;
   totalAmount: number;
   partsStatus?: JobPartStatus | 'needed' | 'backordered' | 'notNeeded';
+  rawFields?: Record<string, unknown>;
 };
 
 export type EmsEstimateTotals = {
@@ -168,12 +173,19 @@ export type CreateJobInput = {
 };
 
 export type UpdateJobDetailsInput = {
-  phoneNumber: string;
-  status: JobStatus;
-  paintCode: string;
-  amount: number;
-  amountStatus: AmountStatus;
-  promiseDate: string;
+  roNumber?: string;
+  customerName?: string;
+  vehicle?: string;
+  phoneNumber?: string;
+  customerEmail?: string;
+  status?: JobStatus;
+  paintCode?: string;
+  amount?: number;
+  amountStatus?: AmountStatus;
+  promiseDate?: string;
+  insuranceCompany?: string;
+  claimNumber?: string;
+  policyNumber?: string;
 };
 
 export type MitchellJobImport = {

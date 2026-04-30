@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { subscribeToJobs } from '../../services/firebase/jobs';
-import type { Job } from '../../types/app';
+import { subscribeToJobs, updateJobDetails } from '../../services/firebase/jobs';
+import type { AmountStatus, Job } from '../../types/app';
 import EmsImportPanel from '../ems/EmsImportPanel';
 
 type CommandCenterTabProps = {
@@ -10,6 +10,22 @@ type CommandCenterTabProps = {
 };
 
 type ViewFilter = 'active' | 'closed' | 'all';
+
+type CommandCenterDraft = {
+  roNumber: string;
+  customerName: string;
+  vehicle: string;
+  phoneNumber: string;
+  customerEmail: string;
+  insuranceCompany: string;
+  claimNumber: string;
+  policyNumber: string;
+  paintCode: string;
+  amount: string;
+  amountStatus: AmountStatus;
+  promiseDate: string;
+  status: Job['status'];
+};
 
 function CommandCenterTab({
   compact = false,
@@ -20,6 +36,9 @@ function CommandCenterTab({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Job['status']>('all');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('active');
+  const [detailDraft, setDetailDraft] = useState<CommandCenterDraft | null>(null);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToJobs((items) => {
@@ -80,6 +99,68 @@ function CommandCenterTab({
   const closedCount = jobs.filter((job) => job.done).length;
   const supplementCount = jobs.filter((job) => job.status === 'supplementNeeded').length;
   const appraiserCount = jobs.filter((job) => job.status === 'waitingOnAppraiser').length;
+
+  useEffect(() => {
+    if (!selectedJob) {
+      setDetailDraft(null);
+      setDetailError(null);
+      return;
+    }
+
+    setDetailDraft({
+      roNumber: selectedJob.roNumber,
+      customerName: selectedJob.customerName,
+      vehicle: selectedJob.vehicle,
+      phoneNumber: selectedJob.phoneNumber,
+      customerEmail: selectedJob.customerEmail ?? '',
+      insuranceCompany:
+        selectedJob.insuranceCompany || selectedJob.mitchellInsuranceCompany || '',
+      claimNumber: selectedJob.claimNumber || selectedJob.mitchellClaimNumber || '',
+      policyNumber: selectedJob.policyNumber ?? '',
+      paintCode: selectedJob.paintCode,
+      amount: String(selectedJob.amount ?? 0),
+      amountStatus: selectedJob.amountStatus,
+      promiseDate: selectedJob.promiseDate,
+      status: selectedJob.status,
+    });
+    setDetailError(null);
+  }, [selectedJob?.id]);
+
+  const saveSelectedJobDetails = async () => {
+    if (!selectedJob || !detailDraft) return;
+
+    const amount = Number(detailDraft.amount);
+    if (Number.isNaN(amount) || amount < 0) {
+      setDetailError('Amount must be a valid number.');
+      return;
+    }
+
+    try {
+      setSavingDetails(true);
+      setDetailError(null);
+      await updateJobDetails(selectedJob.id, {
+        roNumber: detailDraft.roNumber,
+        customerName: detailDraft.customerName,
+        vehicle: detailDraft.vehicle,
+        phoneNumber: detailDraft.phoneNumber,
+        customerEmail: detailDraft.customerEmail,
+        insuranceCompany: detailDraft.insuranceCompany,
+        claimNumber: detailDraft.claimNumber,
+        policyNumber: detailDraft.policyNumber,
+        paintCode: detailDraft.paintCode,
+        amount,
+        amountStatus: detailDraft.amountStatus,
+        promiseDate: detailDraft.promiseDate,
+        status: detailDraft.status,
+      });
+    } catch (error) {
+      setDetailError(
+        error instanceof Error ? error.message : 'Could not save RO details.',
+      );
+    } finally {
+      setSavingDetails(false);
+    }
+  };
 
   return (
     <section
@@ -210,7 +291,7 @@ function CommandCenterTab({
                 style={{
                   width: '100%',
                   borderCollapse: 'collapse',
-                  minWidth: 1060,
+                  minWidth: 1120,
                 }}
               >
                 <thead>
@@ -226,6 +307,7 @@ function CommandCenterTab({
                       'Claim',
                       'Status',
                       'Parts',
+                      'P%',
                     ].map((label) => (
                       <th key={label} style={tableHeaderStyle()}>
                         {label}
@@ -268,22 +350,23 @@ function CommandCenterTab({
                           </td>
                           <td style={tableCellStyle(isSelected)}>{formatCurrency(job.amount)}</td>
                           <td style={tableCellStyle(isSelected)}>{formatDate(job.promiseDate)}</td>
-                          <td style={tableCellStyle(isSelected)}>{job.mitchellInsuranceCompany || '-'}</td>
-                          <td style={tableCellStyle(isSelected)}>{job.mitchellClaimNumber || '-'}</td>
+                          <td style={tableCellStyle(isSelected)}>{job.insuranceCompany || job.mitchellInsuranceCompany || '-'}</td>
+                          <td style={tableCellStyle(isSelected)}>{job.claimNumber || job.mitchellClaimNumber || '-'}</td>
                           <td style={tableCellStyle(isSelected)}>
                             <span style={statusPillStyle(job.status, job.done)}>{formatStatus(job.status, job.done)}</span>
                           </td>
                           <td style={tableCellStyle(isSelected)}>
-                            {(job.partsRequests ?? []).some((part) => part.status !== 'received')
-                              ? 'Open'
-                              : 'Clear'}
+                            {getPartsOrderedLabel(job)}
+                          </td>
+                          <td style={tableCellStyle(isSelected)}>
+                            {getPartsReceivedPercent(job)}
                           </td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td colSpan={10} style={{ padding: 24, color: '#c9d7ea', textAlign: 'center' }}>
+                      <td colSpan={11} style={{ padding: 24, color: '#c9d7ea', textAlign: 'center' }}>
                         No repair orders match these filters.
                       </td>
                     </tr>
@@ -320,8 +403,8 @@ function CommandCenterTab({
 
                 <div style={{ display: 'grid', gap: 10 }}>
                   <DetailRow label="Phone" value={selectedJob.phoneNumber || 'Not set'} />
-                  <DetailRow label="Insurance" value={selectedJob.mitchellInsuranceCompany || 'Not set'} />
-                  <DetailRow label="Claim" value={selectedJob.mitchellClaimNumber || 'Not set'} />
+                  <DetailRow label="Insurance" value={selectedJob.insuranceCompany || selectedJob.mitchellInsuranceCompany || 'Not set'} />
+                  <DetailRow label="Claim" value={selectedJob.claimNumber || selectedJob.mitchellClaimNumber || 'Not set'} />
                   <DetailRow label="Estimator" value={selectedJob.mitchellEstimatorName || 'Not set'} />
                   <DetailRow label="Lead Tech" value={selectedJob.mitchellLeadTechName || 'Not set'} />
                   <DetailRow label="Department" value={selectedJob.mitchellDepartmentName || 'Not set'} />
@@ -343,9 +426,171 @@ function CommandCenterTab({
                   />
                   <DetailRow
                     label="Parts"
-                    value={`${selectedJob.partsRequests.length} requests`}
+                    value={`${getPartsOrderedLabel(selectedJob)} / ${getPartsReceivedPercent(selectedJob)} received`}
                   />
                 </div>
+
+                {detailDraft ? (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      borderRadius: 16,
+                      border: '1px solid rgba(148,163,184,0.18)',
+                      background: 'rgba(15,23,42,0.46)',
+                      padding: 14,
+                      display: 'grid',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ color: '#d5e3f5', fontWeight: 900, fontSize: 13 }}>
+                      Edit RO Info
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: mobile ? '1fr' : '1fr 1fr',
+                        gap: 10,
+                      }}
+                    >
+                      <EditField
+                        label="RO #"
+                        value={detailDraft.roNumber}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, roNumber: value })
+                        }
+                      />
+                      <EditField
+                        label="Customer"
+                        value={detailDraft.customerName}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, customerName: value })
+                        }
+                      />
+                      <EditField
+                        label="Vehicle"
+                        value={detailDraft.vehicle}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, vehicle: value })
+                        }
+                      />
+                      <EditField
+                        label="Phone"
+                        value={detailDraft.phoneNumber}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, phoneNumber: value })
+                        }
+                      />
+                      <EditField
+                        label="Email"
+                        value={detailDraft.customerEmail}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, customerEmail: value })
+                        }
+                      />
+                      <EditField
+                        label="Insurance"
+                        value={detailDraft.insuranceCompany}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, insuranceCompany: value })
+                        }
+                      />
+                      <EditField
+                        label="Claim"
+                        value={detailDraft.claimNumber}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, claimNumber: value })
+                        }
+                      />
+                      <EditField
+                        label="Policy"
+                        value={detailDraft.policyNumber}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, policyNumber: value })
+                        }
+                      />
+                      <EditField
+                        label="Paint Code"
+                        value={detailDraft.paintCode}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, paintCode: value })
+                        }
+                      />
+                      <EditField
+                        label="Amount"
+                        value={detailDraft.amount}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, amount: value })
+                        }
+                      />
+                      <label style={{ display: 'grid', gap: 6 }}>
+                        <span style={editLabelStyle()}>Status</span>
+                        <select
+                          value={detailDraft.status}
+                          onChange={(event) =>
+                            setDetailDraft({
+                              ...detailDraft,
+                              status: event.target.value as Job['status'],
+                            })
+                          }
+                          style={editInputStyle()}
+                        >
+                          <option value="notStarted">Not Started</option>
+                          <option value="inProgress">In Progress</option>
+                          <option value="waiting">Waiting</option>
+                          <option value="waitingOnAppraiser">Waiting on Appraiser</option>
+                          <option value="supplementNeeded">Supplement Needed</option>
+                          <option value="done">Done</option>
+                        </select>
+                      </label>
+                      <label style={{ display: 'grid', gap: 6 }}>
+                        <span style={editLabelStyle()}>Final</span>
+                        <select
+                          value={detailDraft.amountStatus}
+                          onChange={(event) =>
+                            setDetailDraft({
+                              ...detailDraft,
+                              amountStatus: event.target.value as AmountStatus,
+                            })
+                          }
+                          style={editInputStyle()}
+                        >
+                          <option value="notFinal">Not Final</option>
+                          <option value="final">Final</option>
+                        </select>
+                      </label>
+                      <EditField
+                        label="Promise Date"
+                        type="date"
+                        value={detailDraft.promiseDate}
+                        onChange={(value) =>
+                          setDetailDraft({ ...detailDraft, promiseDate: value })
+                        }
+                      />
+                    </div>
+                    {detailError ? (
+                      <div style={{ color: '#fecaca', fontWeight: 800, fontSize: 12 }}>
+                        {detailError}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void saveSelectedJobDetails()}
+                      disabled={savingDetails}
+                      style={{
+                        border: '1px solid rgba(96,165,250,0.45)',
+                        background: savingDetails ? 'rgba(51,65,85,0.92)' : '#1d4ed8',
+                        color: '#eff6ff',
+                        fontWeight: 900,
+                        fontSize: 13,
+                        padding: '10px 12px',
+                        borderRadius: 12,
+                        cursor: savingDetails ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {savingDetails ? 'Saving...' : 'Save RO Info'}
+                    </button>
+                  </div>
+                ) : null}
               </>
             ) : (
               <div style={{ color: '#d4dfef' }}>Select a repair order to inspect the detail panel.</div>
@@ -354,6 +599,30 @@ function CommandCenterTab({
         </div>
       </div>
     </section>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+}) {
+  return (
+    <label style={{ display: 'grid', gap: 6 }}>
+      <span style={editLabelStyle()}>{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        style={editInputStyle()}
+      />
+    </label>
   );
 }
 
@@ -452,6 +721,29 @@ function filterSelectStyle(): CSSProperties {
     color: '#f8fbff',
     padding: '10px 12px',
     fontSize: 14,
+    fontWeight: 700,
+    outline: 'none',
+  };
+}
+
+function editLabelStyle(): CSSProperties {
+  return {
+    color: '#93a8c3',
+    fontSize: 11,
+    fontWeight: 900,
+  };
+}
+
+function editInputStyle(): CSSProperties {
+  return {
+    width: '100%',
+    boxSizing: 'border-box',
+    borderRadius: 10,
+    border: '1px solid rgba(148,163,184,0.24)',
+    background: '#0f172a',
+    color: '#f8fbff',
+    padding: '9px 10px',
+    fontSize: 13,
     fontWeight: 700,
     outline: 'none',
   };
@@ -560,6 +852,29 @@ function formatDate(value: string) {
   }
 
   return parsed.toLocaleDateString();
+}
+
+function getPartItems(job: Job) {
+  return (job.partsRequests ?? []).filter((part) => (part.kind ?? 'part') === 'part');
+}
+
+function getPartsOrderedLabel(job: Job) {
+  const parts = getPartItems(job);
+  if (parts.length || job.partsWaiting || (job.estimateTotals?.partsTotal ?? 0) > 0) {
+    return 'Yes';
+  }
+
+  return 'No';
+}
+
+function getPartsReceivedPercent(job: Job) {
+  const parts = getPartItems(job);
+  if (!parts.length) {
+    return job.partsWaiting ? '0' : '100';
+  }
+
+  const received = parts.filter((part) => part.status === 'received').length;
+  return String(Math.round((received / parts.length) * 100));
 }
 
 function sanitizePhoneNumber(value: string) {

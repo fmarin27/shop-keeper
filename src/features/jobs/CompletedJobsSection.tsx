@@ -1015,7 +1015,9 @@ function textAreaStyle(): React.CSSProperties {
 function hasPartsWaiting(job: Job) {
   return (
     job.partsWaiting ||
-    (job.partsRequests ?? []).some((part) => part.status !== 'received')
+    (job.partsRequests ?? []).some(
+      (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
+    )
   );
 }
 
@@ -1032,7 +1034,12 @@ function getPartsReceiptSummary(job: Job) {
     return job.partsWaiting ? 'No parts listed yet' : 'No parts needed';
   }
 
-  const receivedCount = job.partsRequests.filter(
+  const parts = job.partsRequests.filter((part) => (part.kind ?? 'part') === 'part');
+  if (!parts.length) {
+    return job.partsWaiting ? 'No parts listed yet' : 'No parts needed';
+  }
+
+  const receivedCount = parts.filter(
     (part) => part.status === 'received',
   ).length;
 
@@ -1040,7 +1047,7 @@ function getPartsReceiptSummary(job: Job) {
     return 'No parts are in';
   }
 
-  if (receivedCount === job.partsRequests.length) {
+  if (receivedCount === parts.length) {
     return 'All parts are in';
   }
 

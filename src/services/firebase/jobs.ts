@@ -54,6 +54,8 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             vehicle: data.vehicle ?? '',
             roNumber: data.roNumber ?? '',
             customerName: data.customerName ?? '',
+            customerPhone: data.customerPhone ?? '',
+            customerEmail: data.customerEmail ?? '',
             paintCode: data.paintCode ?? '',
             amount: data.amount ?? 0,
             amountStatus: data.amountStatus ?? 'notFinal',
@@ -68,6 +70,25 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
             photos: (data.photos ?? []) as JobPhoto[],
             sortOrder:
               typeof data.sortOrder === 'number' ? data.sortOrder : undefined,
+            sourceSystem: data.sourceSystem ?? '',
+            externalEstimateId: data.externalEstimateId ?? '',
+            insuranceCompany: data.insuranceCompany ?? '',
+            claimNumber: data.claimNumber ?? '',
+            policyNumber: data.policyNumber ?? '',
+            vehicleYear: data.vehicleYear ?? '',
+            vehicleMake: data.vehicleMake ?? '',
+            vehicleModel: data.vehicleModel ?? '',
+            vehicleVin: data.vehicleVin ?? '',
+            vehicleColor: data.vehicleColor ?? '',
+            estimateTotals: data.estimateTotals,
+            estimateLines: Array.isArray(data.estimateLines)
+              ? data.estimateLines
+              : [],
+            emsLineItemCount:
+              typeof data.emsLineItemCount === 'number'
+                ? data.emsLineItemCount
+                : undefined,
+            lastEmsSyncAt: data.lastEmsSyncAt ?? '',
           },
         };
       },

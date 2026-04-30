@@ -99,6 +99,20 @@ function AppTopBar({
     return materialsUnread + messagesUnread;
   }, [materials, messages]);
 
+  const partsUnreadCount = useMemo(
+    () =>
+      jobs.reduce(
+        (count, job) =>
+          count +
+          (job.done
+            ? 0
+            : (job.partsRequests ?? []).filter((part) => part.status !== 'received').length +
+              (job.partsWaiting && !(job.partsRequests ?? []).length ? 1 : 0)),
+        0,
+      ),
+    [jobs],
+  );
+
   const attentionItems = useMemo(() => {
     const jobNoteItems = jobs.flatMap((job) =>
       job.textNotes
@@ -256,6 +270,7 @@ function AppTopBar({
           mobile={mobile}
           showLeads={modeLabel === 'Manager'}
           jobsUnreadCount={jobsUnreadCount}
+          partsUnreadCount={partsUnreadCount}
           materialsMessagesUnreadCount={materialsMessagesUnreadCount}
           leadsCount={leads.filter((lead) => lead.status !== 'won' && lead.status !== 'lost').length}
         />

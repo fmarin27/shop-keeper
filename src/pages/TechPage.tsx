@@ -2,6 +2,7 @@ import type { DisplayMode, MainTab, OverlayFocusTarget } from '../types/app';
 import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
+import PartsTab from '../features/parts/PartsTab';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 type TechPageProps = {
@@ -79,6 +80,16 @@ function TechPage({
             appMode="tech"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
             onFocusedJobHandled={onOverlayFocusHandled}
+          />
+        ) : selectedTab === 'parts' ? (
+          <PartsTab
+            appMode="tech"
+            compact={isCompact || isMobile}
+            mobile={isMobile}
+            onOpenJob={(jobId) => {
+              onTabChange('jobs');
+              onOpenAttentionJob(jobId);
+            }}
           />
         ) : (
           <MaterialsMessagesTab

@@ -3,6 +3,7 @@ import AppTopBar from '../components/AppTopBar';
 import JobsTab from '../features/jobs/JobsTab';
 import LeadsTab from '../features/leads/LeadsTab';
 import MaterialsMessagesTab from '../features/messages/MaterialsMessagesTab';
+import PartsTab from '../features/parts/PartsTab';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 type ManagerPageProps = {
@@ -80,6 +81,16 @@ function ManagerPage({
             appMode="manager"
             focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
             onFocusedJobHandled={onOverlayFocusHandled}
+          />
+        ) : selectedTab === 'parts' ? (
+          <PartsTab
+            appMode="manager"
+            compact={isCompact || isMobile}
+            mobile={isMobile}
+            onOpenJob={(jobId) => {
+              onTabChange('jobs');
+              onOpenAttentionJob(jobId);
+            }}
           />
         ) : selectedTab === 'leads' ? (
           <LeadsTab compact={isCompact || isMobile} />

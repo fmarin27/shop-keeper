@@ -2,7 +2,7 @@ export type AppMode = 'manager' | 'tech';
 
 export type DisplayMode = 'normal' | 'compact' | 'overlay';
 
-export type MainTab = 'jobs' | 'materialsMessages' | 'leads';
+export type MainTab = 'jobs' | 'parts' | 'materialsMessages' | 'leads';
 
 export type OverlayFocusTarget =
   | {
@@ -60,11 +60,43 @@ export type JobPartRequest = {
   receivedAt?: string;
 };
 
+export type EmsEstimateLine = {
+  id: string;
+  lineNumber: string;
+  sourceFile?: string;
+  operationCode: string;
+  operationCategory: string;
+  partType: string;
+  partNumber: string;
+  description: string;
+  quantity: number;
+  laborType: string;
+  laborHours: number;
+  laborRate?: number;
+  laborAmount: number;
+  paintHours?: number;
+  paintAmount?: number;
+  partPrice: number;
+  totalAmount: number;
+  partsStatus?: JobPartStatus | 'needed' | 'backordered' | 'notNeeded';
+};
+
+export type EmsEstimateTotals = {
+  bodyLaborHours: number;
+  refinishLaborHours: number;
+  mechanicalLaborHours: number;
+  paintMaterials: number;
+  partsTotal: number;
+  grandTotal: number;
+};
+
 export type Job = {
   id: string;
   vehicle: string;
   roNumber: string;
   customerName: string;
+  customerPhone?: string;
+  customerEmail?: string;
   paintCode: string;
   amount: number;
   amountStatus: AmountStatus;
@@ -76,6 +108,20 @@ export type Job = {
   textNotes: JobNote[];
   photos: JobPhoto[];
   sortOrder?: number;
+  sourceSystem?: string;
+  externalEstimateId?: string;
+  insuranceCompany?: string;
+  claimNumber?: string;
+  policyNumber?: string;
+  vehicleYear?: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleVin?: string;
+  vehicleColor?: string;
+  estimateTotals?: EmsEstimateTotals;
+  estimateLines?: EmsEstimateLine[];
+  emsLineItemCount?: number;
+  lastEmsSyncAt?: string;
 };
 
 export type CreateJobInput = {

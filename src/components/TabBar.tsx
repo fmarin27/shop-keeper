@@ -7,6 +7,7 @@ type TabBarProps = {
   mobile?: boolean;
   showLeads?: boolean;
   jobsUnreadCount?: number;
+  partsUnreadCount?: number;
   materialsMessagesUnreadCount?: number;
   leadsCount?: number;
 };
@@ -45,6 +46,7 @@ function TabBar({
   mobile = false,
   showLeads = false,
   jobsUnreadCount = 0,
+  partsUnreadCount = 0,
   materialsMessagesUnreadCount = 0,
   leadsCount = 0,
 }: TabBarProps) {
@@ -68,6 +70,15 @@ function TabBar({
         mobile={mobile}
         unreadCount={jobsUnreadCount}
         onClick={() => onTabChange('jobs')}
+      />
+
+      <TabButton
+        label="Parts"
+        active={selectedTab === 'parts'}
+        compact={compact}
+        mobile={mobile}
+        unreadCount={partsUnreadCount}
+        onClick={() => onTabChange('parts')}
       />
 
       <TabButton

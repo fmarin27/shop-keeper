@@ -5,7 +5,9 @@ export const MANAGER_MODE_PASSWORD = '1981';
 
 export const TAB_LABELS = {
   jobs: 'Jobs',
+  parts: 'Parts',
   materialsMessages: 'Materials & Messages',
+  leads: 'Leads',
 } as const;
 
 export const MODE_LABELS = {

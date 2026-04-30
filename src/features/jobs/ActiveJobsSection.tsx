@@ -718,6 +718,24 @@ function ActiveJobsSection({
                     </InfoPill>
                   ) : null}
 
+                  {job.claimNumber ? (
+                    <InfoPill compact={compact}>
+                      Claim: {job.claimNumber}
+                    </InfoPill>
+                  ) : null}
+
+                  {job.insuranceCompany ? (
+                    <InfoPill compact={compact}>
+                      Insurer: {job.insuranceCompany}
+                    </InfoPill>
+                  ) : null}
+
+                  {job.sourceSystem ? (
+                    <InfoPill compact={compact}>
+                      {job.sourceSystem} estimate
+                    </InfoPill>
+                  ) : null}
+
                   {hasPartsWaiting ? (
                     <InfoPill compact={compact} highlight>
                       {getPartsWorkflowSummary(job)}
@@ -768,11 +786,60 @@ function ActiveJobsSection({
                       value={job.customerName}
                       compact={narrowLayout}
                     />
+                    {job.customerPhone ? (
+                      <DetailBox
+                        label="Phone"
+                        value={job.customerPhone}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
+                    {job.customerEmail ? (
+                      <DetailBox
+                        label="Email"
+                        value={job.customerEmail}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
                     <DetailBox
                       label="Paint Code"
                       value={job.paintCode || 'Not set'}
                       compact={narrowLayout}
                     />
+                    {job.vehicleVin ? (
+                      <DetailBox
+                        label="VIN"
+                        value={job.vehicleVin}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
+                    {job.vehicleColor ? (
+                      <DetailBox
+                        label="Vehicle Color"
+                        value={job.vehicleColor}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
+                    {job.insuranceCompany ? (
+                      <DetailBox
+                        label="Insurance"
+                        value={job.insuranceCompany}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
+                    {job.claimNumber ? (
+                      <DetailBox
+                        label="Claim Number"
+                        value={job.claimNumber}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
+                    {job.policyNumber ? (
+                      <DetailBox
+                        label="Policy Number"
+                        value={job.policyNumber}
+                        compact={narrowLayout}
+                      />
+                    ) : null}
                     <DetailBox
                       label="Amount"
                       value={`${formatAmount(job.amount)} - ${
@@ -845,6 +912,13 @@ function ActiveJobsSection({
                         onSave={() => handleSaveJobDetails(job)}
                       />
 
+                      <SectionDivider />
+                    </>
+                  ) : null}
+
+                  {hasEmsEstimate(job) ? (
+                    <>
+                      <EstimatePanel job={job} compact={narrowLayout} />
                       <SectionDivider />
                     </>
                   ) : null}
@@ -1354,6 +1428,258 @@ function JobDetailsEditor({
         </ActionButton>
       </div>
     </div>
+  );
+}
+
+function EstimatePanel({
+  job,
+  compact,
+}: {
+  job: Job;
+  compact: boolean;
+}) {
+  const totals = job.estimateTotals;
+  const lines = job.estimateLines ?? [];
+  const visibleLines = lines.filter(
+    (line) => line.description || line.partNumber || line.totalAmount !== 0,
+  );
+
+  return (
+    <div
+      style={{
+        borderRadius: compact ? 14 : 16,
+        padding: compact ? 12 : 14,
+        background: 'rgba(22,34,57,0.98)',
+        border: '2px solid rgba(148,163,184,0.28)',
+        display: 'grid',
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <SectionLabel title="EMS Estimate" tone="violet" compact={compact} />
+        <span
+          style={{
+            color: '#cbd5e1',
+            fontSize: compact ? 11 : 12,
+            fontWeight: 800,
+          }}
+        >
+          {job.sourceSystem || 'EMS'} {job.externalEstimateId || job.roNumber}
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: compact ? '1fr 1fr' : 'repeat(6, minmax(0, 1fr))',
+          gap: compact ? 8 : 10,
+        }}
+      >
+        <EstimateMetric
+          label="Total"
+          value={formatAmount(totals?.grandTotal ?? job.amount)}
+          compact={compact}
+        />
+        <EstimateMetric
+          label="Parts"
+          value={formatAmount(totals?.partsTotal ?? 0)}
+          compact={compact}
+        />
+        <EstimateMetric
+          label="Paint Materials"
+          value={formatAmount(totals?.paintMaterials ?? 0)}
+          compact={compact}
+        />
+        <EstimateMetric
+          label="Body Labor"
+          value={formatHours(totals?.bodyLaborHours)}
+          compact={compact}
+        />
+        <EstimateMetric
+          label="Refinish"
+          value={formatHours(totals?.refinishLaborHours)}
+          compact={compact}
+        />
+        <EstimateMetric
+          label="Mechanical"
+          value={formatHours(totals?.mechanicalLaborHours)}
+          compact={compact}
+        />
+      </div>
+
+      {visibleLines.length ? (
+        <div
+          style={{
+            overflowX: 'auto',
+            borderRadius: compact ? 12 : 14,
+            border: '1px solid rgba(148,163,184,0.2)',
+          }}
+        >
+          <table
+            style={{
+              width: '100%',
+              minWidth: compact ? 720 : 0,
+              borderCollapse: 'collapse',
+              color: '#e5e7eb',
+              fontSize: compact ? 11 : 12,
+            }}
+          >
+            <thead>
+              <tr>
+                <EstimateHeaderCell compact={compact}>Line</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Operation</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Description</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Part #</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Labor</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Parts</EstimateHeaderCell>
+                <EstimateHeaderCell compact={compact}>Total</EstimateHeaderCell>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleLines.map((line) => (
+                <tr key={line.id}>
+                  <EstimateCell compact={compact}>{line.lineNumber || '-'}</EstimateCell>
+                  <EstimateCell compact={compact}>
+                    {[line.operationCode, line.laborType, line.partType]
+                      .filter(Boolean)
+                      .join(' / ') || '-'}
+                  </EstimateCell>
+                  <EstimateCell compact={compact} strong>
+                    {line.description || '-'}
+                  </EstimateCell>
+                  <EstimateCell compact={compact}>{line.partNumber || '-'}</EstimateCell>
+                  <EstimateCell compact={compact}>
+                    {formatHours(line.laborHours)} / {formatAmount(line.laborAmount)}
+                  </EstimateCell>
+                  <EstimateCell compact={compact}>
+                    {line.quantity ? `${line.quantity} x ` : ''}
+                    {formatAmount(line.partPrice)}
+                  </EstimateCell>
+                  <EstimateCell compact={compact}>
+                    {formatAmount(line.totalAmount)}
+                  </EstimateCell>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div
+          style={{
+            color: '#b8c7da',
+            fontSize: compact ? 12 : 13,
+            fontWeight: 700,
+          }}
+        >
+          EMS summary is synced, but no estimate lines are available yet.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EstimateMetric({
+  label,
+  value,
+  compact,
+}: {
+  label: string;
+  value: string;
+  compact: boolean;
+}) {
+  return (
+    <div
+      style={{
+        borderRadius: compact ? 12 : 14,
+        border: '1px solid rgba(148,163,184,0.18)',
+        background: 'rgba(15,23,42,0.55)',
+        padding: compact ? 9 : 11,
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          color: '#94a3b8',
+          fontSize: compact ? 10 : 11,
+          fontWeight: 900,
+          textTransform: 'uppercase',
+          letterSpacing: 0,
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          color: '#f8fafc',
+          fontSize: compact ? 13 : 15,
+          fontWeight: 900,
+          overflowWrap: 'anywhere',
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function EstimateHeaderCell({
+  children,
+  compact,
+}: {
+  children: React.ReactNode;
+  compact: boolean;
+}) {
+  return (
+    <th
+      style={{
+        textAlign: 'left',
+        color: '#93a4ba',
+        fontSize: compact ? 10 : 11,
+        fontWeight: 900,
+        textTransform: 'uppercase',
+        letterSpacing: 0,
+        padding: compact ? '8px 9px' : '10px 11px',
+        background: 'rgba(15,23,42,0.82)',
+        borderBottom: '1px solid rgba(148,163,184,0.18)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function EstimateCell({
+  children,
+  compact,
+  strong = false,
+}: {
+  children: React.ReactNode;
+  compact: boolean;
+  strong?: boolean;
+}) {
+  return (
+    <td
+      style={{
+        padding: compact ? '8px 9px' : '10px 11px',
+        borderBottom: '1px solid rgba(148,163,184,0.12)',
+        color: strong ? '#f8fafc' : '#d6dfeb',
+        fontWeight: strong ? 800 : 650,
+        verticalAlign: 'top',
+        overflowWrap: 'anywhere',
+      }}
+    >
+      {children}
+    </td>
   );
 }
 
@@ -2242,6 +2568,15 @@ function getHasPartsWaiting(job: Job) {
   );
 }
 
+function hasEmsEstimate(job: Job) {
+  return Boolean(
+    job.sourceSystem ||
+      job.estimateTotals ||
+      job.emsLineItemCount ||
+      (job.estimateLines ?? []).length,
+  );
+}
+
 function getPartsWorkflowSummary(job: Job) {
   if (!job.partsRequests.length) {
     return job.partsWaiting ? 'Waiting on parts' : 'No parts needed';
@@ -2278,8 +2613,21 @@ function formatAmount(amount: number) {
   }).format(amount);
 }
 
+function formatHours(value: number | undefined) {
+  const hours = Number(value ?? 0);
+  return `${Number.isFinite(hours) ? hours.toFixed(1) : '0.0'}h`;
+}
+
 function formatDate(value: string) {
+  if (!value) {
+    return 'Not set';
+  }
+
   const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return 'Not set';
+  }
+
   return new Intl.DateTimeFormat('en-US', {
     month: 'numeric',
     day: 'numeric',

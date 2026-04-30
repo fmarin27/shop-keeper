@@ -12,6 +12,8 @@
     "mobile:sync": "npm run build:web && npx cap sync",
     "android:sync": "npm run build:web && npx cap sync android",
     "android:open": "npx cap open android",
+    "ems:sync": "node scripts/sync-ems-to-firestore.mjs",
+    "ems:sync:dry": "node scripts/sync-ems-to-firestore.mjs --dry-run",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "publish:win": "npm run build && electron-builder --win --publish always"

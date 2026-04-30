@@ -360,7 +360,7 @@ function buildJobPayload(normalized, existing, sourceFile) {
   const payload = {
     sourceSystem,
     externalEstimateId,
-    roNumber: firstText(normalized.ro_number, externalEstimateId),
+    roNumber: firstText(existing?.roNumber, normalized.ro_number, externalEstimateId),
     customerName: firstText(
       customer.full_name,
       [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
@@ -374,7 +374,7 @@ function buildJobPayload(normalized, existing, sourceFile) {
     vehicleModel: text(vehicle.model),
     vehicleVin: text(vehicle.vin),
     vehicleColor: text(vehicle.color),
-    paintCode: existing?.paintCode ?? text(vehicle.paint_code || vehicle.color),
+    paintCode: firstText(existing?.paintCode, vehicle.paint_code, vehicle.color),
     insuranceCompany: text(claim.insurance_company),
     claimNumber: text(claim.claim_number),
     policyNumber: text(claim.policy_number),

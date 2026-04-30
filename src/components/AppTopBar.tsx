@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DisplayMode, Job, MainTab } from '../types/app';
 import TabBar from './TabBar';
-import ViewModeControl from './ViewModeControl';
 import { subscribeToJobs } from '../services/firebase/jobs';
 import { subscribeToLeads } from '../services/firebase/leads';
 import { subscribeToMaterials } from '../services/firebase/materials';
@@ -20,7 +19,6 @@ type AppTopBarProps = {
   selectedTab: MainTab;
   onTabChange: (tab: MainTab) => void;
   displayMode: DisplayMode;
-  onDisplayModeChange: (mode: DisplayMode) => void;
   onSwitchMode: () => void;
   onCheckForUpdates: () => void;
   updateStatus: string | null;
@@ -39,7 +37,6 @@ function AppTopBar({
   selectedTab,
   onTabChange,
   displayMode,
-  onDisplayModeChange,
   onSwitchMode,
   onCheckForUpdates,
   updateStatus,
@@ -294,13 +291,6 @@ function AppTopBar({
           partsUnreadCount={partsUnreadCount}
           materialsMessagesUnreadCount={materialsMessagesUnreadCount}
           leadsCount={leads.filter((lead) => lead.status !== 'won' && lead.status !== 'lost').length}
-        />
-
-        <ViewModeControl
-          value={displayMode}
-          onChange={onDisplayModeChange}
-          compact={isCompact}
-          mobile={mobile}
         />
 
         <button

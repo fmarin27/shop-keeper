@@ -12,7 +12,6 @@ type ManagerPageProps = {
   selectedTab: MainTab;
   onTabChange: (tab: MainTab) => void;
   displayMode: DisplayMode;
-  onDisplayModeChange: (mode: DisplayMode) => void;
   onSwitchMode: () => void;
   onCheckForUpdates: () => void;
   updateStatus: string | null;
@@ -29,7 +28,6 @@ function ManagerPage({
   selectedTab,
   onTabChange,
   displayMode,
-  onDisplayModeChange,
   onSwitchMode,
   onCheckForUpdates,
   updateStatus,
@@ -62,7 +60,6 @@ function ManagerPage({
         selectedTab={selectedTab}
         onTabChange={onTabChange}
         displayMode={displayMode}
-        onDisplayModeChange={onDisplayModeChange}
         onSwitchMode={onSwitchMode}
         onCheckForUpdates={onCheckForUpdates}
         updateStatus={updateStatus}

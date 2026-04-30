@@ -10,7 +10,6 @@ type TechPageProps = {
   selectedTab: MainTab;
   onTabChange: (tab: MainTab) => void;
   displayMode: DisplayMode;
-  onDisplayModeChange: (mode: DisplayMode) => void;
   onSwitchMode: () => void;
   onCheckForUpdates: () => void;
   updateStatus: string | null;
@@ -27,7 +26,6 @@ function TechPage({
   selectedTab,
   onTabChange,
   displayMode,
-  onDisplayModeChange,
   onSwitchMode,
   onCheckForUpdates,
   updateStatus,
@@ -60,7 +58,6 @@ function TechPage({
         selectedTab={selectedTab}
         onTabChange={onTabChange}
         displayMode={displayMode}
-        onDisplayModeChange={onDisplayModeChange}
         onSwitchMode={onSwitchMode}
         onCheckForUpdates={onCheckForUpdates}
         updateStatus={updateStatus}

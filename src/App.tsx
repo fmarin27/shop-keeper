@@ -72,7 +72,10 @@ function App() {
 
         const settings = await appBridge.getSettings();
         setAppMode(settings.appMode ?? null);
-        setDisplayMode(isMobile ? 'normal' : settings.displayMode ?? 'normal');
+        if (settings.displayMode !== 'normal') {
+          await appBridge.setDisplayMode('normal');
+        }
+        setDisplayMode('normal');
       } catch (error) {
         console.error('Failed to load local settings:', error);
       } finally {
@@ -366,7 +369,6 @@ function App() {
     selectedTab,
     onTabChange: setSelectedTab,
     displayMode,
-    onDisplayModeChange: handleDisplayModeChange,
     onSwitchMode: handleSwitchMode,
     onCheckForUpdates: handleCheckForUpdates,
     updateStatus,

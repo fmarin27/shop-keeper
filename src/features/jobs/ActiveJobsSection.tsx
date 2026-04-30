@@ -1680,6 +1680,9 @@ function EstimatePanel({
   const visibleLines = lines.filter(
     (line) => line.description || line.partNumber || line.totalAmount !== 0,
   );
+  const displayPartsTotal = lines.length
+    ? getOrderablePartsTotal(lines)
+    : totals?.partsTotal ?? 0;
 
   return (
     <div
@@ -1727,7 +1730,7 @@ function EstimatePanel({
         />
         <EstimateMetric
           label="Parts"
-          value={formatAmount(totals?.partsTotal ?? 0)}
+          value={formatAmount(displayPartsTotal)}
           compact={compact}
         />
         <EstimateMetric
@@ -1785,9 +1788,7 @@ function EstimatePanel({
                 <tr key={line.id}>
                   <EstimateCell compact={compact}>{line.lineNumber || '-'}</EstimateCell>
                   <EstimateCell compact={compact}>
-                    {[line.operationLabel, line.lineKind, line.operationCode, line.laborType, line.partType]
-                      .filter(Boolean)
-                      .join(' / ') || '-'}
+                    {formatEstimateOperation(line)}
                   </EstimateCell>
                   <EstimateCell compact={compact} strong>
                     {line.description || '-'}
@@ -1797,8 +1798,7 @@ function EstimatePanel({
                     {formatHours(line.laborHours)} / {formatAmount(line.laborAmount)}
                   </EstimateCell>
                   <EstimateCell compact={compact}>
-                    {line.quantity ? `${line.quantity} x ` : ''}
-                    {formatAmount(line.partPrice)}
+                    {formatEstimatePartAmount(line)}
                   </EstimateCell>
                   <EstimateCell compact={compact}>
                     {formatAmount(line.totalAmount)}
@@ -2921,6 +2921,93 @@ function getPartsReceiptSummary(job: Job) {
   }
 
   return 'Some parts are in';
+}
+
+type EstimateLineForDisplay = NonNullable<Job['estimateLines']>[number];
+
+function formatEstimateOperation(line: EstimateLineForDisplay) {
+  const kind = formatEstimateLineKind(line.lineKind);
+  const label = formatOperationLabel(line.operationLabel, line.operationCode, kind);
+  const parts = [label, kind].filter(Boolean);
+  const uniqueParts = parts.filter(
+    (part, index) =>
+      parts.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index,
+  );
+
+  return uniqueParts.join(' / ') || '-';
+}
+
+function formatOperationLabel(
+  operationLabel: string | undefined,
+  operationCode: string | undefined,
+  formattedKind: string,
+) {
+  const label = String(operationLabel ?? '').trim();
+  const code = String(operationCode ?? '').trim();
+
+  if (formattedKind === 'Reference') return 'Reference';
+  if (formattedKind === 'Sublet') return 'Sublet';
+
+  if (label && !isRawEmsCode(label)) {
+    return label;
+  }
+
+  if (code && !isRawEmsCode(code)) {
+    return code;
+  }
+
+  return '';
+}
+
+function formatEstimateLineKind(kind: string | undefined) {
+  switch (String(kind ?? '').trim().toLowerCase()) {
+    case 'labor':
+      return 'Labor';
+    case 'paint':
+      return 'Paint';
+    case 'part':
+      return 'Part';
+    case 'reference':
+      return 'Reference';
+    case 'sublet':
+      return 'Sublet';
+    default:
+      return '';
+  }
+}
+
+function isRawEmsCode(value: string) {
+  return /^(?:OP\d+|LAB|PAE|PAN|false|true)$/i.test(value.trim());
+}
+
+function isOrderableEstimatePart(line: EstimateLineForDisplay) {
+  if (line.isOrderablePart) return true;
+
+  const kind = String(line.lineKind ?? '').trim().toLowerCase();
+  if (kind) return kind === 'part';
+
+  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+}
+
+function getEstimatePartAmount(line: EstimateLineForDisplay) {
+  if (!isOrderableEstimatePart(line)) return 0;
+
+  const partPrice = Number(line.partPrice ?? 0);
+  if (Number.isFinite(partPrice) && partPrice > 0) return partPrice;
+
+  const totalAmount = Number(line.totalAmount ?? 0);
+  return Number.isFinite(totalAmount) && totalAmount > 0 ? totalAmount : 0;
+}
+
+function getOrderablePartsTotal(lines: EstimateLineForDisplay[]) {
+  return lines.reduce((total, line) => total + getEstimatePartAmount(line), 0);
+}
+
+function formatEstimatePartAmount(line: EstimateLineForDisplay) {
+  const amount = getEstimatePartAmount(line);
+  if (!amount) return '-';
+
+  return `${line.quantity ? `${line.quantity} x ` : ''}${formatAmount(amount)}`;
 }
 
 function formatAmount(amount: number) {

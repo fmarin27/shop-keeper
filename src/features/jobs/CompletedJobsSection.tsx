@@ -12,6 +12,8 @@ type CompletedJobsSectionProps = {
   onSetPartReorderNeeded: (jobId: string, partId: string) => Promise<void> | void;
   onMarkPartReceived: (jobId: string, partId: string) => Promise<void> | void;
   onSavePartNote: (jobId: string, partId: string, note: string) => Promise<void> | void;
+  onSavePartInvoice: (jobId: string, partId: string, invoiceNumber: string) => Promise<void> | void;
+  onMarkPartPaid: (jobId: string, partId: string, invoiceNumber: string) => Promise<void> | void;
   onDeleteNote: (jobId: string, noteId: string) => Promise<void> | void;
   onDeletePart: (jobId: string, partId: string) => Promise<void> | void;
   onClearLegacyPartsWaiting: (jobId: string) => Promise<void> | void;
@@ -33,6 +35,8 @@ function CompletedJobsSection({
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onSavePartInvoice,
+  onMarkPartPaid,
   onDeleteNote,
   onDeletePart,
   onClearLegacyPartsWaiting,
@@ -542,6 +546,12 @@ function CompletedJobsSection({
                           }))
                         }
                         onSavePartNote={(partId) => void handleSavePartNote(job.id, partId)}
+                        onSavePartInvoice={(partId, invoiceNumber) =>
+                          void onSavePartInvoice(job.id, partId, invoiceNumber)
+                        }
+                        onMarkPartPaid={(partId, invoiceNumber) =>
+                          void onMarkPartPaid(job.id, partId, invoiceNumber)
+                        }
                         onSetPartOrdered={(partId) => void onSetPartOrdered(job.id, partId)}
                         onSetPartReorderNeeded={(partId) =>
                           void onSetPartReorderNeeded(job.id, partId)
@@ -675,6 +685,8 @@ function PartsPanel({
   savingPartNoteId,
   onPartNoteDraftChange,
   onSavePartNote,
+  onSavePartInvoice,
+  onMarkPartPaid,
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
@@ -686,6 +698,8 @@ function PartsPanel({
   savingPartNoteId: string | null;
   onPartNoteDraftChange: (partId: string, value: string) => void;
   onSavePartNote: (partId: string) => void;
+  onSavePartInvoice: (partId: string, invoiceNumber: string) => void;
+  onMarkPartPaid: (partId: string, invoiceNumber: string) => void;
   onSetPartOrdered: (partId: string) => void;
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
@@ -693,6 +707,7 @@ function PartsPanel({
   onClearLegacyPartsWaiting: () => void;
 }) {
   const parts = job.partsRequests ?? [];
+  const hasSublets = parts.some(isSubletPart);
 
   return (
     <div
@@ -712,7 +727,7 @@ function PartsPanel({
           color: '#f8fafc',
         }}
       >
-        Parts
+        {hasSublets ? 'Parts & Sublets' : 'Parts'}
       </div>
 
       {parts.length ? (
@@ -727,6 +742,8 @@ function PartsPanel({
               savingPartNote={savingPartNoteId === part.id}
               onNoteDraftChange={(value) => onPartNoteDraftChange(part.id, value)}
               onSaveNote={() => onSavePartNote(part.id)}
+              onSaveInvoice={(invoiceNumber) => onSavePartInvoice(part.id, invoiceNumber)}
+              onMarkPaid={(invoiceNumber) => onMarkPartPaid(part.id, invoiceNumber)}
               onSetOrdered={() => onSetPartOrdered(part.id)}
               onSetReorderNeeded={() => onSetPartReorderNeeded(part.id)}
               onMarkReceived={() => onMarkPartReceived(part.id)}
@@ -757,7 +774,7 @@ function PartsPanel({
             color: '#94a3b8',
           }}
         >
-          No parts on this job.
+          No parts or sublets on this job.
         </div>
       )}
     </div>
@@ -770,6 +787,8 @@ function PartCard({
   savingPartNote,
   onNoteDraftChange,
   onSaveNote,
+  onSaveInvoice,
+  onMarkPaid,
   onSetOrdered,
   onSetReorderNeeded,
   onMarkReceived,
@@ -780,11 +799,20 @@ function PartCard({
   savingPartNote: boolean;
   onNoteDraftChange: (value: string) => void;
   onSaveNote: () => void;
+  onSaveInvoice: (invoiceNumber: string) => void;
+  onMarkPaid: (invoiceNumber: string) => void;
   onSetOrdered: () => void;
   onSetReorderNeeded: () => void;
   onMarkReceived: () => void;
   onDelete: () => void;
 }) {
+  const isSublet = isSubletPart(part);
+  const [invoiceDraft, setInvoiceDraft] = useState(part.invoiceNumber ?? '');
+
+  useEffect(() => {
+    setInvoiceDraft(part.invoiceNumber ?? '');
+  }, [part.invoiceNumber]);
+
   return (
     <div
       style={{
@@ -809,7 +837,13 @@ function PartCard({
           <div style={{ fontSize: 14, fontWeight: 800, color: '#f8fafc' }}>
             {part.name}
           </div>
-          <div style={{ fontSize: 12, color: '#94a3b8' }}>
+          {isSublet ? (
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>
+              Sublet | {part.paidAt ? 'Paid' : 'Unpaid'} | {formatDateTime(part.createdAt)}
+              {part.invoiceNumber ? ` | Invoice ${part.invoiceNumber}` : ''}
+            </div>
+          ) : null}
+          <div style={{ fontSize: 12, color: '#94a3b8', display: isSublet ? 'none' : undefined }}>
             Qty {part.quantity} • {formatPartStatus(part.status)} • {formatDateTime(part.createdAt)}
           </div>
         </div>
@@ -818,25 +852,52 @@ function PartCard({
       <textarea
         value={noteDraft}
         onChange={(event) => onNoteDraftChange(event.target.value)}
-        placeholder="Part note..."
+        placeholder={isSublet ? 'Sublet note...' : 'Part note...'}
         rows={2}
         style={textAreaStyle()}
       />
 
+      {isSublet ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+            gap: 8,
+            alignItems: 'center',
+          }}
+        >
+          <input
+            value={invoiceDraft}
+            onChange={(event) => setInvoiceDraft(event.target.value)}
+            placeholder="Invoice #"
+            style={inputStyle()}
+          />
+          <ActionButton onClick={() => onSaveInvoice(invoiceDraft)}>
+            Save Invoice
+          </ActionButton>
+          <ActionButton
+            onClick={() => onMarkPaid(invoiceDraft)}
+            disabled={Boolean(part.paidAt)}
+          >
+            {part.paidAt ? 'Paid' : 'Mark Paid'}
+          </ActionButton>
+        </div>
+      ) : null}
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <ActionButton onClick={onSaveNote}>
-          {savingPartNote ? 'Saving...' : 'Save Part Note'}
+          {savingPartNote ? 'Saving...' : isSublet ? 'Save Sublet Note' : 'Save Part Note'}
         </ActionButton>
         <ActionButton danger onClick={onDelete}>
-          Delete Part
+          {isSublet ? 'Delete Sublet' : 'Delete Part'}
         </ActionButton>
-        {part.status === 'requested' ? (
+        {!isSublet && part.status === 'requested' ? (
           <ActionButton onClick={onSetOrdered}>Mark Ordered</ActionButton>
         ) : null}
-        {part.status !== 'reorderNeeded' && part.status !== 'received' ? (
+        {!isSublet && part.status !== 'reorderNeeded' && part.status !== 'received' ? (
           <ActionButton onClick={onSetReorderNeeded}>Part Came Wrong</ActionButton>
         ) : null}
-        {part.status !== 'received' ? (
+        {!isSublet && part.status !== 'received' ? (
           <ActionButton onClick={onMarkReceived}>Mark Received</ActionButton>
         ) : null}
       </div>
@@ -889,14 +950,17 @@ function ActionButton({
   children,
   onClick,
   danger = false,
+  disabled = false,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       style={{
         border: danger
           ? '1px solid rgba(248,113,113,0.34)'
@@ -907,7 +971,8 @@ function ActionButton({
         padding: '11px 14px',
         fontSize: 13,
         fontWeight: 800,
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.58 : 1,
       }}
     >
       {children}
@@ -986,6 +1051,10 @@ function formatPartStatus(status: JobPartRequest['status']) {
     default:
       return status;
   }
+}
+
+function isSubletPart(part: JobPartRequest) {
+  return (part.kind ?? 'part') === 'sublet';
 }
 
 function inputStyle(): React.CSSProperties {

@@ -17,12 +17,14 @@ import {
   deleteJobNote,
   deleteJobPart,
   deletePhotoFromJob,
+  markJobPartPaid,
   markJobPartReceived,
   addTextNoteToJob,
   createJob,
   markJobDone,
   markJobNotesRead,
   requestPartForJob,
+  saveJobPartInvoice,
   saveJobPartNote,
   setActiveJobPosition,
   subscribeToJobs,
@@ -267,6 +269,28 @@ function JobsTab({
     await saveJobPartNote(job, partId, note);
   };
 
+  const handleSavePartInvoice = async (
+    jobId: string,
+    partId: string,
+    invoiceNumber: string,
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await saveJobPartInvoice(job, partId, invoiceNumber);
+  };
+
+  const handleMarkPartPaid = async (
+    jobId: string,
+    partId: string,
+    invoiceNumber: string,
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await markJobPartPaid(job, partId, invoiceNumber);
+  };
+
   const handleDeletePart = async (jobId: string, partId: string) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
@@ -470,6 +494,8 @@ function JobsTab({
           onSetPartReorderNeeded={handleSetPartReorderNeeded}
           onMarkPartReceived={handleMarkPartReceived}
           onSavePartNote={handleSavePartNote}
+          onSavePartInvoice={handleSavePartInvoice}
+          onMarkPartPaid={handleMarkPartPaid}
           onDeletePart={handleDeletePart}
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}
           onSetPriorityPosition={handleSetPriorityPosition}
@@ -487,6 +513,8 @@ function JobsTab({
           onSetPartReorderNeeded={handleSetPartReorderNeeded}
           onMarkPartReceived={handleMarkPartReceived}
           onSavePartNote={handleSavePartNote}
+          onSavePartInvoice={handleSavePartInvoice}
+          onMarkPartPaid={handleMarkPartPaid}
           onDeleteNote={handleDeleteNote}
           onDeletePart={handleDeletePart}
           onClearLegacyPartsWaiting={handleClearLegacyPartsWaiting}

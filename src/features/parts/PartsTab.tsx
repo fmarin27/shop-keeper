@@ -156,9 +156,9 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
           }}
         >
           <div>
-            <h2 style={titleStyle(compact)}>Parts Board</h2>
+            <h2 style={titleStyle(compact)}>Parts & Sublets Board</h2>
             <p style={subtitleStyle(compact)}>
-              Cross-job parts status, tied back to the priority job list.
+              Cross-job parts, sublet invoices, and payment status tied back to the priority job list.
             </p>
           </div>
 
@@ -220,7 +220,7 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
             {!mobile ? (
               <>
                 <HeaderCell compact={compact}>Job</HeaderCell>
-                <HeaderCell compact={compact}>Part</HeaderCell>
+                <HeaderCell compact={compact}>Item</HeaderCell>
                 <HeaderCell compact={compact}>Quantity</HeaderCell>
                 <HeaderCell compact={compact}>Status</HeaderCell>
                 <HeaderCell compact={compact}>Invoice</HeaderCell>
@@ -297,6 +297,7 @@ function PartRow({
   onMarkPaid: (job: Job, part: JobPartRequest, invoiceNumber: string) => Promise<void>;
 }) {
   const disabled = saving;
+  const isSublet = (part.kind ?? 'part') === 'sublet';
   const [invoiceDraft, setInvoiceDraft] = useState(part.invoiceNumber ?? '');
   const jobMeta = [
     job.roNumber ? `RO ${job.roNumber}` : '',
@@ -325,7 +326,7 @@ function PartRow({
       <div style={cellStyle(compact, mobile)}>
         <div style={{ fontWeight: 900, color: '#f8fafc' }}>{part.name}</div>
         <div style={mutedStyle(compact)}>
-          {(part.kind ?? 'part') === 'sublet' ? 'Sublet' : 'Part'} |{' '}
+          {isSublet ? 'Sublet' : 'Part'} |{' '}
           Requested by {part.requestedBy === 'tech' ? 'Tech' : 'Manager'}
           {part.requestedBy !== appMode ? ' | other mode' : ''}
         </div>
@@ -336,17 +337,23 @@ function PartRow({
       </div>
 
       <div style={cellStyle(compact, mobile)}>
-        <select
-          value={part.status}
-          disabled={disabled}
-          onChange={(event) => void onUpdateStatus(job, part, event.target.value as JobPartStatus)}
-          style={selectStyle(compact)}
-        >
-          <option value="requested">Requested</option>
-          <option value="ordered">Ordered</option>
-          <option value="reorderNeeded">Reorder Needed</option>
-          <option value="received">Received</option>
-        </select>
+        {isSublet ? (
+          <div style={{ fontWeight: 900, color: part.paidAt ? '#86efac' : '#fcd34d' }}>
+            {part.paidAt ? 'Paid' : 'Unpaid'}
+          </div>
+        ) : (
+          <select
+            value={part.status}
+            disabled={disabled}
+            onChange={(event) => void onUpdateStatus(job, part, event.target.value as JobPartStatus)}
+            style={selectStyle(compact)}
+          >
+            <option value="requested">Requested</option>
+            <option value="ordered">Ordered</option>
+            <option value="reorderNeeded">Reorder Needed</option>
+            <option value="received">Received</option>
+          </select>
+        )}
       </div>
 
       <div style={cellStyle(compact, mobile)}>

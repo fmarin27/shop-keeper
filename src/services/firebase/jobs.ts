@@ -1179,6 +1179,7 @@ export async function requestPartForJob(
       id: `part-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name,
       quantity,
+      kind: 'part',
       requestedBy: input.requestedBy,
       status: input.status ?? 'requested',
       note,

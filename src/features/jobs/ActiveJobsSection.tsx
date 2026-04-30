@@ -52,6 +52,8 @@ type ActiveJobsSectionProps = {
   onSetPartReorderNeeded: (jobId: string, partId: string) => void;
   onMarkPartReceived: (jobId: string, partId: string) => void;
   onSavePartNote: (jobId: string, partId: string, note: string) => void;
+  onSavePartInvoice: (jobId: string, partId: string, invoiceNumber: string) => void;
+  onMarkPartPaid: (jobId: string, partId: string, invoiceNumber: string) => void;
   onDeletePart: (jobId: string, partId: string) => Promise<void> | void;
   onClearLegacyPartsWaiting: (jobId: string) => void;
   onSetPriorityPosition: (jobId: string, position: number) => Promise<void> | void;
@@ -81,6 +83,8 @@ function ActiveJobsSection({
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onSavePartInvoice,
+  onMarkPartPaid,
   onDeletePart,
   onClearLegacyPartsWaiting,
   onSetPriorityPosition,
@@ -93,6 +97,7 @@ function ActiveJobsSection({
     Record<string, { name: string; quantity: string; note: string }>
   >({});
   const [partNoteDrafts, setPartNoteDrafts] = useState<Record<string, string>>({});
+  const [partInvoiceDrafts, setPartInvoiceDrafts] = useState<Record<string, string>>({});
   const [jobDetailDrafts, setJobDetailDrafts] = useState<
     Record<
       string,
@@ -1085,6 +1090,7 @@ function ActiveJobsSection({
                     compact={narrowLayout}
                     draft={partDrafts[job.id] ?? { name: '', quantity: '', note: '' }}
                     noteDrafts={partNoteDrafts}
+                    invoiceDrafts={partInvoiceDrafts}
                     onDraftChange={(nextDraft) =>
                       setPartDrafts((current) => ({
                         ...current,
@@ -1093,6 +1099,12 @@ function ActiveJobsSection({
                     }
                     onPartNoteDraftChange={(partId, value) =>
                       setPartNoteDrafts((current) => ({
+                        ...current,
+                        [partId]: value,
+                      }))
+                    }
+                    onPartInvoiceDraftChange={(partId, value) =>
+                      setPartInvoiceDrafts((current) => ({
                         ...current,
                         [partId]: value,
                       }))
@@ -1126,6 +1138,30 @@ function ActiveJobsSection({
                       try {
                         setSavingPartNoteId(partId);
                         await onSavePartNote(job.id, partId, nextNote);
+                      } finally {
+                        setSavingPartNoteId(null);
+                      }
+                    }}
+                    onSavePartInvoice={async (partId) => {
+                      const nextInvoice =
+                        partInvoiceDrafts[partId] ??
+                        job.partsRequests.find((part) => part.id === partId)?.invoiceNumber ??
+                        '';
+                      try {
+                        setSavingPartNoteId(partId);
+                        await onSavePartInvoice(job.id, partId, nextInvoice);
+                      } finally {
+                        setSavingPartNoteId(null);
+                      }
+                    }}
+                    onMarkPartPaid={async (partId) => {
+                      const nextInvoice =
+                        partInvoiceDrafts[partId] ??
+                        job.partsRequests.find((part) => part.id === partId)?.invoiceNumber ??
+                        '';
+                      try {
+                        setSavingPartNoteId(partId);
+                        await onMarkPartPaid(job.id, partId, nextInvoice);
                       } finally {
                         setSavingPartNoteId(null);
                       }
@@ -1926,13 +1962,17 @@ function PartsPanel({
   compact,
   draft,
   noteDrafts,
+  invoiceDrafts,
   onDraftChange,
   onPartNoteDraftChange,
+  onPartInvoiceDraftChange,
   onRequestPart,
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
   onSavePartNote,
+  onSavePartInvoice,
+  onMarkPartPaid,
   onDeletePart,
   savingPartNoteId,
   onClearLegacyPartsWaiting,
@@ -1942,20 +1982,27 @@ function PartsPanel({
   compact: boolean;
   draft: { name: string; quantity: string; note: string };
   noteDrafts: Record<string, string>;
+  invoiceDrafts: Record<string, string>;
   onDraftChange: (draft: { name: string; quantity: string; note: string }) => void;
   onPartNoteDraftChange: (partId: string, value: string) => void;
+  onPartInvoiceDraftChange: (partId: string, value: string) => void;
   onRequestPart: () => void;
   onSetPartOrdered: (partId: string) => void;
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
   onSavePartNote: (partId: string) => Promise<void> | void;
+  onSavePartInvoice: (partId: string) => Promise<void> | void;
+  onMarkPartPaid: (partId: string) => Promise<void> | void;
   onDeletePart: (partId: string) => Promise<void> | void;
   savingPartNoteId: string | null;
   onClearLegacyPartsWaiting: () => void;
 }) {
-  const pendingCount = (job.partsRequests ?? []).filter(
+  const parts = job.partsRequests ?? [];
+  const pendingCount = parts.filter(
     (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
   ).length;
+  const unpaidSubletCount = parts.filter(isUnpaidSublet).length;
+  const hasSublets = parts.some(isSubletPart);
 
   return (
     <div
@@ -1984,11 +2031,11 @@ function PartsPanel({
             gap: 12,
           }}
         >
-          <SectionLabel title="Parts" tone="amber" compact={compact} />
+          <SectionLabel title={hasSublets ? 'Parts & Sublets' : 'Parts'} tone="amber" compact={compact} />
         </div>
 
-        <span style={partsSummaryBadgeStyle(compact, pendingCount > 0)}>
-          {pendingCount > 0 ? `${pendingCount} waiting` : 'All received'}
+        <span style={partsSummaryBadgeStyle(compact, pendingCount > 0 || unpaidSubletCount > 0)}>
+          {formatPartsPanelSummary(pendingCount, unpaidSubletCount)}
         </span>
       </div>
 
@@ -2038,7 +2085,7 @@ function PartsPanel({
         </ActionButton>
       </div>
 
-      {job.partsWaiting && job.partsRequests.length === 0 ? (
+      {job.partsWaiting && parts.length === 0 ? (
         <div
           style={{
             borderRadius: compact ? 12 : 14,
@@ -2067,10 +2114,12 @@ function PartsPanel({
         </div>
       ) : null}
 
-      {job.partsRequests.length ? (
+      {parts.length ? (
         <div style={{ display: 'grid', gap: 10 }}>
-          {job.partsRequests.map((part) => {
+          {parts.map((part) => {
             const noteDraft = noteDrafts[part.id] ?? part.note ?? '';
+            const invoiceDraft = invoiceDrafts[part.id] ?? part.invoiceNumber ?? '';
+            const isSublet = isSubletPart(part);
             return (
               <div
                 key={part.id}
@@ -2103,19 +2152,37 @@ function PartsPanel({
                     >
                       {part.name}
                     </div>
+                    {isSublet ? (
+                      <div
+                        style={{
+                          fontSize: compact ? 11 : 12,
+                          color: '#b8c7da',
+                        }}
+                      >
+                        Sublet | Requested by {part.requestedBy === 'tech' ? 'Tech' : 'Manager'}
+                        {part.invoiceNumber ? ` | Invoice ${part.invoiceNumber}` : ''}
+                      </div>
+                    ) : null}
                     <div
                       style={{
                         fontSize: compact ? 11 : 12,
                         color: '#b8c7da',
+                        display: isSublet ? 'none' : undefined,
                       }}
                     >
                       Qty: {part.quantity} • Requested by {part.requestedBy === 'tech' ? 'Tech' : 'Manager'}
                     </div>
                   </div>
 
-                  <span style={partStatusBadgeStyle(part.status, compact)}>
-                    {formatPartStatus(part.status)}
-                  </span>
+                  {isSublet ? (
+                    <span style={subletPaymentBadgeStyle(Boolean(part.paidAt), compact)}>
+                      {part.paidAt ? 'Paid Sublet' : 'Unpaid Sublet'}
+                    </span>
+                  ) : (
+                    <span style={partStatusBadgeStyle(part.status, compact)}>
+                      {formatPartStatus(part.status)}
+                    </span>
+                  )}
                 </div>
 
                 <textarea
@@ -2123,9 +2190,40 @@ function PartsPanel({
                   onChange={(event) =>
                     onPartNoteDraftChange(part.id, event.target.value)
                   }
-                  placeholder="Add a note about this part..."
+                  placeholder={isSublet ? 'Add a note about this sublet...' : 'Add a note about this part...'}
                   style={textAreaStyle(compact)}
                 />
+
+                {isSublet ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: 10,
+                      gridTemplateColumns: compact ? '1fr' : 'minmax(180px, 1fr) auto auto',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <input
+                      value={invoiceDraft}
+                      onChange={(event) =>
+                        onPartInvoiceDraftChange(part.id, event.target.value)
+                      }
+                      placeholder="Invoice #"
+                      style={inputStyle(compact)}
+                    />
+                    <ActionButton compact={compact} onClick={() => onSavePartInvoice(part.id)}>
+                      Save Invoice
+                    </ActionButton>
+                    <ActionButton
+                      compact={compact}
+                      primary={!part.paidAt}
+                      disabled={Boolean(part.paidAt)}
+                      onClick={() => onMarkPartPaid(part.id)}
+                    >
+                      {part.paidAt ? 'Paid' : 'Mark Paid'}
+                    </ActionButton>
+                  </div>
+                ) : null}
 
                 <div
                   style={{
@@ -2143,22 +2241,27 @@ function PartsPanel({
                     }}
                   >
                     Requested {formatDateTime(part.createdAt)}
-                    {part.receivedAt ? ` • Received ${formatDateTime(part.receivedAt)}` : ''}
+                    {part.paidAt && isSublet ? ` | Paid ${formatDateTime(part.paidAt)}` : ''}
+                    {part.receivedAt && !isSublet ? ` | Received ${formatDateTime(part.receivedAt)}` : ''}
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <ActionButton compact={compact} onClick={() => onSavePartNote(part.id)}>
-                      {savingPartNoteId === part.id ? 'Saving...' : 'Save Part Note'}
+                      {savingPartNoteId === part.id
+                        ? 'Saving...'
+                        : isSublet
+                          ? 'Save Sublet Note'
+                          : 'Save Part Note'}
                     </ActionButton>
                     <ActionButton compact={compact} danger onClick={() => onDeletePart(part.id)}>
-                      Delete Part
+                      {isSublet ? 'Delete Sublet' : 'Delete Part'}
                     </ActionButton>
-                    {part.status === 'requested' ? (
+                    {!isSublet && part.status === 'requested' ? (
                       <ActionButton compact={compact} onClick={() => onSetPartOrdered(part.id)}>
                         Mark Ordered
                       </ActionButton>
                     ) : null}
-                    {part.status !== 'reorderNeeded' && part.status !== 'received' ? (
+                    {!isSublet && part.status !== 'reorderNeeded' && part.status !== 'received' ? (
                       <ActionButton
                         compact={compact}
                         onClick={() => onSetPartReorderNeeded(part.id)}
@@ -2166,7 +2269,7 @@ function PartsPanel({
                         Part Came Wrong
                       </ActionButton>
                     ) : null}
-                    {part.status !== 'received' ? (
+                    {!isSublet && part.status !== 'received' ? (
                       <ActionButton
                         compact={compact}
                         primary
@@ -2188,7 +2291,7 @@ function PartsPanel({
             color: '#b8c7da',
           }}
         >
-          No parts requested yet.
+          No parts or sublets requested yet.
         </div>
       )}
     </div>
@@ -2798,6 +2901,24 @@ function partStatusBadgeStyle(
   };
 }
 
+function subletPaymentBadgeStyle(
+  paid: boolean,
+  compact: boolean,
+): React.CSSProperties {
+  return {
+    background: paid ? 'rgba(22,163,74,0.22)' : 'rgba(124,58,237,0.22)',
+    border: paid
+      ? '1px solid rgba(74,222,128,0.28)'
+      : '1px solid rgba(196,181,253,0.34)',
+    color: paid ? '#dcfce7' : '#ede9fe',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 800,
+    borderRadius: 999,
+    padding: compact ? '5px 9px' : '6px 10px',
+    whiteSpace: 'nowrap',
+  };
+}
+
 function formatPartStatus(status: JobPartRequest['status']) {
   switch (status) {
     case 'requested':
@@ -2829,6 +2950,28 @@ function partsSummaryBadgeStyle(
     padding: compact ? '5px 8px' : '6px 10px',
     whiteSpace: 'nowrap',
   };
+}
+
+function isSubletPart(part: JobPartRequest) {
+  return (part.kind ?? 'part') === 'sublet';
+}
+
+function isUnpaidSublet(part: JobPartRequest) {
+  return isSubletPart(part) && !part.paidAt;
+}
+
+function formatPartsPanelSummary(pendingParts: number, unpaidSublets: number) {
+  const parts: string[] = [];
+
+  if (pendingParts) {
+    parts.push(`${pendingParts} part${pendingParts === 1 ? '' : 's'} waiting`);
+  }
+
+  if (unpaidSublets) {
+    parts.push(`${unpaidSublets} sublet${unpaidSublets === 1 ? '' : 's'} unpaid`);
+  }
+
+  return parts.length ? parts.join(' / ') : 'All clear';
 }
 
 function inputStyle(compact: boolean): React.CSSProperties {

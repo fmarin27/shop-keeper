@@ -69,15 +69,6 @@ const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
 const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
 const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
 const MATERIALS_MANAGER_UNLOCK_CODE = 'UAB-MATERIALS-PRO';
-const MATERIALS_APP_ROOT_PATH = path.join(app.getPath('home'), 'APPS', 'Business Apps', 'Materials App');
-const MATERIALS_APP_ENTRY_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'main.py');
-const MATERIALS_APP_DB_PATH = path.join(MATERIALS_APP_ROOT_PATH, 'bodyshop_materials.db');
-const MATERIALS_APP_VENV_PYTHON_PATH = path.join(
-  MATERIALS_APP_ROOT_PATH,
-  '.venv',
-  'Scripts',
-  'python.exe',
-);
 const MATERIALS_MANAGER_LOCK_ENABLED = false;
 const USER_PYTHON_PATH = path.join(
   app.getPath('home'),
@@ -88,6 +79,58 @@ const USER_PYTHON_PATH = path.join(
   'Python311',
   'python.exe',
 );
+
+type MaterialsManagerInstallDefinition = {
+  label: string;
+  rootPath: string;
+  dbRelativePaths: string[];
+  entryRelativePath?: string;
+  exeRelativePath?: string;
+};
+
+type MaterialsManagerInstall = {
+  label: string;
+  rootPath: string;
+  dbPath: string;
+  entryPath?: string;
+  exePath?: string;
+  venvPythonPath: string;
+  venvPythonwPath: string;
+};
+
+const MATERIALS_MANAGER_INSTALL_DEFINITIONS: MaterialsManagerInstallDefinition[] = [
+  {
+    label: 'Materials Manager 4.0',
+    rootPath: path.join(app.getPath('home'), 'Desktop', 'Materials Manager Version 4.0'),
+    dbRelativePaths: [
+      'materials_manager.db',
+      path.join('dist', 'MaterialsManager', 'materials_manager.db'),
+    ],
+    entryRelativePath: 'main.py',
+    exeRelativePath: path.join('dist', 'MaterialsManager', 'MaterialsManager.exe'),
+  },
+  {
+    label: 'Materials App',
+    rootPath: path.join(app.getPath('home'), 'Desktop', 'Materials App'),
+    dbRelativePaths: [
+      'bodyshop_materials.db',
+      path.join('dist', 'BodyShopMaterials', 'bodyshop_materials.db'),
+    ],
+    entryRelativePath: 'main.py',
+    exeRelativePath: path.join('dist', 'BodyShopMaterials', 'BodyShopMaterials.exe'),
+  },
+  {
+    label: 'Legacy Business Apps Materials App',
+    rootPath: path.join(app.getPath('home'), 'APPS', 'Business Apps', 'Materials App'),
+    dbRelativePaths: ['bodyshop_materials.db'],
+    entryRelativePath: 'main.py',
+  },
+  {
+    label: 'UAB Jobs Shop Supplies',
+    rootPath: path.join(app.getPath('home'), 'Desktop', 'UAB JOBS', 'Materials', 'shopsupplies'),
+    dbRelativePaths: ['bodyshop_materials.db'],
+  },
+];
 
 type UpdaterStatus =
   | {
@@ -504,9 +547,77 @@ function parseMitchellJobsCsv(csvText: string, lastModifiedAt: string): Mitchell
   }).filter((job) => job.roNumber && job.vehicle);
 }
 
-function getMaterialsManagerPythonPath() {
-  if (fs.existsSync(MATERIALS_APP_VENV_PYTHON_PATH)) {
-    return MATERIALS_APP_VENV_PYTHON_PATH;
+function buildMaterialsManagerInstallCandidates() {
+  const overrideRootPath = process.env.SHOP_KEEPER_MATERIALS_ROOT?.trim();
+  const overrideDbPath = process.env.SHOP_KEEPER_MATERIALS_DB_PATH?.trim();
+  const overrideEntryPath = process.env.SHOP_KEEPER_MATERIALS_ENTRY_PATH?.trim();
+  const overrideExePath = process.env.SHOP_KEEPER_MATERIALS_EXE_PATH?.trim();
+
+  const definitions = [...MATERIALS_MANAGER_INSTALL_DEFINITIONS];
+
+  if (overrideRootPath || overrideDbPath) {
+    const rootPath = overrideRootPath || path.dirname(overrideDbPath || '');
+    definitions.unshift({
+      label: 'Configured Materials Manager',
+      rootPath,
+      dbRelativePaths: overrideDbPath ? [overrideDbPath] : ['materials_manager.db', 'bodyshop_materials.db'],
+      entryRelativePath: overrideEntryPath || 'main.py',
+      exeRelativePath: overrideExePath,
+    });
+  }
+
+  return definitions.flatMap<MaterialsManagerInstall>((definition) =>
+    definition.dbRelativePaths.map((dbRelativePath) => {
+      const dbPath = path.isAbsolute(dbRelativePath)
+        ? dbRelativePath
+        : path.join(definition.rootPath, dbRelativePath);
+      const entryPath = definition.entryRelativePath
+        ? path.isAbsolute(definition.entryRelativePath)
+          ? definition.entryRelativePath
+          : path.join(definition.rootPath, definition.entryRelativePath)
+        : undefined;
+      const exePath = definition.exeRelativePath
+        ? path.isAbsolute(definition.exeRelativePath)
+          ? definition.exeRelativePath
+          : path.join(definition.rootPath, definition.exeRelativePath)
+        : undefined;
+
+      return {
+        label: definition.label,
+        rootPath: definition.rootPath,
+        dbPath,
+        entryPath,
+        exePath,
+        venvPythonPath: path.join(definition.rootPath, '.venv', 'Scripts', 'python.exe'),
+        venvPythonwPath: path.join(definition.rootPath, '.venv', 'Scripts', 'pythonw.exe'),
+      };
+    }),
+  );
+}
+
+function checkedMaterialsManagerPaths() {
+  return buildMaterialsManagerInstallCandidates()
+    .map((candidate) => candidate.dbPath)
+    .filter((candidatePath, index, allPaths) => allPaths.indexOf(candidatePath) === index);
+}
+
+function resolveMaterialsManagerInstall() {
+  const match = buildMaterialsManagerInstallCandidates().find((candidate) =>
+    fs.existsSync(candidate.dbPath),
+  );
+
+  if (!match) {
+    throw new Error(
+      `Materials database not found. Checked: ${checkedMaterialsManagerPaths().join('; ')}`,
+    );
+  }
+
+  return match;
+}
+
+function getMaterialsManagerSnapshotPythonPath(install: MaterialsManagerInstall) {
+  if (fs.existsSync(install.venvPythonPath)) {
+    return install.venvPythonPath;
   }
 
   if (fs.existsSync(USER_PYTHON_PATH)) {
@@ -516,28 +627,50 @@ function getMaterialsManagerPythonPath() {
   return 'python';
 }
 
-async function launchMaterialsManagerApp() {
-  if (!fs.existsSync(MATERIALS_APP_ENTRY_PATH)) {
-    throw new Error(`Materials App entry file was not found at ${MATERIALS_APP_ENTRY_PATH}.`);
+function getMaterialsManagerLaunchPythonPath(install: MaterialsManagerInstall) {
+  if (fs.existsSync(install.venvPythonwPath)) {
+    return install.venvPythonwPath;
   }
 
-  const pythonPath = getMaterialsManagerPythonPath();
-  const child = spawn(pythonPath, [MATERIALS_APP_ENTRY_PATH], {
-    cwd: MATERIALS_APP_ROOT_PATH,
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: false,
-  });
+  return getMaterialsManagerSnapshotPythonPath(install);
+}
 
-  child.unref();
+async function launchMaterialsManagerApp() {
+  const install = resolveMaterialsManagerInstall();
+
+  if (install.entryPath && fs.existsSync(install.entryPath)) {
+    const pythonPath = getMaterialsManagerLaunchPythonPath(install);
+    const child = spawn(pythonPath, [install.entryPath], {
+      cwd: install.rootPath,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+
+    child.unref();
+    return;
+  }
+
+  if (install.exePath && fs.existsSync(install.exePath)) {
+    const child = spawn(install.exePath, [], {
+      cwd: path.dirname(install.exePath),
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+
+    child.unref();
+    return;
+  }
+
+  throw new Error(
+    `Materials Manager app was found at ${install.dbPath}, but no launcher was found in ${install.rootPath}.`,
+  );
 }
 
 async function getMaterialsManagerSnapshot(): Promise<MaterialsManagerSnapshot> {
-  if (!fs.existsSync(MATERIALS_APP_DB_PATH)) {
-    throw new Error(`Materials database not found at ${MATERIALS_APP_DB_PATH}.`);
-  }
-
-  const pythonPath = getMaterialsManagerPythonPath();
+  const install = resolveMaterialsManagerInstall();
+  const pythonPath = getMaterialsManagerSnapshotPythonPath(install);
   const snapshotScript = `
 import json
 import sqlite3
@@ -545,12 +678,22 @@ import sys
 from pathlib import Path
 
 db_path = Path(sys.argv[1])
+source_label = sys.argv[2]
 if not db_path.exists():
     raise FileNotFoundError('Materials database not found at ' + str(db_path))
 
 connection = sqlite3.connect(str(db_path))
 connection.row_factory = sqlite3.Row
 cursor = connection.cursor()
+
+def table_columns(table_name):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return {row['name'] for row in cursor.fetchall()}
+
+invoice_columns = table_columns('invoices')
+source_device_expr = "COALESCE(i.source_device, '')" if 'source_device' in invoice_columns else "''"
+updated_at_expr = "COALESCE(i.updated_at, '')" if 'updated_at' in invoice_columns else "''"
+summary_updated_expr = "COALESCE(MAX(updated_at), '')" if 'updated_at' in invoice_columns else "COALESCE(MAX(date), '')"
 
 def query_one(sql):
     cursor.execute(sql)
@@ -561,7 +704,7 @@ def query_all(sql):
     cursor.execute(sql)
     return [dict(row) for row in cursor.fetchall()]
 
-summary = query_one("""
+summary = query_one(f"""
 SELECT
   (SELECT COUNT(*) FROM materials) AS materialCount,
   (SELECT COUNT(*) FROM invoices) AS invoiceCount,
@@ -583,17 +726,17 @@ SELECT
     FROM invoice_items ii
   ) AS totalInvoiceSpend,
   (SELECT COALESCE(MAX(date), '') FROM invoices) AS latestInvoiceDate,
-  (SELECT COALESCE(MAX(updated_at), '') FROM invoices) AS latestUpdatedAt
+  (SELECT {summary_updated_expr} FROM invoices) AS latestUpdatedAt
 """)
 
-recent_invoices = query_all("""
+recent_invoices = query_all(f"""
 SELECT
   i.id,
   COALESCE(i.number, '') AS number,
   COALESCE(i.date, '') AS date,
   COALESCE(i.is_refund, 0) AS isRefund,
-  COALESCE(i.source_device, '') AS sourceDevice,
-  COALESCE(i.updated_at, '') AS updatedAt,
+  {source_device_expr} AS sourceDevice,
+  {updated_at_expr} AS updatedAt,
   COUNT(ii.id) AS lineItemCount,
   COALESCE(SUM(COALESCE(ii.qty, 0) * COALESCE(ii.unit_cost, 0)), 0) AS subtotal,
   COALESCE(
@@ -634,6 +777,7 @@ ORDER BY LOWER(COALESCE(m.name, '')) ASC
 
 payload = {
     'sourcePath': str(db_path),
+    'sourceLabel': source_label,
     'generatedAt': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
     'summary': {
         'materialCount': int(summary.get('materialCount') or 0),
@@ -683,8 +827,8 @@ print(json.dumps(payload))
 `;
 
   return new Promise((resolve, reject) => {
-    const child = spawn(pythonPath, ['-c', snapshotScript, MATERIALS_APP_DB_PATH], {
-      cwd: MATERIALS_APP_ROOT_PATH,
+    const child = spawn(pythonPath, ['-c', snapshotScript, install.dbPath, install.label], {
+      cwd: install.rootPath,
       windowsHide: true,
     });
 

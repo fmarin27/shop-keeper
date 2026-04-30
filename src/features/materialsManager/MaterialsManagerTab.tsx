@@ -326,7 +326,7 @@ function MaterialsManagerTab({
                   }}
                 >
                   {snapshot
-                    ? `Connected to ${snapshot.sourcePath}. Refresh any time to pull the latest material and invoice data.`
+                    ? `Connected to ${snapshot.sourceLabel ?? 'Materials Manager'} at ${snapshot.sourcePath}. Refresh any time to pull the latest material and invoice data.`
                     : 'The add-on is unlocked. Load the latest material and invoice data below.'}
                 </div>
 

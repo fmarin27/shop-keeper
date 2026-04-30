@@ -370,6 +370,7 @@ export type MaterialsManagerMaterial = {
 
 export type MaterialsManagerSnapshot = {
   sourcePath: string;
+  sourceLabel?: string;
   generatedAt: string;
   summary: MaterialsManagerSummary;
   recentInvoices: MaterialsManagerInvoice[];

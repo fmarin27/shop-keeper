@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { processJobImage } from '../../services/media/imageProcessor';
 import {
   canUseNativeMobileCamera,
@@ -66,6 +66,21 @@ type ActiveJobsSectionProps = {
     jobId: string,
     input: UpdateJobDetailsInput,
   ) => Promise<void> | void;
+};
+
+type SortDirection = 'asc' | 'desc';
+type EstimateSortKey =
+  | 'line'
+  | 'operation'
+  | 'description'
+  | 'part'
+  | 'labor'
+  | 'parts'
+  | 'total';
+
+type EstimateSort = {
+  key: EstimateSortKey;
+  direction: SortDirection;
 };
 
 function ActiveJobsSection({
@@ -1857,12 +1872,30 @@ function EstimatePanel({
 }) {
   const totals = job.estimateTotals;
   const lines = job.estimateLines ?? [];
-  const visibleLines = lines.filter(
-    (line) => line.description || line.partNumber || line.totalAmount !== 0,
+  const [sort, setSort] = useState<EstimateSort>({
+    key: 'line',
+    direction: 'asc',
+  });
+  const visibleLines = useMemo(
+    () =>
+      sortEstimateLines(
+        lines.filter(
+          (line) => line.description || line.partNumber || line.totalAmount !== 0,
+        ),
+        sort,
+      ),
+    [lines, sort],
   );
   const displayPartsTotal = lines.length
     ? getOrderablePartsTotal(lines)
     : totals?.partsTotal ?? 0;
+  const toggleSort = (key: EstimateSortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   return (
     <div
@@ -1954,13 +1987,25 @@ function EstimatePanel({
           >
             <thead>
               <tr>
-                <EstimateHeaderCell compact={compact}>Line</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Operation</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Description</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Part #</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Labor</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Parts</EstimateHeaderCell>
-                <EstimateHeaderCell compact={compact}>Total</EstimateHeaderCell>
+                {[
+                  { key: 'line' as const, label: 'Line' },
+                  { key: 'operation' as const, label: 'Operation' },
+                  { key: 'description' as const, label: 'Description' },
+                  { key: 'part' as const, label: 'Part #' },
+                  { key: 'labor' as const, label: 'Labor' },
+                  { key: 'parts' as const, label: 'Parts' },
+                  { key: 'total' as const, label: 'Total' },
+                ].map((header) => (
+                  <EstimateHeaderCell
+                    key={header.key}
+                    compact={compact}
+                    active={sort.key === header.key}
+                    direction={sort.direction}
+                    onClick={() => toggleSort(header.key)}
+                  >
+                    {header.label}
+                  </EstimateHeaderCell>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -2051,9 +2096,15 @@ function EstimateMetric({
 function EstimateHeaderCell({
   children,
   compact,
+  active,
+  direction,
+  onClick,
 }: {
   children: React.ReactNode;
   compact: boolean;
+  active?: boolean;
+  direction?: SortDirection;
+  onClick?: () => void;
 }) {
   return (
     <th
@@ -2070,7 +2121,32 @@ function EstimateHeaderCell({
         whiteSpace: 'nowrap',
       }}
     >
-      {children}
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          style={{
+            border: 0,
+            padding: 0,
+            margin: 0,
+            background: 'transparent',
+            color: active ? '#ffffff' : '#93a4ba',
+            font: 'inherit',
+            fontWeight: 900,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+        >
+          <span>{children}</span>
+          <span style={{ color: active ? '#93c5fd' : '#64748b' }}>
+            {active ? (direction === 'asc' ? '^' : 'v') : '-'}
+          </span>
+        </button>
+      ) : (
+        children
+      )}
     </th>
   );
 }
@@ -3211,6 +3287,55 @@ function getPartsReceiptSummary(job: Job) {
 }
 
 type EstimateLineForDisplay = NonNullable<Job['estimateLines']>[number];
+
+function sortEstimateLines(
+  lines: EstimateLineForDisplay[],
+  sort: EstimateSort,
+) {
+  return [...lines].sort((left, right) => {
+    const comparison = compareEstimateSortValues(
+      getEstimateSortValue(left, sort.key),
+      getEstimateSortValue(right, sort.key),
+    );
+
+    return sort.direction === 'asc' ? comparison : comparison * -1;
+  });
+}
+
+function getEstimateSortValue(
+  line: EstimateLineForDisplay,
+  key: EstimateSortKey,
+) {
+  switch (key) {
+    case 'line':
+      return Number(line.lineNumber) || 0;
+    case 'operation':
+      return formatEstimateOperation(line);
+    case 'description':
+      return line.description || '';
+    case 'part':
+      return line.partNumber || '';
+    case 'labor':
+      return line.laborAmount || line.laborHours || 0;
+    case 'parts':
+      return line.partPrice || 0;
+    case 'total':
+      return line.totalAmount || 0;
+    default:
+      return '';
+  }
+}
+
+function compareEstimateSortValues(left: string | number, right: string | number) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
 
 function formatEstimateOperation(line: EstimateLineForDisplay) {
   const kind = formatEstimateLineKind(line.lineKind);

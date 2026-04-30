@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { appBridge } from '../../services/platform/appBridge';
 import { convertEmsRepairOrderToJob } from '../../services/firebase/jobs';
 import type {
@@ -16,6 +17,19 @@ type EmsImportDraft = {
   roNumber: string;
   customerName: string;
   amount: string;
+};
+
+type SortDirection = 'asc' | 'desc';
+type EmsCandidateSortKey =
+  | 'updated'
+  | 'customer'
+  | 'ro'
+  | 'vehicle'
+  | 'amount'
+  | 'source';
+type EmsCandidateSort = {
+  key: EmsCandidateSortKey;
+  direction: SortDirection;
 };
 
 const DEFAULT_MESSAGE =
@@ -331,26 +345,47 @@ function EmsImportModal({
   const sources = snapshot?.sources ?? [];
   const isConverting = Boolean(convertingCandidateId);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<EmsCandidateSort>({
+    key: 'updated',
+    direction: 'desc',
+  });
   const filteredCandidates = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return candidates;
+    const matches = !query
+      ? candidates
+      : candidates.filter((candidate) =>
+          [
+            candidate.label,
+            candidate.familyId,
+            candidate.roNumber ?? '',
+            candidate.customerName ?? '',
+            candidate.vehicle ?? '',
+            candidate.insuranceCompany ?? '',
+            candidate.claimNumber ?? '',
+            candidate.primaryFile,
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(query),
+        );
 
-    return candidates.filter((candidate) =>
-      [
-        candidate.label,
-        candidate.familyId,
-        candidate.roNumber ?? '',
-        candidate.customerName ?? '',
-        candidate.vehicle ?? '',
-        candidate.insuranceCompany ?? '',
-        candidate.claimNumber ?? '',
-        candidate.primaryFile,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(query),
-    );
-  }, [candidates, search]);
+    return [...matches].sort((left, right) => {
+      const comparison = compareSortValues(
+        getCandidateSortValue(left, sort.key, candidateDrafts),
+        getCandidateSortValue(right, sort.key, candidateDrafts),
+      );
+
+      return sort.direction === 'asc' ? comparison : comparison * -1;
+    });
+  }, [candidates, candidateDrafts, search, sort]);
+
+  const toggleSort = (key: EmsCandidateSortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   return (
     <div
@@ -564,6 +599,34 @@ function EmsImportModal({
               outline: 'none',
             }}
           />
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
+            {[
+              { key: 'updated' as const, label: 'Updated' },
+              { key: 'customer' as const, label: 'Customer' },
+              { key: 'ro' as const, label: 'RO' },
+              { key: 'vehicle' as const, label: 'Vehicle' },
+              { key: 'amount' as const, label: 'Amount' },
+              { key: 'source' as const, label: 'Source' },
+            ].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => toggleSort(option.key)}
+                style={sortChipStyle(sort.key === option.key)}
+              >
+                {option.label}
+                {sort.key === option.key ? ` ${sort.direction === 'asc' ? '^' : 'v'}` : ''}
+              </button>
+            ))}
+          </div>
 
           <div style={{ display: 'grid', gap: 10 }}>
             {filteredCandidates.length ? (
@@ -783,6 +846,58 @@ function EmsImportModal({
       </div>
     </div>
   );
+}
+
+function getCandidateSortValue(
+  candidate: EmsImportCandidate,
+  key: EmsCandidateSortKey,
+  drafts: Record<string, EmsImportDraft>,
+) {
+  const draft = getCandidateDraft(candidate, drafts);
+
+  switch (key) {
+    case 'customer':
+      return draft.customerName || candidate.customerName || '';
+    case 'ro':
+      return draft.roNumber || candidate.roNumber || candidate.familyId;
+    case 'vehicle':
+      return candidate.vehicle || '';
+    case 'amount': {
+      const amount = Number(draft.amount || candidate.amount || 0);
+      return Number.isFinite(amount) ? amount : 0;
+    }
+    case 'source':
+      return `${candidate.location} ${candidate.source} ${candidate.fileCount}`;
+    case 'updated':
+    default:
+      return new Date(candidate.lastModifiedAt).getTime() || 0;
+  }
+}
+
+function compareSortValues(left: string | number, right: string | number) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function sortChipStyle(active: boolean): CSSProperties {
+  return {
+    border: active
+      ? '1px solid rgba(147,197,253,0.5)'
+      : '1px solid rgba(148,163,184,0.22)',
+    background: active ? 'rgba(37,99,235,0.36)' : 'rgba(15,23,42,0.74)',
+    color: active ? '#dbeafe' : '#cbd5e1',
+    fontWeight: 900,
+    fontSize: 12,
+    padding: '8px 10px',
+    borderRadius: 999,
+    cursor: 'pointer',
+  };
 }
 
 function EditableImportField({

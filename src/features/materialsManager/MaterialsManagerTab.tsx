@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type {
   MaterialsManagerInvoice,
   MaterialsManagerMaterial,
@@ -10,6 +10,21 @@ import { appBridge } from '../../services/platform/appBridge';
 type MaterialsManagerTabProps = {
   compact?: boolean;
   mobile?: boolean;
+};
+
+type SortDirection = 'asc' | 'desc';
+type InvoiceSortKey = 'invoice' | 'date' | 'items' | 'total' | 'materials';
+type MaterialSortKey =
+  | 'material'
+  | 'part'
+  | 'catalog'
+  | 'usage'
+  | 'averageCost'
+  | 'lastInvoice';
+
+type TableSort<TKey extends string> = {
+  key: TKey;
+  direction: SortDirection;
 };
 
 function MaterialsManagerTab({
@@ -24,6 +39,14 @@ function MaterialsManagerTab({
   const [snapshot, setSnapshot] = useState<MaterialsManagerSnapshot | null>(null);
   const [materialsQuery, setMaterialsQuery] = useState('');
   const [invoiceQuery, setInvoiceQuery] = useState('');
+  const [invoiceSort, setInvoiceSort] = useState<TableSort<InvoiceSortKey>>({
+    key: 'date',
+    direction: 'desc',
+  });
+  const [materialSort, setMaterialSort] = useState<TableSort<MaterialSortKey>>({
+    key: 'material',
+    direction: 'asc',
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -128,17 +151,47 @@ function MaterialsManagerTab({
     }
   };
 
-  const filteredInvoices = snapshot
-    ? snapshot.recentInvoices
-        .filter((invoice) => matchesInvoice(invoice, invoiceQuery))
-        .slice(0, compact ? 10 : 16)
-    : [];
+  const filteredInvoices = useMemo(
+    () =>
+      snapshot
+        ? sortInvoices(
+            snapshot.recentInvoices.filter((invoice) =>
+              matchesInvoice(invoice, invoiceQuery),
+            ),
+            invoiceSort,
+          ).slice(0, compact ? 10 : 16)
+        : [],
+    [compact, invoiceQuery, invoiceSort, snapshot],
+  );
 
-  const filteredMaterials = snapshot
-    ? snapshot.materials
-        .filter((material) => matchesMaterial(material, materialsQuery))
-        .slice(0, compact ? 18 : 28)
-    : [];
+  const filteredMaterials = useMemo(
+    () =>
+      snapshot
+        ? sortMaterials(
+            snapshot.materials.filter((material) =>
+              matchesMaterial(material, materialsQuery),
+            ),
+            materialSort,
+          ).slice(0, compact ? 18 : 28)
+        : [],
+    [compact, materialSort, materialsQuery, snapshot],
+  );
+
+  const toggleInvoiceSort = (key: InvoiceSortKey) => {
+    setInvoiceSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const toggleMaterialSort = (key: MaterialSortKey) => {
+    setMaterialSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   const topMaterials = snapshot
     ? [...snapshot.materials]
@@ -427,11 +480,22 @@ function MaterialsManagerTab({
                   <table style={tableStyle}>
                     <thead>
                       <tr>
-                        <th style={tableHeadStyle}>Invoice</th>
-                        <th style={tableHeadStyle}>Date</th>
-                        <th style={tableHeadStyle}>Items</th>
-                        <th style={tableHeadStyle}>Total</th>
-                        <th style={tableHeadStyle}>Materials</th>
+                        {[
+                          { key: 'invoice' as const, label: 'Invoice' },
+                          { key: 'date' as const, label: 'Date' },
+                          { key: 'items' as const, label: 'Items' },
+                          { key: 'total' as const, label: 'Total' },
+                          { key: 'materials' as const, label: 'Materials' },
+                        ].map((header) => (
+                          <SortableHead
+                            key={header.key}
+                            active={invoiceSort.key === header.key}
+                            direction={invoiceSort.direction}
+                            onClick={() => toggleInvoiceSort(header.key)}
+                          >
+                            {header.label}
+                          </SortableHead>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -539,12 +603,23 @@ function MaterialsManagerTab({
                 <table style={tableStyle}>
                   <thead>
                     <tr>
-                      <th style={tableHeadStyle}>Material</th>
-                      <th style={tableHeadStyle}>Part #</th>
-                      <th style={tableHeadStyle}>Catalog</th>
-                      <th style={tableHeadStyle}>Usage</th>
-                      <th style={tableHeadStyle}>Average Cost</th>
-                      <th style={tableHeadStyle}>Last Invoice</th>
+                      {[
+                        { key: 'material' as const, label: 'Material' },
+                        { key: 'part' as const, label: 'Part #' },
+                        { key: 'catalog' as const, label: 'Catalog' },
+                        { key: 'usage' as const, label: 'Usage' },
+                        { key: 'averageCost' as const, label: 'Average Cost' },
+                        { key: 'lastInvoice' as const, label: 'Last Invoice' },
+                      ].map((header) => (
+                        <SortableHead
+                          key={header.key}
+                          active={materialSort.key === header.key}
+                          direction={materialSort.direction}
+                          onClick={() => toggleMaterialSort(header.key)}
+                        >
+                          {header.label}
+                        </SortableHead>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -600,6 +675,96 @@ function matchesMaterial(material: MaterialsManagerMaterial, query: string) {
     material.name.toLowerCase().includes(trimmed) ||
     material.partNumber.toLowerCase().includes(trimmed)
   );
+}
+
+function sortInvoices(
+  invoices: MaterialsManagerInvoice[],
+  sort: TableSort<InvoiceSortKey>,
+) {
+  return [...invoices].sort((left, right) => {
+    const comparison = compareSortValues(
+      getInvoiceSortValue(left, sort.key),
+      getInvoiceSortValue(right, sort.key),
+    );
+
+    return sort.direction === 'asc' ? comparison : comparison * -1;
+  });
+}
+
+function getInvoiceSortValue(
+  invoice: MaterialsManagerInvoice,
+  key: InvoiceSortKey,
+) {
+  switch (key) {
+    case 'invoice':
+      return invoice.number || `Invoice ${invoice.id}`;
+    case 'date':
+      return getDateSortValue(invoice.date);
+    case 'items':
+      return invoice.lineItemCount;
+    case 'total':
+      return invoice.total;
+    case 'materials':
+      return invoice.materialNames.join(' ');
+    default:
+      return '';
+  }
+}
+
+function sortMaterials(
+  materials: MaterialsManagerMaterial[],
+  sort: TableSort<MaterialSortKey>,
+) {
+  return [...materials].sort((left, right) => {
+    const comparison = compareSortValues(
+      getMaterialSortValue(left, sort.key),
+      getMaterialSortValue(right, sort.key),
+    );
+
+    return sort.direction === 'asc' ? comparison : comparison * -1;
+  });
+}
+
+function getMaterialSortValue(
+  material: MaterialsManagerMaterial,
+  key: MaterialSortKey,
+) {
+  switch (key) {
+    case 'material':
+      return material.name;
+    case 'part':
+      return material.partNumber;
+    case 'catalog':
+      return material.netPrice;
+    case 'usage':
+      return material.usageCount;
+    case 'averageCost':
+      return material.averageUnitCost;
+    case 'lastInvoice':
+      return getDateSortValue(material.lastInvoiceDate);
+    default:
+      return '';
+  }
+}
+
+function getDateSortValue(value: string) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function compareSortValues(left: string | number, right: string | number) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
 }
 
 function formatCurrency(value: number) {
@@ -664,6 +829,45 @@ function EmptyState({ message }: { message: string }) {
     >
       {message}
     </div>
+  );
+}
+
+function SortableHead({
+  children,
+  active,
+  direction,
+  onClick,
+}: {
+  children: ReactNode;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <th style={tableHeadStyle}>
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          border: 0,
+          padding: 0,
+          margin: 0,
+          background: 'transparent',
+          color: active ? '#ffffff' : '#9fc2ff',
+          font: 'inherit',
+          fontWeight: 900,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          gap: 5,
+          alignItems: 'center',
+        }}
+      >
+        <span>{children}</span>
+        <span style={{ color: active ? '#93c5fd' : '#64748b' }}>
+          {active ? (direction === 'asc' ? '^' : 'v') : '-'}
+        </span>
+      </button>
+    </th>
   );
 }
 

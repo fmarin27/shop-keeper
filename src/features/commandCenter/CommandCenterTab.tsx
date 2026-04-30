@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { subscribeToJobs, updateJobDetails } from '../../services/firebase/jobs';
 import type { AmountStatus, Job } from '../../types/app';
 import EmsImportPanel from '../ems/EmsImportPanel';
@@ -10,6 +10,24 @@ type CommandCenterTabProps = {
 };
 
 type ViewFilter = 'active' | 'closed' | 'all';
+type SortDirection = 'asc' | 'desc';
+type CommandCenterSortKey =
+  | 'ro'
+  | 'customer'
+  | 'vehicle'
+  | 'phone'
+  | 'total'
+  | 'dueOut'
+  | 'insurance'
+  | 'claim'
+  | 'status'
+  | 'parts'
+  | 'received';
+
+type CommandCenterSort = {
+  key: CommandCenterSortKey;
+  direction: SortDirection;
+};
 
 type CommandCenterDraft = {
   roNumber: string;
@@ -36,6 +54,10 @@ function CommandCenterTab({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Job['status']>('all');
   const [viewFilter, setViewFilter] = useState<ViewFilter>('active');
+  const [sort, setSort] = useState<CommandCenterSort>({
+    key: 'dueOut',
+    direction: 'asc',
+  });
   const [detailDraft, setDetailDraft] = useState<CommandCenterDraft | null>(null);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -51,7 +73,7 @@ function CommandCenterTab({
   const filteredJobs = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
-    return jobs.filter((job) => {
+    const matches = jobs.filter((job) => {
       if (viewFilter === 'active' && job.done) {
         return false;
       }
@@ -81,7 +103,17 @@ function CommandCenterTab({
         .toLowerCase()
         .includes(normalizedSearch);
     });
-  }, [jobs, search, statusFilter, viewFilter]);
+
+    return sortCommandCenterJobs(matches, sort);
+  }, [jobs, search, sort, statusFilter, viewFilter]);
+
+  const toggleSort = (key: CommandCenterSortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   useEffect(() => {
     if (!filteredJobs.length) {
@@ -297,21 +329,26 @@ function CommandCenterTab({
                 <thead>
                   <tr>
                     {[
-                      'RO',
-                      'Customer',
-                      'Vehicle',
-                      'Phone',
-                      'Total',
-                      'Due Out',
-                      'Insurance',
-                      'Claim',
-                      'Status',
-                      'Parts',
-                      'P%',
-                    ].map((label) => (
-                      <th key={label} style={tableHeaderStyle()}>
-                        {label}
-                      </th>
+                      { key: 'ro' as const, label: 'RO' },
+                      { key: 'customer' as const, label: 'Customer' },
+                      { key: 'vehicle' as const, label: 'Vehicle' },
+                      { key: 'phone' as const, label: 'Phone' },
+                      { key: 'total' as const, label: 'Total' },
+                      { key: 'dueOut' as const, label: 'Due Out' },
+                      { key: 'insurance' as const, label: 'Insurance' },
+                      { key: 'claim' as const, label: 'Claim' },
+                      { key: 'status' as const, label: 'Status' },
+                      { key: 'parts' as const, label: 'Parts' },
+                      { key: 'received' as const, label: 'P%' },
+                    ].map((header) => (
+                      <SortableTableHeader
+                        key={header.key}
+                        active={sort.key === header.key}
+                        direction={sort.direction}
+                        onClick={() => toggleSort(header.key)}
+                      >
+                        {header.label}
+                      </SortableTableHeader>
                     ))}
                   </tr>
                 </thead>
@@ -749,6 +786,45 @@ function editInputStyle(): CSSProperties {
   };
 }
 
+function SortableTableHeader({
+  children,
+  active,
+  direction,
+  onClick,
+}: {
+  children: ReactNode;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <th style={tableHeaderStyle()}>
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          border: 0,
+          padding: 0,
+          margin: 0,
+          background: 'transparent',
+          color: active ? '#ffffff' : '#d5e3f5',
+          font: 'inherit',
+          fontWeight: 900,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          gap: 5,
+          alignItems: 'center',
+        }}
+      >
+        <span>{children}</span>
+        <span style={{ color: active ? '#93c5fd' : '#64748b' }}>
+          {active ? (direction === 'asc' ? '^' : 'v') : '-'}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 function tableHeaderStyle(): CSSProperties {
   return {
     textAlign: 'left',
@@ -852,6 +928,66 @@ function formatDate(value: string) {
   }
 
   return parsed.toLocaleDateString();
+}
+
+function sortCommandCenterJobs(jobs: Job[], sort: CommandCenterSort) {
+  return [...jobs].sort((left, right) => {
+    const comparison = compareSortValues(
+      getCommandCenterSortValue(left, sort.key),
+      getCommandCenterSortValue(right, sort.key),
+    );
+
+    return sort.direction === 'asc' ? comparison : comparison * -1;
+  });
+}
+
+function getCommandCenterSortValue(job: Job, key: CommandCenterSortKey) {
+  switch (key) {
+    case 'ro':
+      return job.roNumber;
+    case 'customer':
+      return job.customerName;
+    case 'vehicle':
+      return job.vehicle;
+    case 'phone':
+      return job.phoneNumber;
+    case 'total':
+      return job.amount ?? 0;
+    case 'dueOut':
+      return getDateSortValue(job.promiseDate);
+    case 'insurance':
+      return job.insuranceCompany || job.mitchellInsuranceCompany || '';
+    case 'claim':
+      return job.claimNumber || job.mitchellClaimNumber || '';
+    case 'status':
+      return formatStatus(job.status, job.done);
+    case 'parts':
+      return getPartsOrderedLabel(job);
+    case 'received':
+      return Number(getPartsReceivedPercent(job));
+    default:
+      return '';
+  }
+}
+
+function getDateSortValue(value: string) {
+  if (!value) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+}
+
+function compareSortValues(left: string | number, right: string | number) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
 }
 
 function getPartItems(job: Job) {

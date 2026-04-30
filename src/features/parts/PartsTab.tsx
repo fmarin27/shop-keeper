@@ -23,6 +23,12 @@ type PartBoardRow = {
 };
 
 type FilterMode = 'open' | 'requested' | 'ordered' | 'reorderNeeded' | 'received' | 'unpaid' | 'all';
+type SortDirection = 'asc' | 'desc';
+type PartsSortKey = 'job' | 'item' | 'quantity' | 'status' | 'invoice' | 'paid' | 'note';
+type PartsSort = {
+  key: PartsSortKey;
+  direction: SortDirection;
+};
 
 const FILTERS: Array<{ value: FilterMode; label: string }> = [
   { value: 'open', label: 'Open' },
@@ -38,6 +44,7 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterMode>('open');
+  const [sort, setSort] = useState<PartsSort>({ key: 'job', direction: 'asc' });
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,22 +68,28 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   );
 
   const visibleParts = useMemo(() => {
-    if (filter === 'all') {
-      return allParts;
-    }
+    let matches = allParts;
 
     if (filter === 'open') {
-      return allParts.filter(
+      matches = allParts.filter(
         ({ job, part }) => !job.done && isPartBoardItemOpen(part),
       );
+    } else if (filter === 'unpaid') {
+      matches = allParts.filter(({ part }) => !part.paidAt);
+    } else if (filter !== 'all') {
+      matches = allParts.filter(({ part }) => part.status === filter);
     }
 
-    if (filter === 'unpaid') {
-      return allParts.filter(({ part }) => !part.paidAt);
-    }
+    return sortPartRows(matches, sort);
+  }, [allParts, filter, sort]);
 
-    return allParts.filter(({ part }) => part.status === filter);
-  }, [allParts, filter]);
+  const toggleSort = (key: PartsSortKey) => {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   const stats = useMemo(() => {
     const open = allParts.filter(
@@ -219,13 +232,25 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
           >
             {!mobile ? (
               <>
-                <HeaderCell compact={compact}>Job</HeaderCell>
-                <HeaderCell compact={compact}>Item</HeaderCell>
-                <HeaderCell compact={compact}>Quantity</HeaderCell>
-                <HeaderCell compact={compact}>Status</HeaderCell>
-                <HeaderCell compact={compact}>Invoice</HeaderCell>
-                <HeaderCell compact={compact}>Paid</HeaderCell>
-                <HeaderCell compact={compact}>Note</HeaderCell>
+                {[
+                  { key: 'job' as const, label: 'Job' },
+                  { key: 'item' as const, label: 'Item' },
+                  { key: 'quantity' as const, label: 'Quantity' },
+                  { key: 'status' as const, label: 'Status' },
+                  { key: 'invoice' as const, label: 'Invoice' },
+                  { key: 'paid' as const, label: 'Paid' },
+                  { key: 'note' as const, label: 'Note' },
+                ].map((header) => (
+                  <HeaderCell
+                    key={header.key}
+                    compact={compact}
+                    active={sort.key === header.key}
+                    direction={sort.direction}
+                    onClick={() => toggleSort(header.key)}
+                  >
+                    {header.label}
+                  </HeaderCell>
+                ))}
               </>
             ) : null}
 
@@ -402,6 +427,51 @@ function isPartBoardItemOpen(part: JobPartRequest) {
   return part.status !== 'received' || !part.paidAt;
 }
 
+function sortPartRows(rows: PartBoardRow[], sort: PartsSort) {
+  return [...rows].sort((left, right) => {
+    const comparison = compareSortValues(
+      getPartSortValue(left, sort.key),
+      getPartSortValue(right, sort.key),
+    );
+
+    return sort.direction === 'asc' ? comparison : comparison * -1;
+  });
+}
+
+function getPartSortValue(row: PartBoardRow, key: PartsSortKey) {
+  switch (key) {
+    case 'job':
+      return row.job.roNumber || row.job.vehicle || row.job.customerName;
+    case 'item':
+      return row.part.name;
+    case 'quantity':
+      return Number(row.part.quantity) || row.part.quantity;
+    case 'status':
+      return (row.part.kind ?? 'part') === 'sublet'
+        ? row.part.paidAt ? 'paid' : 'unpaid'
+        : row.part.status;
+    case 'invoice':
+      return row.part.invoiceNumber ?? '';
+    case 'paid':
+      return row.part.paidAt ? new Date(row.part.paidAt).getTime() || 0 : 0;
+    case 'note':
+      return row.part.note ?? '';
+    default:
+      return '';
+  }
+}
+
+function compareSortValues(left: string | number, right: string | number) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left).localeCompare(String(right), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
 function Metric({
   label,
   value,
@@ -439,7 +509,19 @@ function Metric({
   );
 }
 
-function HeaderCell({ children, compact }: { children: ReactNode; compact: boolean }) {
+function HeaderCell({
+  children,
+  compact,
+  active,
+  direction,
+  onClick,
+}: {
+  children: ReactNode;
+  compact: boolean;
+  active?: boolean;
+  direction?: SortDirection;
+  onClick?: () => void;
+}) {
   return (
     <div
       style={{
@@ -451,7 +533,32 @@ function HeaderCell({ children, compact }: { children: ReactNode; compact: boole
         padding: '0 4px',
       }}
     >
-      {children}
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          style={{
+            border: 0,
+            padding: 0,
+            margin: 0,
+            background: 'transparent',
+            color: active ? '#ffffff' : '#93a4ba',
+            font: 'inherit',
+            fontWeight: 900,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+        >
+          <span>{children}</span>
+          <span style={{ color: active ? '#93c5fd' : '#64748b' }}>
+            {active ? (direction === 'asc' ? '^' : 'v') : '-'}
+          </span>
+        </button>
+      ) : (
+        children
+      )}
     </div>
   );
 }

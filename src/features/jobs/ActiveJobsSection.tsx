@@ -7,6 +7,7 @@ import {
 import type {
   AppMode,
   AmountStatus,
+  EmsEstimateLine,
   Job,
   JobEmsUpdateInfo,
   JobNote,
@@ -1239,6 +1240,14 @@ function ActiveJobsSection({
                         [job.id]: { name: '', quantity: '', note: '' },
                       }));
                     }}
+                    onTrackEstimatePart={(line) =>
+                      onRequestPart(job.id, {
+                        name: getEstimatePartRequestName(line),
+                        quantity: String(line.quantity || 1),
+                        note: buildEstimatePartRequestNote(line),
+                        status: appMode === 'manager' ? 'ordered' : 'requested',
+                      })
+                    }
                     onSetPartOrdered={(partId) => onSetPartOrdered(job.id, partId)}
                     onSetPartReorderNeeded={(partId) =>
                       onSetPartReorderNeeded(job.id, partId)
@@ -2187,6 +2196,7 @@ function PartsPanel({
   onPartNoteDraftChange,
   onPartInvoiceDraftChange,
   onRequestPart,
+  onTrackEstimatePart,
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
@@ -2207,6 +2217,7 @@ function PartsPanel({
   onPartNoteDraftChange: (partId: string, value: string) => void;
   onPartInvoiceDraftChange: (partId: string, value: string) => void;
   onRequestPart: () => void;
+  onTrackEstimatePart: (line: EmsEstimateLine) => void;
   onSetPartOrdered: (partId: string) => void;
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
@@ -2311,7 +2322,7 @@ function PartsPanel({
                 key={line.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) auto',
+                  gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) auto auto',
                   gap: compact ? 6 : 10,
                   padding: compact ? 9 : 10,
                   borderRadius: compact ? 10 : 12,
@@ -2337,6 +2348,9 @@ function PartsPanel({
                 >
                   Qty {line.quantity || 1} | {formatEstimatePartAmount(line)}
                 </div>
+                <ActionButton compact={compact} onClick={() => onTrackEstimatePart(line)}>
+                  {appMode === 'manager' ? 'Order This' : 'Request This'}
+                </ActionButton>
               </div>
             ))}
           </div>
@@ -3521,6 +3535,24 @@ function getOrderablePartsTotal(lines: EstimateLineForDisplay[]) {
 
 function getEstimatePartLines(job: Job) {
   return (job.estimateLines ?? []).filter(isOrderableEstimatePart);
+}
+
+function getEstimatePartRequestName(line: EmsEstimateLine) {
+  const description = String(line.description ?? '').trim();
+  const partNumber = String(line.partNumber ?? '').trim();
+
+  if (description && partNumber) return `${description} (${partNumber})`;
+  return description || partNumber || 'Estimate part';
+}
+
+function buildEstimatePartRequestNote(line: EmsEstimateLine) {
+  const details = [
+    line.lineNumber ? `EMS line ${line.lineNumber}` : 'EMS estimate line',
+    line.partNumber ? `part # ${line.partNumber}` : '',
+    getEstimatePartAmount(line) ? `estimate ${formatAmount(getEstimatePartAmount(line))}` : '',
+  ].filter(Boolean);
+
+  return `Tracked from ${details.join(' | ')}.`;
 }
 
 function formatEstimatePartAmount(line: EstimateLineForDisplay) {

@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import type { AppMode, Job, JobPartRequest, JobPartStatus } from '../../types/app';
+import type {
+  AppMode,
+  EmsEstimateLine,
+  Job,
+  JobPartRequest,
+  JobPartStatus,
+} from '../../types/app';
 import {
   markJobPartPaid,
   markJobPartReceived,
+  requestPartForJob,
   saveJobPartInvoice,
   saveJobPartNote,
   subscribeToJobs,
@@ -20,6 +27,11 @@ type PartsTabProps = {
 type PartBoardRow = {
   job: Job;
   part: JobPartRequest;
+};
+
+type EstimatePartBoardRow = {
+  job: Job;
+  line: EmsEstimateLine;
 };
 
 type FilterMode = 'open' | 'requested' | 'ordered' | 'reorderNeeded' | 'received' | 'unpaid' | 'all';
@@ -46,6 +58,7 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   const [filter, setFilter] = useState<FilterMode>('open');
   const [sort, setSort] = useState<PartsSort>({ key: 'job', direction: 'asc' });
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
+  const [savingEstimateLineId, setSavingEstimateLineId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToJobs((items) => {
@@ -64,6 +77,18 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
           part,
         })),
       ),
+    [jobs],
+  );
+
+  const estimateParts = useMemo(
+    () =>
+      jobs
+        .filter((job) => !job.done)
+        .flatMap((job) =>
+          (job.estimateLines ?? [])
+            .filter(isOrderableEstimatePart)
+            .map((line) => ({ job, line })),
+        ),
     [jobs],
   );
 
@@ -106,9 +131,10 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
       received,
       reorderNeeded,
       unpaid,
+      estimate: estimateParts.length,
       total: allParts.length,
     };
-  }, [allParts]);
+  }, [allParts, estimateParts.length]);
 
   const legacyWaitingJobs = useMemo(
     () =>
@@ -145,6 +171,23 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
       await saveJobPartNote(job, part.id, note);
     } finally {
       setSavingPartId(null);
+    }
+  };
+
+  const trackEstimatePart = async ({ job, line }: EstimatePartBoardRow) => {
+    const saveKey = `${job.id}-${line.id}`;
+    setSavingEstimateLineId(saveKey);
+
+    try {
+      await requestPartForJob(job, {
+        name: getEstimatePartName(line),
+        quantity: String(line.quantity || 1),
+        note: buildEstimatePartNote(line),
+        requestedBy: appMode,
+        status: appMode === 'manager' ? 'ordered' : 'requested',
+      });
+    } finally {
+      setSavingEstimateLineId(null);
     }
   };
 
@@ -187,10 +230,21 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
             <Metric label="Ordered" value={stats.ordered} compact={compact} tone="amber" />
             <Metric label="Received" value={stats.received} compact={compact} tone="green" />
             <Metric label="Reorder" value={stats.reorderNeeded} compact={compact} tone="red" />
-            <Metric label="Unpaid" value={stats.unpaid} compact={compact} tone="amber" />
+            <Metric label="Estimate" value={stats.estimate} compact={compact} tone="blue" />
           </div>
         </div>
       </div>
+
+      {estimateParts.length ? (
+        <EstimatePartsPanel
+          rows={estimateParts}
+          compact={compact}
+          mobile={mobile}
+          savingEstimateLineId={savingEstimateLineId}
+          onOpenJob={onOpenJob}
+          onTrackPart={(row) => void trackEstimatePart(row)}
+        />
+      ) : null}
 
       <div style={panelStyle(compact)}>
         <div
@@ -293,6 +347,159 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
         )}
       </div>
     </section>
+  );
+}
+
+function EstimatePartsPanel({
+  rows,
+  compact,
+  mobile,
+  savingEstimateLineId,
+  onOpenJob,
+  onTrackPart,
+}: {
+  rows: EstimatePartBoardRow[];
+  compact: boolean;
+  mobile: boolean;
+  savingEstimateLineId: string | null;
+  onOpenJob?: (jobId: string) => void;
+  onTrackPart: (row: EstimatePartBoardRow) => void;
+}) {
+  return (
+    <div style={panelStyle(compact)}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: compact ? 12 : 16,
+        }}
+      >
+        <div>
+          <h2 style={titleStyle(compact)}>EMS Estimate Parts</h2>
+          <p style={subtitleStyle(compact)}>
+            Parts found on synced EMS estimates. They are read-only here until you choose to track/order one.
+          </p>
+        </div>
+        <div style={estimateCountBadgeStyle(compact)}>
+          {rows.length} estimate part{rows.length === 1 ? '' : 's'}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: mobile
+            ? '1fr'
+            : 'minmax(190px, 1fr) minmax(240px, 1.3fr) 90px minmax(130px, 0.8fr) minmax(120px, 0.7fr) minmax(130px, 0.7fr)',
+          gap: compact ? 8 : 10,
+          alignItems: 'stretch',
+        }}
+      >
+        {!mobile ? (
+          <>
+            <HeaderCell compact={compact}>Job</HeaderCell>
+            <HeaderCell compact={compact}>Estimate Part</HeaderCell>
+            <HeaderCell compact={compact}>Qty</HeaderCell>
+            <HeaderCell compact={compact}>Part #</HeaderCell>
+            <HeaderCell compact={compact}>Amount</HeaderCell>
+            <HeaderCell compact={compact}>Action</HeaderCell>
+          </>
+        ) : null}
+
+        {rows.map((row) => {
+          const saveKey = `${row.job.id}-${row.line.id}`;
+          const saving = savingEstimateLineId === saveKey;
+
+          return (
+            <EstimatePartRow
+              key={saveKey}
+              row={row}
+              compact={compact}
+              mobile={mobile}
+              saving={saving}
+              onOpenJob={onOpenJob}
+              onTrackPart={onTrackPart}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EstimatePartRow({
+  row,
+  compact,
+  mobile,
+  saving,
+  onOpenJob,
+  onTrackPart,
+}: {
+  row: EstimatePartBoardRow;
+  compact: boolean;
+  mobile: boolean;
+  saving: boolean;
+  onOpenJob?: (jobId: string) => void;
+  onTrackPart: (row: EstimatePartBoardRow) => void;
+}) {
+  const { job, line } = row;
+  const jobMeta = [
+    job.roNumber ? `RO ${job.roNumber}` : '',
+    job.claimNumber ? `Claim ${job.claimNumber}` : '',
+    job.insuranceCompany ?? '',
+  ].filter(Boolean).join(' | ');
+
+  return (
+    <>
+      <div style={cellStyle(compact, mobile)}>
+        <button
+          onClick={() => onOpenJob?.(job.id)}
+          style={jobButtonStyle(compact)}
+          disabled={!onOpenJob}
+        >
+          {job.vehicle || 'Untitled job'}
+        </button>
+        <div style={mutedStyle(compact)}>{job.customerName || 'No customer'}</div>
+        <div style={mutedStyle(compact)}>{jobMeta || 'No claim summary'}</div>
+      </div>
+
+      <div style={cellStyle(compact, mobile)}>
+        <div style={{ color: '#f8fafc', fontWeight: 900 }}>
+          {line.description || 'Estimate part'}
+        </div>
+        <div style={mutedStyle(compact)}>
+          EMS line {line.lineNumber || '-'} | estimate only
+        </div>
+      </div>
+
+      <div style={cellStyle(compact, mobile)}>
+        <div style={{ fontWeight: 900 }}>{line.quantity || 1}</div>
+      </div>
+
+      <div style={cellStyle(compact, mobile)}>
+        <div style={{ fontWeight: 800 }}>{line.partNumber || '-'}</div>
+      </div>
+
+      <div style={cellStyle(compact, mobile)}>
+        <div style={{ fontWeight: 900, color: '#dbeafe' }}>
+          {formatMoney(getEstimatePartAmount(line))}
+        </div>
+      </div>
+
+      <div style={cellStyle(compact, mobile)}>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onTrackPart(row)}
+          style={trackButtonStyle(saving, compact)}
+        >
+          {saving ? 'Adding...' : 'Track/Order'}
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -436,6 +643,51 @@ function sortPartRows(rows: PartBoardRow[], sort: PartsSort) {
 
     return sort.direction === 'asc' ? comparison : comparison * -1;
   });
+}
+
+function isOrderableEstimatePart(line: EmsEstimateLine) {
+  if (isRefinishEstimateLine(line)) return false;
+  if (line.isOrderablePart) return true;
+
+  const kind = String(line.lineKind ?? '').trim().toLowerCase();
+  if (kind) return kind === 'part';
+
+  return Boolean(line.partNumber) && Number(line.partPrice) > 0;
+}
+
+function isRefinishEstimateLine(line: EmsEstimateLine) {
+  const label = [
+    line.operationLabel,
+    line.operationCategory,
+    line.laborType,
+  ]
+    .map((value) => String(value ?? '').toLowerCase())
+    .join(' ');
+
+  return label.includes('refinish') || label.includes('paint');
+}
+
+function getEstimatePartName(line: EmsEstimateLine) {
+  const description = String(line.description ?? '').trim();
+  const partNumber = String(line.partNumber ?? '').trim();
+
+  if (description && partNumber) return `${description} (${partNumber})`;
+  return description || partNumber || 'Estimate part';
+}
+
+function getEstimatePartAmount(line: EmsEstimateLine) {
+  const amount = Number(line.partPrice ?? 0);
+  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
+function buildEstimatePartNote(line: EmsEstimateLine) {
+  const details = [
+    line.lineNumber ? `EMS line ${line.lineNumber}` : 'EMS estimate line',
+    line.partNumber ? `part # ${line.partNumber}` : '',
+    getEstimatePartAmount(line) ? `estimate ${formatMoney(getEstimatePartAmount(line))}` : '',
+  ].filter(Boolean);
+
+  return `Tracked from ${details.join(' | ')}.`;
 }
 
 function getPartSortValue(row: PartBoardRow, key: PartsSortKey) {
@@ -618,6 +870,18 @@ function legacyBannerStyle(compact: boolean): CSSProperties {
   };
 }
 
+function estimateCountBadgeStyle(compact: boolean): CSSProperties {
+  return {
+    borderRadius: 999,
+    border: '1px solid rgba(147,197,253,0.36)',
+    background: 'rgba(37,99,235,0.2)',
+    color: '#dbeafe',
+    padding: compact ? '7px 10px' : '9px 12px',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+  };
+}
+
 function cellStyle(compact: boolean, mobile: boolean): CSSProperties {
   return {
     minHeight: compact ? 54 : 68,
@@ -697,6 +961,21 @@ function paidButtonStyle(paid: boolean, compact: boolean): CSSProperties {
   };
 }
 
+function trackButtonStyle(saving: boolean, compact: boolean): CSSProperties {
+  return {
+    width: '100%',
+    borderRadius: compact ? 10 : 12,
+    border: '1px solid rgba(96,165,250,0.42)',
+    background: saving ? 'rgba(71,85,105,0.72)' : '#1d4ed8',
+    color: '#f8fafc',
+    padding: compact ? '7px 8px' : '9px 10px',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+    cursor: saving ? 'wait' : 'pointer',
+    opacity: saving ? 0.82 : 1,
+  };
+}
+
 function emptyStateStyle(compact: boolean): CSSProperties {
   return {
     borderRadius: compact ? 14 : 18,
@@ -708,6 +987,14 @@ function emptyStateStyle(compact: boolean): CSSProperties {
     fontWeight: 800,
     textAlign: 'center',
   };
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function formatDateTime(value: string) {

@@ -129,6 +129,7 @@ function getLineDescription(line) {
 
 function mapEstimateLines(lines) {
   return (Array.isArray(lines) ? lines : []).map((line, index) => {
+    const raw = line.raw_fields || {};
     const lineNumber = firstText(line.line_number, index + 1);
     const partNumber = getLinePartNumber(line);
 
@@ -148,43 +149,182 @@ function mapEstimateLines(lines) {
       laborAmount: toNumber(line.labor_amount),
       paintHours: toNumber(line.paint_hours),
       paintAmount: toNumber(line.paint_amount),
-      partPrice: toNumber(line.part_price),
+      partPrice: toNumber(line.part_price) || toNumber(raw.ACT_PRICE),
       totalAmount: toNumber(line.total_amount),
+      lineKind: text(line.line_kind),
+      operationLabel: text(line.operation_label),
+      isOrderablePart: line.is_orderable_part === true,
+      isSublet: line.is_sublet === true,
+      rawFields: raw,
     };
   });
 }
 
+function isTruthyRawFlag(value) {
+  return ['true', 'yes', '1', 'y'].includes(text(value).toLowerCase());
+}
+
+function isSubletCandidate(line) {
+  if (line.isSublet) return true;
+
+  const raw = line.rawFields || {};
+  const description = text(line.description).toLowerCase();
+  const partType = text(line.partType).toLowerCase();
+
+  return (
+    isTruthyRawFlag(raw.MISC_SUBLT) ||
+    partType.includes('sublet') ||
+    partType === 'sub' ||
+    description.includes('sublet') ||
+    description.includes('tow bill') ||
+    description.includes('towing')
+  );
+}
+
+function isRefinishOnlyOperation(line) {
+  const operationLabel = text(line.operationLabel).toLowerCase();
+  const operationCategory = text(line.operationCategory).toLowerCase();
+  const laborType = text(line.laborType).toLowerCase();
+
+  return [operationLabel, operationCategory, laborType].some(
+    (value) => value.includes('refinish') || value.includes('paint'),
+  );
+}
+
 function isPartCandidate(line) {
+  if (isRefinishOnlyOperation(line)) return false;
+  if (line.isOrderablePart) return true;
+  if (line.lineKind) return false;
+
   const description = text(line.description).toLowerCase();
   const partNumber = text(line.partNumber);
-  const partType = text(line.partType);
 
   if (!line.description && !partNumber) return false;
   if (description.includes('markup')) return false;
   if (description.includes('tow bill')) return false;
   if (description.includes('scan')) return false;
+  if (isSubletCandidate(line)) return false;
 
-  return Boolean(partNumber) || line.partPrice > 0 || /^pa/i.test(partType);
+  return line.partPrice > 0 && Boolean(partNumber);
+}
+
+function seededPartName(line) {
+  const description = text(line.description);
+  const partNumber = text(line.partNumber);
+
+  if (!partNumber) return description;
+  if (!description) return partNumber;
+
+  return `${description} (${partNumber})`;
+}
+
+function extractSeededPartNumber(name) {
+  const match = text(name).match(/\(([A-Z0-9][A-Z0-9.-]{4,})\)\s*$/i);
+
+  return match?.[1] || '';
+}
+
+function seededPartIdentity(kind, name, partNumber = '') {
+  const identitySource = partNumber ? `part-number-${partNumber}` : `name-${name}`;
+
+  return slug(`${kind || 'part'}-${identitySource}`);
+}
+
+function seededPartIdentityFromLine(line, kind) {
+  return seededPartIdentity(kind, seededPartName(line), line.partNumber);
+}
+
+function seededPartIdentityFromPart(part) {
+  return seededPartIdentity(
+    part.kind || 'part',
+    part.name,
+    extractSeededPartNumber(part.name),
+  );
+}
+
+function partStatusRank(status) {
+  switch (status) {
+    case 'received':
+      return 4;
+    case 'ordered':
+      return 3;
+    case 'reorderNeeded':
+      return 2;
+    case 'requested':
+    default:
+      return 1;
+  }
+}
+
+function pickPreferredPart(current, candidate) {
+  if (!current) return candidate;
+  if (candidate.paidAt && !current.paidAt) return candidate;
+  if (candidate.receivedAt && !current.receivedAt) return candidate;
+  if (partStatusRank(candidate.status) > partStatusRank(current.status)) {
+    return candidate;
+  }
+  if (candidate.invoiceNumber && !current.invoiceNumber) return candidate;
+
+  return current;
+}
+
+function isEmsSeededPart(part) {
+  return (
+    text(part.id).startsWith('ems-part-') ||
+    text(part.note).toLowerCase().startsWith('seeded from ems line')
+  );
 }
 
 function seedPartsFromEstimate(estimateLines, existingParts) {
-  if (Array.isArray(existingParts) && existingParts.length) {
-    return existingParts;
-  }
+  const previousParts = Array.isArray(existingParts) ? existingParts : [];
+  const manualParts = previousParts.filter((part) => !isEmsSeededPart(part));
+  const previousEmsPartsById = new Map(
+    previousParts.filter(isEmsSeededPart).map((part) => [part.id, part]),
+  );
+  const previousEmsPartsByIdentity = new Map();
 
-  return estimateLines
-    .filter(isPartCandidate)
-    .map((line) => ({
-      id: `ems-part-${slug(line.id)}`,
-      name: line.partNumber
-        ? `${line.description} (${line.partNumber})`
-        : line.description,
-      quantity: String(line.quantity || 1),
-      requestedBy: 'manager',
-      status: 'requested',
-      note: `Seeded from EMS line ${line.lineNumber}. Verify order status.`,
-      createdAt: new Date().toISOString(),
-    }));
+  previousParts.filter(isEmsSeededPart).forEach((part) => {
+    const identity = seededPartIdentityFromPart(part);
+    previousEmsPartsByIdentity.set(
+      identity,
+      pickPreferredPart(previousEmsPartsByIdentity.get(identity), part),
+    );
+  });
+
+  const seededPartsByIdentity = new Map();
+
+  estimateLines
+    .filter((line) => isPartCandidate(line) || isSubletCandidate(line))
+    .forEach((line) => {
+      const kind = isSubletCandidate(line) ? 'sublet' : 'part';
+      const identity = seededPartIdentityFromLine(line, kind);
+      const legacyId = `ems-part-${slug(line.id)}`;
+      const previous =
+        previousEmsPartsByIdentity.get(identity) || previousEmsPartsById.get(legacyId);
+      const generatedNote = `Seeded from EMS line ${line.lineNumber}. Verify ${
+        kind === 'sublet' ? 'invoice/payment' : 'order status'
+      }.`;
+      const seededPart = {
+        id: `ems-part-${identity}`,
+        kind,
+        name: seededPartName(line),
+        quantity: String(line.quantity || 1),
+        requestedBy: previous?.requestedBy || 'manager',
+        status: previous?.status || 'requested',
+        invoiceNumber: previous?.invoiceNumber || '',
+        note: previous?.note?.trim() ? previous.note : generatedNote,
+        createdAt: previous?.createdAt || new Date().toISOString(),
+        ...(previous?.receivedAt ? { receivedAt: previous.receivedAt } : {}),
+        ...(previous?.paidAt ? { paidAt: previous.paidAt } : {}),
+      };
+
+      seededPartsByIdentity.set(
+        identity,
+        pickPreferredPart(seededPartsByIdentity.get(identity), seededPart),
+      );
+    });
+
+  return [...manualParts, ...seededPartsByIdentity.values()];
 }
 
 function buildJobPayload(normalized, existing, sourceFile) {
@@ -231,9 +371,9 @@ function buildJobPayload(normalized, existing, sourceFile) {
     status: existing?.status ?? 'notStarted',
     done: existing?.done ?? false,
     promiseDate: existing?.promiseDate ?? '',
-    partsWaiting:
-      existing?.partsWaiting ??
-      seededParts.some((part) => part.status !== 'received'),
+    partsWaiting: seededParts.some(
+      (part) => (part.kind || 'part') === 'part' && part.status !== 'received',
+    ),
     partsRequests: seededParts,
     textNotes: existing?.textNotes ?? [],
     photos: existing?.photos ?? [],

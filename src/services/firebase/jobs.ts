@@ -342,6 +342,7 @@ function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
 }
 
 function isPartCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
+  if (isRefinishOnlyOperation(line)) return false;
   if (line.isOrderablePart) return true;
   if (line.lineKind) return false;
 
@@ -378,6 +379,106 @@ function isSubletCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
   );
 }
 
+function isRefinishOnlyOperation(line: ReturnType<typeof mapEstimateLines>[number]) {
+  const operationLabel = text(line.operationLabel).toLowerCase();
+  const operationCategory = text(line.operationCategory).toLowerCase();
+  const laborType = text(line.laborType).toLowerCase();
+
+  return [operationLabel, operationCategory, laborType].some(
+    (value) => value.includes('refinish') || value.includes('paint'),
+  );
+}
+
+function seededPartName(line: ReturnType<typeof mapEstimateLines>[number]) {
+  const description = text(line.description);
+  const partNumber = text(line.partNumber);
+
+  if (!partNumber) return description;
+  if (!description) return partNumber;
+
+  return `${description} (${partNumber})`;
+}
+
+function seededPartIdentity(
+  kind: JobPartRequest['kind'],
+  name: string,
+  partNumber = '',
+) {
+  const identitySource = partNumber ? `part-number-${partNumber}` : `name-${name}`;
+
+  return slug(`${kind ?? 'part'}-${identitySource}`);
+}
+
+function seededPartIdentityFromLine(
+  line: ReturnType<typeof mapEstimateLines>[number],
+  kind: JobPartRequest['kind'],
+) {
+  return seededPartIdentity(kind, seededPartName(line), line.partNumber);
+}
+
+function seededPartIdentityFromPart(part: JobPartRequest) {
+  return seededPartIdentity(
+    part.kind ?? 'part',
+    part.name,
+    extractSeededPartNumber(part.name),
+  );
+}
+
+function extractSeededPartNumber(name: string) {
+  const match = text(name).match(/\(([A-Z0-9][A-Z0-9.-]{4,})\)\s*$/i);
+
+  return match?.[1] ?? '';
+}
+
+function partStatusRank(status: JobPartRequest['status']) {
+  switch (status) {
+    case 'received':
+      return 4;
+    case 'ordered':
+      return 3;
+    case 'reorderNeeded':
+      return 2;
+    case 'requested':
+    default:
+      return 1;
+  }
+}
+
+function pickPreferredPart(
+  current: JobPartRequest | undefined,
+  candidate: JobPartRequest,
+) {
+  if (!current) return candidate;
+  if (candidate.paidAt && !current.paidAt) return candidate;
+  if (candidate.receivedAt && !current.receivedAt) return candidate;
+  if (partStatusRank(candidate.status) > partStatusRank(current.status)) {
+    return candidate;
+  }
+  if (candidate.invoiceNumber && !current.invoiceNumber) return candidate;
+
+  return current;
+}
+
+function dedupeEmsSeededParts(parts: JobPartRequest[]) {
+  const manualParts: JobPartRequest[] = [];
+  const seededPartsByIdentity = new Map<string, JobPartRequest>();
+
+  parts.forEach((part) => {
+    if (!isEmsSeededPart(part)) {
+      manualParts.push(part);
+      return;
+    }
+
+    const identity = seededPartIdentityFromPart(part);
+    seededPartsByIdentity.set(
+      identity,
+      pickPreferredPart(seededPartsByIdentity.get(identity), part),
+    );
+  });
+
+  return [...manualParts, ...seededPartsByIdentity.values()];
+}
+
 function seedPartsFromEstimate(
   estimateLines: ReturnType<typeof mapEstimateLines>,
   existingParts: JobPartRequest[] | undefined,
@@ -387,23 +488,32 @@ function seedPartsFromEstimate(
   const previousEmsPartsById = new Map(
     previousParts.filter(isEmsSeededPart).map((part) => [part.id, part]),
   );
+  const previousEmsPartsByIdentity = new Map<string, JobPartRequest>();
+  previousParts.filter(isEmsSeededPart).forEach((part) => {
+    const identity = seededPartIdentityFromPart(part);
+    previousEmsPartsByIdentity.set(
+      identity,
+      pickPreferredPart(previousEmsPartsByIdentity.get(identity), part),
+    );
+  });
 
-  const seededParts = estimateLines
+  const seededPartsByIdentity = new Map<string, JobPartRequest>();
+  estimateLines
     .filter((line) => isPartCandidate(line) || isSubletCandidate(line))
-    .map((line) => {
-      const id = `ems-part-${slug(line.id)}`;
-      const previous = previousEmsPartsById.get(id);
+    .forEach((line) => {
       const kind = isSubletCandidate(line) ? 'sublet' as const : 'part' as const;
+      const identity = seededPartIdentityFromLine(line, kind);
+      const legacyId = `ems-part-${slug(line.id)}`;
+      const id = `ems-part-${identity}`;
+      const previous =
+        previousEmsPartsByIdentity.get(identity) ?? previousEmsPartsById.get(legacyId);
       const generatedNote = `Seeded from EMS line ${line.lineNumber}. Verify ${
         kind === 'sublet' ? 'invoice/payment' : 'order status'
       }.`;
-
-      return {
+      const seededPart: JobPartRequest = {
         id,
         kind,
-        name: line.partNumber
-          ? `${line.description} (${line.partNumber})`
-          : line.description,
+        name: seededPartName(line),
         quantity: String(line.quantity || 1),
         requestedBy: previous?.requestedBy ?? ('manager' as const),
         status: previous?.status ?? ('requested' as const),
@@ -413,9 +523,14 @@ function seedPartsFromEstimate(
         ...(previous?.receivedAt ? { receivedAt: previous.receivedAt } : {}),
         ...(previous?.paidAt ? { paidAt: previous.paidAt } : {}),
       };
+
+      seededPartsByIdentity.set(
+        identity,
+        pickPreferredPart(seededPartsByIdentity.get(identity), seededPart),
+      );
     });
 
-  return [...manualParts, ...seededParts];
+  return [...manualParts, ...seededPartsByIdentity.values()];
 }
 
 function isEmsSeededPart(part: JobPartRequest) {
@@ -437,26 +552,42 @@ function sanitizeEmsSeededParts(
   parts: JobPartRequest[],
   estimateLines: Job['estimateLines'],
 ) {
-  if (!estimateLines?.length || !parts.some(isEmsSeededPart)) {
+  if (!parts.some(isEmsSeededPart)) {
     return parts;
   }
 
-  const linesByKey = new Map(
-    estimateLines.map((line) => [slug(line.id), line]),
-  );
+  if (!estimateLines?.length) {
+    return dedupeEmsSeededParts(parts);
+  }
 
-  return parts.filter((part) => {
+  const validSeededLineKeys = new Set<string>();
+  const validSeededIdentities = new Set<string>();
+
+  estimateLines.forEach((line) => {
+    if (!isPartCandidate(line) && !isSubletCandidate(line)) {
+      return;
+    }
+
+    const kind = isSubletCandidate(line) ? 'sublet' as const : 'part' as const;
+    validSeededLineKeys.add(slug(line.id));
+    validSeededIdentities.add(seededPartIdentityFromLine(line, kind));
+  });
+
+  const filteredParts = parts.filter((part) => {
     if (!isEmsSeededPart(part)) {
       return true;
     }
 
-    const line = linesByKey.get(emsPartLineKey(part));
-    if (!line) {
+    if (validSeededIdentities.has(seededPartIdentityFromPart(part))) {
       return true;
     }
 
-    return isPartCandidate(line) || isSubletCandidate(line);
+    const legacyLineKey = emsPartLineKey(part);
+
+    return legacyLineKey ? validSeededLineKeys.has(legacyLineKey) : true;
   });
+
+  return dedupeEmsSeededParts(filteredParts);
 }
 
 function hasOpenParts(parts: JobPartRequest[]) {

@@ -5,7 +5,9 @@ import type {
   AppMode,
   AmountStatus,
   CreateJobInput,
+  EmsImportCandidatesSnapshot,
   Job,
+  JobEmsUpdateInfo,
   JobPartStatus,
   JobStatus,
   UpdateJobDetailsInput,
@@ -30,10 +32,12 @@ import {
   setActiveJobPosition,
   subscribeToJobs,
   undoJobDone,
+  updateJobFromEmsRepairOrder,
   updateJobPartStatus,
   updateJobDetails,
   updateJobStatus,
 } from '../../services/firebase/jobs';
+import { appBridge } from '../../services/platform/appBridge';
 
 type JobsTabProps = {
   showAddJob?: boolean;
@@ -100,6 +104,11 @@ function JobsTab({
 }: JobsTabProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [emsCandidatesSnapshot, setEmsCandidatesSnapshot] =
+    useState<EmsImportCandidatesSnapshot | null>(null);
+  const [scanningEmsUpdates, setScanningEmsUpdates] = useState(false);
+  const [emsUpdateMessage, setEmsUpdateMessage] = useState<string | null>(null);
+  const [updatingEmsJobId, setUpdatingEmsJobId] = useState<string | null>(null);
 
   const [showAddJobModal, setShowAddJobModal] = useState(false);
   const [addJobForm, setAddJobForm] = useState<AddJobFormState>(initialFormState);
@@ -126,6 +135,46 @@ function JobsTab({
     );
   };
 
+  const refreshEmsUpdates = async (options: { silent?: boolean } = {}) => {
+    if (!appBridge.isDesktop()) {
+      return null;
+    }
+
+    if (!options.silent) {
+      setScanningEmsUpdates(true);
+      setEmsUpdateMessage(null);
+    }
+
+    try {
+      const snapshot = await appBridge.listEmsImportCandidates();
+      setEmsCandidatesSnapshot(snapshot);
+
+      if (!options.silent) {
+        setEmsUpdateMessage(
+          `EMS scan found ${snapshot.candidates.length} watched bundle${
+            snapshot.candidates.length === 1 ? '' : 's'
+          }. Jobs with newer EMS files will be highlighted.`,
+        );
+      }
+
+      return snapshot;
+    } catch (error) {
+      if (!options.silent) {
+        setEmsUpdateMessage(
+          error instanceof Error
+            ? `EMS scan failed: ${error.message}`
+            : 'EMS scan failed.',
+        );
+      }
+
+      return null;
+    } finally {
+      if (!options.silent) {
+        setScanningEmsUpdates(false);
+      }
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = subscribeToJobs((nextJobs) => {
       setJobs(nextJobs);
@@ -134,6 +183,19 @@ function JobsTab({
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (mobile || !appBridge.isDesktop()) {
+      return undefined;
+    }
+
+    void refreshEmsUpdates({ silent: true });
+    const intervalId = window.setInterval(() => {
+      void refreshEmsUpdates({ silent: true });
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [mobile]);
 
   const activeJobs = useMemo(
     () =>
@@ -161,6 +223,13 @@ function JobsTab({
         .sort((a, b) => a.vehicle.localeCompare(b.vehicle)),
     [jobs],
   );
+
+  const emsUpdatesByJobId = useMemo(
+    () => buildEmsUpdateMap(jobs, emsCandidatesSnapshot),
+    [jobs, emsCandidatesSnapshot],
+  );
+
+  const emsUpdateCount = Object.keys(emsUpdatesByJobId).length;
 
   const visibleActiveJobs = useMemo(() => activeJobs, [activeJobs]);
 
@@ -195,6 +264,40 @@ function JobsTab({
     if (!confirmed) return;
 
     await deleteJob(jobId);
+  };
+
+  const handleUpdateJobFromEms = async (jobId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    const emsUpdate = emsUpdatesByJobId[jobId];
+    if (!job || !emsUpdate) return;
+
+    try {
+      setUpdatingEmsJobId(jobId);
+      setEmsUpdateMessage(
+        `Updating RO ${job.roNumber || job.vehicle} from ${emsUpdate.sourceLabel}...`,
+      );
+
+      const conversion = await appBridge.convertEmsImportCandidate(emsUpdate.candidate);
+      const result = await updateJobFromEmsRepairOrder(
+        job,
+        conversion.repairOrder,
+        conversion.selectedPath,
+        { sourceModifiedAt: emsUpdate.candidate.lastModifiedAt },
+      );
+
+      setEmsUpdateMessage(
+        `RO ${result.roNumber} updated from EMS. ${result.lineCount} estimate lines and ${result.partCount} material items are now on the job.`,
+      );
+      await refreshEmsUpdates({ silent: true });
+    } catch (error) {
+      console.error('Failed to update job from EMS:', error);
+      const message =
+        error instanceof Error ? error.message : 'Could not update this RO from EMS.';
+      setEmsUpdateMessage(`EMS update failed: ${message}`);
+      alert(message);
+    } finally {
+      setUpdatingEmsJobId(null);
+    }
   };
 
   const handleAddTextNote = async (jobId: string, text: string) => {
@@ -452,6 +555,69 @@ function JobsTab({
   return (
     <>
       <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
+        {appBridge.isDesktop() && !mobile ? (
+          <div
+            style={{
+              borderRadius: compact ? 14 : 18,
+              padding: compact ? '10px 12px' : '12px 16px',
+              background:
+                emsUpdateCount > 0
+                  ? 'linear-gradient(135deg, rgba(180,83,9,0.32), rgba(37,99,235,0.18))'
+                  : 'rgba(15,23,42,0.62)',
+              border:
+                emsUpdateCount > 0
+                  ? '1px solid rgba(251,191,36,0.42)'
+                  : '1px solid rgba(148,163,184,0.18)',
+              color: emsUpdateCount > 0 ? '#fef3c7' : '#cbd5e1',
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              boxShadow:
+                emsUpdateCount > 0
+                  ? '0 12px 28px rgba(180,83,9,0.12)'
+                  : 'none',
+            }}
+          >
+            <div
+              style={{
+                fontSize: compact ? 12 : 13,
+                fontWeight: 800,
+                lineHeight: 1.45,
+              }}
+            >
+              {emsUpdateCount > 0
+                ? `${emsUpdateCount} RO${emsUpdateCount === 1 ? '' : 's'} have newer EMS updates ready.`
+                : emsUpdateMessage ?? 'EMS update watch is ready. Scan to check for supplements or changed estimate files.'}
+              {emsUpdateCount > 0 && emsUpdateMessage ? ` ${emsUpdateMessage}` : ''}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                void refreshEmsUpdates();
+              }}
+              disabled={scanningEmsUpdates || Boolean(updatingEmsJobId)}
+              style={{
+                border: '1px solid rgba(251,191,36,0.42)',
+                background: scanningEmsUpdates
+                  ? 'rgba(51,65,85,0.9)'
+                  : 'linear-gradient(180deg, rgba(217,119,6,0.92), rgba(180,83,9,0.92))',
+                color: '#fff7ed',
+                fontWeight: 900,
+                fontSize: compact ? 12 : 13,
+                padding: compact ? '8px 11px' : '10px 14px',
+                borderRadius: 12,
+                cursor: scanningEmsUpdates ? 'not-allowed' : 'pointer',
+                opacity: scanningEmsUpdates ? 0.72 : 1,
+              }}
+            >
+              {scanningEmsUpdates ? 'Checking EMS...' : 'Check EMS Updates'}
+            </button>
+          </div>
+        ) : null}
+
         {showAddJob ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -501,6 +667,9 @@ function JobsTab({
           onChangeStatus={handleChangeStatus}
           onMarkDone={handleMarkDone}
           onDeleteJob={handleDeleteJob}
+          emsUpdatesByJobId={emsUpdatesByJobId}
+          updatingEmsJobId={updatingEmsJobId}
+          onUpdateFromEms={handleUpdateJobFromEms}
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
           onAddPhoto={handleAddPhoto}
@@ -539,6 +708,9 @@ function JobsTab({
           onUpdateJobDetails={handleUpdateJobDetails}
           onUndoDone={handleUndoDone}
           onDeleteJob={handleDeleteJob}
+          emsUpdatesByJobId={emsUpdatesByJobId}
+          updatingEmsJobId={updatingEmsJobId}
+          onUpdateFromEms={handleUpdateJobFromEms}
         />
       </div>
 
@@ -1040,6 +1212,111 @@ function getNextStatus(status: JobStatus): JobStatus {
   }
 
   return ACTIVE_JOB_STATUSES[(currentIndex + 1) % ACTIVE_JOB_STATUSES.length];
+}
+
+function buildEmsUpdateMap(
+  jobs: Job[],
+  snapshot: EmsImportCandidatesSnapshot | null,
+): Record<string, JobEmsUpdateInfo> {
+  if (!snapshot?.candidates.length) {
+    return {};
+  }
+
+  return jobs.reduce<Record<string, JobEmsUpdateInfo>>((updates, job) => {
+    const candidate = snapshot.candidates
+      .filter((item) => candidateMatchesJob(item, job))
+      .sort(
+        (a, b) =>
+          getTimestamp(b.lastModifiedAt) - getTimestamp(a.lastModifiedAt),
+      )[0];
+
+    if (!candidate || !isCandidateNewerThanJob(candidate, job)) {
+      return updates;
+    }
+
+    updates[job.id] = {
+      candidate,
+      sourceLabel: `${candidate.source.toUpperCase()} ${candidate.familyId}`,
+      lastModifiedAt: candidate.lastModifiedAt,
+    };
+
+    return updates;
+  }, {});
+}
+
+function candidateMatchesJob(
+  candidate: EmsImportCandidatesSnapshot['candidates'][number],
+  job: Job,
+) {
+  const familyId = normalizeIdentifier(candidate.familyId);
+  const candidateRo = normalizeIdentifier(candidate.roNumber);
+  const jobEstimateIds = [
+    job.emsFamilyId,
+    job.externalEstimateId,
+    job.sourceEstimateId,
+    job.sourceOpportunityNumber,
+  ]
+    .map(normalizeIdentifier)
+    .filter((value) => value.length >= 5);
+  const jobRo = normalizeIdentifier(job.roNumber);
+
+  if (familyId && jobEstimateIds.some((id) => identifiersMatch(id, familyId))) {
+    return true;
+  }
+
+  if (candidateRo && jobRo && candidateRo === jobRo) {
+    return true;
+  }
+
+  return false;
+}
+
+function identifiersMatch(left: string, right: string) {
+  if (left === right) {
+    return true;
+  }
+
+  if (left.length >= 6 && right.length >= 6) {
+    return left.endsWith(right) || right.endsWith(left);
+  }
+
+  return false;
+}
+
+function isCandidateNewerThanJob(
+  candidate: EmsImportCandidatesSnapshot['candidates'][number],
+  job: Job,
+) {
+  const candidateTimestamp = getTimestamp(candidate.lastModifiedAt);
+  const lastKnownTimestamp = getTimestamp(
+    job.lastEmsSourceModifiedAt || job.lastEmsSyncAt || '',
+  );
+
+  if (!lastKnownTimestamp) {
+    return true;
+  }
+
+  if (!candidateTimestamp) {
+    return false;
+  }
+
+  return candidateTimestamp > lastKnownTimestamp + 1000;
+}
+
+function normalizeIdentifier(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function getTimestamp(value: string | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 export default JobsTab;

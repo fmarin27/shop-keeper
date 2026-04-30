@@ -8,6 +8,7 @@ import type {
   AppMode,
   AmountStatus,
   Job,
+  JobEmsUpdateInfo,
   JobNote,
   JobPhoto,
   JobPartRequest,
@@ -25,6 +26,9 @@ type ActiveJobsSectionProps = {
   onChangeStatus: (jobId: string) => void;
   onMarkDone: (jobId: string) => void;
   onDeleteJob: (jobId: string) => Promise<void> | void;
+  emsUpdatesByJobId?: Record<string, JobEmsUpdateInfo>;
+  updatingEmsJobId?: string | null;
+  onUpdateFromEms?: (jobId: string) => Promise<void> | void;
   onAddTextNote: (jobId: string, text: string) => void;
   onAddAudioNote: (jobId: string, file: Blob) => Promise<void> | void;
   onAddPhoto: (
@@ -74,6 +78,9 @@ function ActiveJobsSection({
   onChangeStatus,
   onMarkDone,
   onDeleteJob,
+  emsUpdatesByJobId = {},
+  updatingEmsJobId = null,
+  onUpdateFromEms,
   onAddTextNote,
   onAddAudioNote,
   onAddPhoto,
@@ -468,6 +475,9 @@ function ActiveJobsSection({
             promiseDate: job.promiseDate,
           };
           const isSavingDetailsThisJob = savingJobDetailsId === job.id;
+          const emsUpdate = emsUpdatesByJobId[job.id];
+          const hasEmsUpdate = Boolean(emsUpdate);
+          const isUpdatingEmsThisJob = updatingEmsJobId === job.id;
 
           return (
             <div
@@ -491,9 +501,13 @@ function ActiveJobsSection({
                       : '2px solid rgba(34,197,94,0.88)'
                     : isFocused
                     ? '2px solid rgba(96,165,250,0.72)'
+                    : hasEmsUpdate
+                    ? '2px solid rgba(251,191,36,0.82)'
                     : '2px solid rgba(162,177,198,0.34)',
                 boxShadow: isFocused
                   ? '0 0 0 1px rgba(191,219,254,0.24), 0 0 28px rgba(96,165,250,0.18)'
+                  : hasEmsUpdate
+                  ? '0 0 0 1px rgba(253,224,71,0.22), 0 0 30px rgba(251,191,36,0.2), 0 10px 24px rgba(0,0,0,0.12)'
                   : '0 10px 24px rgba(0,0,0,0.12)',
                 overflow: 'hidden',
                 opacity: draggedJobId === job.id ? 0.76 : 1,
@@ -561,6 +575,15 @@ function ActiveJobsSection({
                       >
                         {job.vehicle}
                       </div>
+
+                      {hasEmsUpdate ? (
+                        <span
+                          title={`Updated ${formatDateTime(emsUpdate?.lastModifiedAt ?? '')}`}
+                          style={emsUpdateBadgeStyle(compact)}
+                        >
+                          EMS UPDATE READY
+                        </span>
+                      ) : null}
 
                       {!mobile ? (
                       <div
@@ -750,6 +773,20 @@ function ActiveJobsSection({
                       {statusLabel(job.status)}
                     </span>
 
+                    {hasEmsUpdate && onUpdateFromEms ? (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onUpdateFromEms(job.id);
+                        }}
+                        disabled={isUpdatingEmsThisJob}
+                        title={`Update from ${emsUpdate?.sourceLabel ?? 'EMS'}`}
+                        style={emsUpdateButtonStyle(compact)}
+                      >
+                        {isUpdatingEmsThisJob ? 'Updating EMS...' : 'Update from EMS'}
+                      </button>
+                    ) : null}
+
                     {!narrowLayout ? (
                       <button
                         onClick={(event) => {
@@ -826,6 +863,11 @@ function ActiveJobsSection({
                       Promise: {formatDate(job.promiseDate)}
                     </InfoPill>
                   ) : null}
+                  {hasEmsUpdate ? (
+                    <InfoPill compact={compact} highlight>
+                      EMS update ready
+                    </InfoPill>
+                  ) : null}
                   {!job.paintCode ? (
                     <InfoPill compact={compact} highlight>
                       NEED PAINTCODE
@@ -885,6 +927,12 @@ function ActiveJobsSection({
                     </InfoPill>
                   ) : null}
 
+                  {hasEmsUpdate ? (
+                    <InfoPill compact={compact} highlight>
+                      EMS update ready
+                    </InfoPill>
+                  ) : null}
+
                   {hasPartsWaiting ? (
                     <InfoPill compact={compact} highlight>
                       {getPartsWorkflowSummary(job)}
@@ -922,6 +970,43 @@ function ActiveJobsSection({
                     gap: narrowLayout ? 12 : 16,
                   }}
                 >
+                  {hasEmsUpdate && onUpdateFromEms ? (
+                    <div
+                      style={{
+                        borderRadius: narrowLayout ? 14 : 16,
+                        padding: narrowLayout ? 12 : 14,
+                        background:
+                          'linear-gradient(135deg, rgba(180,83,9,0.34), rgba(15,23,42,0.84))',
+                        border: '2px solid rgba(251,191,36,0.46)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: '#fef3c7',
+                          fontSize: narrowLayout ? 12 : 13,
+                          fontWeight: 850,
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        New EMS data is available from {emsUpdate?.sourceLabel}. Updated{' '}
+                        {formatDateTime(emsUpdate?.lastModifiedAt ?? '')}.
+                      </div>
+                      <ActionButton
+                        compact={narrowLayout}
+                        primary
+                        disabled={isUpdatingEmsThisJob}
+                        onClick={() => void onUpdateFromEms(job.id)}
+                      >
+                        {isUpdatingEmsThisJob ? 'Updating EMS...' : 'Update This RO'}
+                      </ActionButton>
+                    </div>
+                  ) : null}
+
                   <div
                     style={{
                       display: 'grid',
@@ -1450,6 +1535,37 @@ function hideJobButtonStyle(compact: boolean): React.CSSProperties {
     fontSize: compact ? 12 : 13,
     fontWeight: 900,
     cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function emsUpdateButtonStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(251,191,36,0.56)',
+    background:
+      'linear-gradient(180deg, rgba(217,119,6,0.92), rgba(180,83,9,0.92))',
+    color: '#fff7ed',
+    borderRadius: compact ? 12 : 14,
+    padding: compact ? '8px 11px' : '10px 14px',
+    fontSize: compact ? 12 : 13,
+    fontWeight: 900,
+    cursor: 'pointer',
+    boxShadow: '0 8px 18px rgba(180,83,9,0.2)',
+    whiteSpace: 'nowrap',
+  };
+}
+
+function emsUpdateBadgeStyle(compact: boolean): React.CSSProperties {
+  return {
+    border: '1px solid rgba(251,191,36,0.5)',
+    background: 'rgba(180,83,9,0.34)',
+    color: '#fef3c7',
+    borderRadius: 999,
+    padding: compact ? '5px 8px' : '6px 10px',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 950,
+    letterSpacing: 0.4,
+    boxShadow: '0 0 20px rgba(251,191,36,0.18)',
     whiteSpace: 'nowrap',
   };
 }

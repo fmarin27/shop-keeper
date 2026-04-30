@@ -116,6 +116,7 @@ function EmsImportPanel({
       const result = await convertEmsRepairOrderToJob(
         repairOrder,
         conversion.selectedPath,
+        { sourceModifiedAt: candidate.lastModifiedAt },
       );
 
       setEmsImportMessage(

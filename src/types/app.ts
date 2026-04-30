@@ -158,7 +158,11 @@ export type Job = {
   estimateTotals?: EmsEstimateTotals;
   estimateLines?: EmsEstimateLine[];
   emsLineItemCount?: number;
+  emsFamilyId?: string;
+  emsSourceFile?: string;
+  emsSourceSystem?: string;
   lastEmsSyncAt?: string;
+  lastEmsSourceModifiedAt?: string;
   sourceJobUid?: string;
   sourceEstimateId?: string;
   sourceOpportunityNumber?: string;
@@ -321,6 +325,12 @@ export type EmsImportCandidate = {
   insuranceCompany?: string;
   claimNumber?: string;
   previewError?: string;
+};
+
+export type JobEmsUpdateInfo = {
+  candidate: EmsImportCandidate;
+  sourceLabel: string;
+  lastModifiedAt: string;
 };
 
 export type EmsWatchedSourceStatus = {

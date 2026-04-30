@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { AmountStatus, Job, JobPartRequest, UpdateJobDetailsInput } from '../../types/app';
+import type {
+  AmountStatus,
+  Job,
+  JobEmsUpdateInfo,
+  JobPartRequest,
+  UpdateJobDetailsInput,
+} from '../../types/app';
 
 type CompletedJobsSectionProps = {
   jobs: Job[];
@@ -23,6 +29,9 @@ type CompletedJobsSectionProps = {
   ) => Promise<void> | void;
   onUndoDone: (jobId: string) => void;
   onDeleteJob: (jobId: string) => Promise<void> | void;
+  emsUpdatesByJobId?: Record<string, JobEmsUpdateInfo>;
+  updatingEmsJobId?: string | null;
+  onUpdateFromEms?: (jobId: string) => Promise<void> | void;
 };
 
 function CompletedJobsSection({
@@ -44,6 +53,9 @@ function CompletedJobsSection({
   onUpdateJobDetails,
   onUndoDone,
   onDeleteJob,
+  emsUpdatesByJobId = {},
+  updatingEmsJobId = null,
+  onUpdateFromEms,
 }: CompletedJobsSectionProps) {
   const [sectionOpen, setSectionOpen] = useState(false);
   const [openJobIds, setOpenJobIds] = useState<string[]>([]);
@@ -67,6 +79,7 @@ function CompletedJobsSection({
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
   const lastAutoFocusedJobIdRef = useRef<string | null>(null);
+  const emsUpdateCount = jobs.filter((job) => emsUpdatesByJobId[job.id]).length;
 
   useEffect(() => {
     return () => {
@@ -220,7 +233,11 @@ function CompletedJobsSection({
             fontWeight: 700,
           }}
         >
-          {sectionOpen ? 'Open' : 'Collapsed'}
+          {emsUpdateCount
+            ? `${emsUpdateCount} EMS update${emsUpdateCount === 1 ? '' : 's'}`
+            : sectionOpen
+            ? 'Open'
+            : 'Collapsed'}
         </span>
       </button>
 
@@ -244,6 +261,9 @@ function CompletedJobsSection({
                 promiseDate: job.promiseDate,
               };
               const jobNoteDraft = noteDrafts[job.id] ?? '';
+              const emsUpdate = emsUpdatesByJobId[job.id];
+              const hasEmsUpdate = Boolean(emsUpdate);
+              const isUpdatingEmsThisJob = updatingEmsJobId === job.id;
 
               return (
                 <div
@@ -251,8 +271,15 @@ function CompletedJobsSection({
                   ref={focusedJobId === job.id ? focusedJobRef : null}
                   style={{
                     borderRadius: 16,
-                    background: 'rgba(2,6,23,0.42)',
-                    border: '1px solid rgba(148,163,184,0.12)',
+                    background: hasEmsUpdate
+                      ? 'linear-gradient(135deg, rgba(180,83,9,0.22), rgba(2,6,23,0.48))'
+                      : 'rgba(2,6,23,0.42)',
+                    border: hasEmsUpdate
+                      ? '1px solid rgba(251,191,36,0.46)'
+                      : '1px solid rgba(148,163,184,0.12)',
+                    boxShadow: hasEmsUpdate
+                      ? '0 0 24px rgba(251,191,36,0.12)'
+                      : 'none',
                     overflow: 'hidden',
                   }}
                 >
@@ -309,6 +336,13 @@ function CompletedJobsSection({
                             </a>
                           </div>
                         ) : null}
+                        {hasEmsUpdate ? (
+                          <div style={{ marginTop: 8 }}>
+                            <span style={emsUpdateBadgeStyle()}>
+                              EMS UPDATE READY
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
 
                       <span
@@ -333,6 +367,40 @@ function CompletedJobsSection({
                         gap: 12,
                       }}
                     >
+                      {hasEmsUpdate && onUpdateFromEms ? (
+                        <div
+                          style={{
+                            borderRadius: 14,
+                            padding: 12,
+                            background:
+                              'linear-gradient(135deg, rgba(180,83,9,0.34), rgba(15,23,42,0.78))',
+                            border: '1px solid rgba(251,191,36,0.46)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 10,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <div
+                            style={{
+                              color: '#fef3c7',
+                              fontSize: 13,
+                              fontWeight: 800,
+                            }}
+                          >
+                            New EMS data is available from {emsUpdate?.sourceLabel}. Updated{' '}
+                            {formatDateTime(emsUpdate?.lastModifiedAt ?? '')}.
+                          </div>
+                          <ActionButton
+                            disabled={isUpdatingEmsThisJob}
+                            onClick={() => void onUpdateFromEms(job.id)}
+                          >
+                            {isUpdatingEmsThisJob ? 'Updating EMS...' : 'Update This RO'}
+                          </ActionButton>
+                        </div>
+                      ) : null}
+
                       <div
                         style={{
                           display: 'grid',
@@ -575,6 +643,14 @@ function CompletedJobsSection({
                         >
                           {savingJobDetailsId === job.id ? 'Saving...' : 'Save Changes'}
                         </ActionButton>
+                        {hasEmsUpdate && onUpdateFromEms ? (
+                          <ActionButton
+                            disabled={isUpdatingEmsThisJob}
+                            onClick={() => void onUpdateFromEms(job.id)}
+                          >
+                            {isUpdatingEmsThisJob ? 'Updating EMS...' : 'Update from EMS'}
+                          </ActionButton>
+                        ) : null}
                         <ActionButton
                           onClick={() => void handleAddNote(job.id)}
                         >
@@ -1035,6 +1111,21 @@ function phoneLinkStyle(): React.CSSProperties {
     fontSize: 13,
     fontWeight: 800,
     textDecoration: 'none',
+  };
+}
+
+function emsUpdateBadgeStyle(): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    border: '1px solid rgba(251,191,36,0.48)',
+    background: 'rgba(180,83,9,0.34)',
+    color: '#fef3c7',
+    borderRadius: 999,
+    padding: '5px 9px',
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 0.4,
+    boxShadow: '0 0 16px rgba(251,191,36,0.14)',
   };
 }
 

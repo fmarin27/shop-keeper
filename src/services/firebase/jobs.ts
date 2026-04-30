@@ -137,7 +137,11 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
               typeof data.emsLineItemCount === 'number'
                 ? data.emsLineItemCount
                 : undefined,
+            emsFamilyId: data.emsFamilyId ?? '',
+            emsSourceFile: data.emsSourceFile ?? '',
+            emsSourceSystem: data.emsSourceSystem ?? '',
             lastEmsSyncAt: data.lastEmsSyncAt ?? '',
+            lastEmsSourceModifiedAt: data.lastEmsSourceModifiedAt ?? '',
             sourceJobUid: data.sourceJobUid ?? '',
             sourceEstimateId: data.sourceEstimateId ?? '',
             sourceOpportunityNumber: data.sourceOpportunityNumber ?? '',
@@ -464,6 +468,7 @@ function hasOpenParts(parts: JobPartRequest[]) {
 export async function convertEmsRepairOrderToJob(
   normalized: EmsNormalizedRepairOrder,
   sourceFile: string,
+  options: { sourceModifiedAt?: string } = {},
 ) {
   const sourceSystem = text(normalized.source_system || 'EMS').toUpperCase();
   const externalEstimateId = firstText(
@@ -530,8 +535,11 @@ export async function convertEmsRepairOrderToJob(
     },
     estimateLines,
     emsLineItemCount: estimateLines.length,
+    emsFamilyId: externalEstimateId,
     emsSourceFile: sourceFile,
+    emsSourceSystem: sourceSystem,
     lastEmsSyncAt: nowIso,
+    lastEmsSourceModifiedAt: options.sourceModifiedAt ?? nowIso,
     ...(!existing ? { createdAt: serverTimestamp() } : {}),
     updatedAt: serverTimestamp(),
   });
@@ -553,6 +561,104 @@ export async function convertEmsRepairOrderToJob(
     vehicle: payload.vehicle,
     amount: payload.amount,
     lineCount: estimateLines.length,
+    partCount: seededParts.length,
+  };
+}
+
+export async function updateJobFromEmsRepairOrder(
+  job: Job,
+  normalized: EmsNormalizedRepairOrder,
+  sourceFile: string,
+  options: { sourceModifiedAt?: string } = {},
+) {
+  const sourceSystem = text(normalized.source_system || 'EMS').toUpperCase();
+  const externalEstimateId = firstText(
+    normalized.external_estimate_id,
+    normalized.ro_number,
+    sourceFile,
+  );
+  const customer = normalized.customer ?? {};
+  const vehicle = normalized.vehicle ?? {};
+  const claim = normalized.claim ?? {};
+  const totals = normalized.totals ?? {};
+  const estimateLines = mapEstimateLines(normalized.line_items);
+  const shouldReplaceEstimateLines = estimateLines.length > 0;
+  const nextEstimateLines = shouldReplaceEstimateLines
+    ? estimateLines
+    : job.estimateLines ?? [];
+  const seededParts = shouldReplaceEstimateLines
+    ? seedPartsFromEstimate(estimateLines, job.partsRequests)
+    : job.partsRequests ?? [];
+  const customerPhone = text(customer.phone);
+  const customerName = firstText(
+    customer.full_name,
+    [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
+  );
+  const vehicleLabel = buildVehicleLabel(vehicle);
+  const grandTotal = toNumber(totals.grand_total);
+  const nowIso = new Date().toISOString();
+
+  const payload = withActiveShopFields({
+    sourceSystem: job.sourceSystem || sourceSystem,
+    externalEstimateId: job.externalEstimateId || externalEstimateId,
+    sourceEstimateId: job.sourceEstimateId || externalEstimateId,
+    emsFamilyId: externalEstimateId,
+    emsSourceFile: sourceFile,
+    emsSourceSystem: sourceSystem,
+    roNumber: firstText(job.roNumber, normalized.ro_number, externalEstimateId),
+    customerName: firstText(job.customerName, customerName),
+    phoneNumber: firstText(job.phoneNumber, customerPhone),
+    customerPhone: firstText(job.customerPhone, job.phoneNumber, customerPhone),
+    customerEmail: firstText(job.customerEmail, customer.email),
+    vehicle: firstText(job.vehicle, vehicleLabel),
+    vehicleYear: firstText(vehicle.year, job.vehicleYear),
+    vehicleMake: firstText(vehicle.make, job.vehicleMake),
+    vehicleModel: firstText(vehicle.model, job.vehicleModel),
+    vehicleVin: firstText(vehicle.vin, job.vehicleVin),
+    vehicleColor: firstText(vehicle.color, job.vehicleColor),
+    paintCode: firstText(job.paintCode, vehicle.paint_code, vehicle.color),
+    insuranceCompany: firstText(claim.insurance_company, job.insuranceCompany),
+    claimNumber: firstText(claim.claim_number, job.claimNumber),
+    policyNumber: firstText(claim.policy_number, job.policyNumber),
+    amount: grandTotal > 0 ? grandTotal : job.amount,
+    amountStatus: job.amountStatus,
+    status: job.status,
+    done: job.done,
+    promiseDate: job.promiseDate,
+    partsWaiting: hasOpenParts(seededParts),
+    partsRequests: seededParts.map(toFirestorePartRequest),
+    estimateTotals: {
+      bodyLaborHours: toNumber(totals.body_labor_hours),
+      refinishLaborHours: toNumber(totals.refinish_labor_hours),
+      mechanicalLaborHours: toNumber(totals.mechanical_labor_hours),
+      paintMaterials: toNumber(totals.paint_materials),
+      partsTotal: toNumber(totals.parts_total),
+      grandTotal: grandTotal > 0 ? grandTotal : job.estimateTotals?.grandTotal ?? job.amount,
+    },
+    estimateLines: nextEstimateLines,
+    emsLineItemCount: nextEstimateLines.length,
+    lastEmsSyncAt: nowIso,
+    lastEmsSourceModifiedAt: options.sourceModifiedAt ?? nowIso,
+    updatedAt: serverTimestamp(),
+  });
+
+  await updateDoc(jobDoc(job.id), payload);
+
+  if (appBridge.isDesktop()) {
+    await appBridge.ensureRoFolderForJob({
+      roNumber: String(payload.roNumber ?? job.roNumber),
+      customerName: String(payload.customerName ?? job.customerName),
+      done: Boolean(payload.done ?? job.done),
+    });
+  }
+
+  return {
+    jobId: job.id,
+    roNumber: String(payload.roNumber ?? job.roNumber),
+    customerName: String(payload.customerName ?? job.customerName),
+    vehicle: String(payload.vehicle ?? job.vehicle),
+    amount: Number(payload.amount ?? job.amount),
+    lineCount: nextEstimateLines.length,
     partCount: seededParts.length,
   };
 }

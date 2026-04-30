@@ -203,6 +203,74 @@ export type MitchellJobsSnapshot = {
   jobs: MitchellJobImport[];
 };
 
+export type EmsNormalizedLineItem = {
+  line_number?: string;
+  source_file?: string;
+  operation_code?: string;
+  operation_category?: string;
+  part_type?: string;
+  part_number?: string;
+  description?: string;
+  quantity?: number | string;
+  labor_type?: string;
+  labor_hours?: number | string;
+  labor_rate?: number | string;
+  labor_amount?: number | string;
+  paint_hours?: number | string;
+  paint_amount?: number | string;
+  part_price?: number | string;
+  total_amount?: number | string;
+  raw_fields?: Record<string, unknown>;
+};
+
+export type EmsNormalizedRepairOrder = {
+  source_system?: string;
+  external_estimate_id?: string;
+  ro_number?: string;
+  customer?: {
+    first_name?: string;
+    last_name?: string;
+    full_name?: string;
+    phone?: string;
+    email?: string;
+  };
+  vehicle?: {
+    year?: string;
+    make?: string;
+    model?: string;
+    vin?: string;
+    color?: string;
+    paint_code?: string;
+  };
+  claim?: {
+    claim_number?: string;
+    insurance_company?: string;
+    policy_number?: string;
+  };
+  totals?: {
+    body_labor_hours?: number | string;
+    refinish_labor_hours?: number | string;
+    mechanical_labor_hours?: number | string;
+    paint_materials?: number | string;
+    parts_total?: number | string;
+    grand_total?: number | string;
+  };
+  line_items?: EmsNormalizedLineItem[];
+  raw_fields?: Record<string, unknown>;
+};
+
+export type EmsImportSelectionResult =
+  | {
+      canceled: true;
+    }
+  | {
+      canceled: false;
+      source: string;
+      familyId: string;
+      selectedPath: string;
+      repairOrder: EmsNormalizedRepairOrder;
+    };
+
 export type MaterialsManagerSummary = {
   materialCount: number;
   invoiceCount: number;

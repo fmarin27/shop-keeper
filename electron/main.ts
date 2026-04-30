@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import type { OpenDialogOptions } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
@@ -48,6 +49,14 @@ const MITCHELL_JOBS_CSV_PATH = path.join(
   'Mitchell Data',
   'jobs.csv',
 );
+const EMS_MANAGEMENT_PROJECT_PATH = path.join(
+  app.getPath('home'),
+  'Projects',
+  'Active',
+  'EMS Management Platform',
+);
+const CCC_EMS_ROOT_PATH = path.join(app.getPath('home'), 'CCC EMS');
+const MITCHELL_EMS_ROOT_PATH = path.join(app.getPath('home'), 'Mitchell EMS');
 const UAB_ROOT_PATH = path.join(app.getPath('home'), 'UAB');
 const ACTIVE_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Active RO's");
 const CLOSED_RO_ROOT_PATH = path.join(UAB_ROOT_PATH, "Closed RO's");
@@ -174,6 +183,18 @@ type MitchellJobsSnapshot = {
   lastModifiedAt: string;
   jobs: MitchellJobImport[];
 };
+
+type EmsImportSelectionResult =
+  | {
+      canceled: true;
+    }
+  | {
+      canceled: false;
+      source: string;
+      familyId: string;
+      selectedPath: string;
+      repairOrder: Record<string, unknown>;
+    };
 
 type MaterialsManagerSummary = {
   materialCount: number;
@@ -649,6 +670,149 @@ function getMitchellJobsSnapshot(): MitchellJobsSnapshot {
     sourcePath: MITCHELL_JOBS_CSV_PATH,
     lastModifiedAt,
     jobs: parseMitchellJobsCsv(csvText, lastModifiedAt),
+  };
+}
+
+function getEmsImportDefaultPath() {
+  if (fs.existsSync(CCC_EMS_ROOT_PATH)) {
+    return CCC_EMS_ROOT_PATH;
+  }
+
+  if (fs.existsSync(MITCHELL_EMS_ROOT_PATH)) {
+    return MITCHELL_EMS_ROOT_PATH;
+  }
+
+  return app.getPath('home');
+}
+
+function inferEmsSourceAndFamily(filePath: string) {
+  const normalizedFilePath = path.resolve(filePath).toLowerCase();
+  const cccRoot = path.resolve(CCC_EMS_ROOT_PATH).toLowerCase() + path.sep;
+  const mitchellRoot = path.resolve(MITCHELL_EMS_ROOT_PATH).toLowerCase() + path.sep;
+  const parsed = path.parse(filePath);
+
+  if (normalizedFilePath.startsWith(cccRoot)) {
+    return {
+      source: 'ccc',
+      familyId: parsed.name,
+    };
+  }
+
+  if (normalizedFilePath.startsWith(mitchellRoot)) {
+    const match = parsed.name.match(/^(\d+)/);
+    return {
+      source: 'mitchell',
+      familyId: match?.[1] ?? parsed.name,
+    };
+  }
+
+  throw new Error(
+    `Choose an EMS file from ${CCC_EMS_ROOT_PATH} or ${MITCHELL_EMS_ROOT_PATH}.`,
+  );
+}
+
+function getPythonExecutable() {
+  if (fs.existsSync(USER_PYTHON_PATH)) {
+    return USER_PYTHON_PATH;
+  }
+
+  return 'python';
+}
+
+function runPythonJson(args: string[]) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const child = spawn(getPythonExecutable(), args, {
+      cwd: EMS_MANAGEMENT_PROJECT_PATH,
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    child.on('error', (error) => {
+      reject(error);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `EMS converter exited with code ${code}.`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout.trim()) as Record<string, unknown>);
+      } catch (error) {
+        reject(
+          new Error(
+            `EMS converter returned invalid JSON: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+async function normalizeEmsBundle(source: string, familyId: string) {
+  if (!fs.existsSync(EMS_MANAGEMENT_PROJECT_PATH)) {
+    throw new Error(`EMS Management Platform project not found at ${EMS_MANAGEMENT_PROJECT_PATH}.`);
+  }
+
+  const script = [
+    'import json, sys',
+    'from pathlib import Path',
+    `project = Path(${JSON.stringify(EMS_MANAGEMENT_PROJECT_PATH)})`,
+    'sys.path.insert(0, str(project))',
+    'from converter.bundle_import import normalize_bundle_family',
+    'repair_order = normalize_bundle_family(sys.argv[1], sys.argv[2])',
+    'print(json.dumps(repair_order.to_dict()))',
+  ].join('\n');
+
+  return runPythonJson(['-c', script, source, familyId]);
+}
+
+async function selectEmsRepairOrder(): Promise<EmsImportSelectionResult> {
+  const dialogOptions: OpenDialogOptions = {
+    title: 'Choose EMS file to convert into an RO',
+    defaultPath: getEmsImportDefaultPath(),
+    properties: ['openFile'],
+    filters: [
+      {
+        name: 'EMS bundle files',
+        extensions: ['ad1', 'ad2', 'veh', 'ven', 'stl', 'ttl', 'lin', 'env', 'pfh', 'pfl', 'pfm', 'pfo', 'pfp', 'pft'],
+      },
+      {
+        name: 'All files',
+        extensions: ['*'],
+      },
+    ],
+  };
+  const selection = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+
+  if (selection.canceled || !selection.filePaths[0]) {
+    return { canceled: true };
+  }
+
+  const selectedPath = selection.filePaths[0];
+  const { source, familyId } = inferEmsSourceAndFamily(selectedPath);
+  const repairOrder = await normalizeEmsBundle(source, familyId);
+
+  return {
+    canceled: false,
+    source,
+    familyId,
+    selectedPath,
+    repairOrder,
   };
 }
 
@@ -1482,6 +1646,19 @@ app.whenReady().then(async () => {
         error instanceof Error
           ? error.message
           : 'Could not read Mitchell jobs data.',
+      );
+    }
+  });
+
+  ipcMain.handle('ems:selectRepairOrder', async () => {
+    try {
+      return await selectEmsRepairOrder();
+    } catch (error) {
+      console.error('[ems] Failed to convert selected EMS file:', error);
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : 'Could not convert the selected EMS file.',
       );
     }
   });

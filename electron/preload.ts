@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('appBridge', {
     requestedBy: 'manager' | 'tech';
   }) => ipcRenderer.invoke('mail:sendMaterialRequestEmail', payload),
   getMitchellJobsSnapshot: () => ipcRenderer.invoke('mitchell:getJobsSnapshot'),
+  selectEmsRepairOrder: () => ipcRenderer.invoke('ems:selectRepairOrder'),
   saveJobPhotoToRoFolder: (payload: {
     roNumber: string;
     customerName: string;

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useRef } from 'react';
 import ActiveJobsSection from './ActiveJobsSection';
 import CompletedJobsSection from './CompletedJobsSection';
 import { appBridge } from '../../services/platform/appBridge';
@@ -21,6 +20,7 @@ import {
   deletePhotoFromJob,
   markJobPartReceived,
   addTextNoteToJob,
+  convertEmsRepairOrderToJob,
   createJob,
   markJobDone,
   markJobNotesRead,
@@ -28,7 +28,6 @@ import {
   saveJobPartNote,
   setActiveJobPosition,
   subscribeToJobs,
-  syncJobsFromMitchell,
   undoJobDone,
   updateJobPartStatus,
   updateJobDetails,
@@ -81,7 +80,6 @@ const initialFormState: AddJobFormState = {
   initialNote: '',
 };
 
-const MITCHELL_SYNC_INTERVAL_MS = 1000 * 30;
 const ACTIVE_JOB_STATUSES: Exclude<JobStatus, 'done'>[] = [
   'notStarted',
   'inProgress',
@@ -106,11 +104,11 @@ function JobsTab({
   const [addJobForm, setAddJobForm] = useState<AddJobFormState>(initialFormState);
   const [savingJob, setSavingJob] = useState(false);
   const [addJobError, setAddJobError] = useState<string | null>(null);
-  const [mitchellSyncMessage, setMitchellSyncMessage] = useState<string | null>(null);
-  const [mitchellSyncError, setMitchellSyncError] = useState<string | null>(null);
-  const [lastMitchellSyncAt, setLastMitchellSyncAt] = useState<string | null>(null);
-  const [isMitchellSyncing, setIsMitchellSyncing] = useState(false);
-  const runMitchellSyncRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const [emsImportMessage, setEmsImportMessage] = useState<string | null>(
+    'EMS import is manual. Choose one CCC or Mitchell EMS file when you are ready to create an RO.',
+  );
+  const [emsImportError, setEmsImportError] = useState<string | null>(null);
+  const [isEmsImporting, setIsEmsImporting] = useState(false);
 
   const applyOptimisticActiveOrder = (
     sourceJobs: Job[],
@@ -139,80 +137,6 @@ function JobsTab({
     });
 
     return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!appBridge.isDesktop()) {
-      return;
-    }
-
-    let mounted = true;
-    let syncing = false;
-    let lastSourceModifiedAt: string | null = null;
-
-    const runMitchellSync = async (force = false) => {
-      if (syncing) {
-        return;
-      }
-
-      try {
-        syncing = true;
-        if (mounted) {
-          setIsMitchellSyncing(true);
-        }
-        if (force && mounted) {
-          setMitchellSyncMessage('Syncing Mitchell active jobs...');
-        }
-
-        const snapshot = await appBridge.getMitchellJobsSnapshot();
-        if (!force && snapshot.lastModifiedAt === lastSourceModifiedAt) {
-          if (mounted) {
-            setMitchellSyncMessage(
-              `Mitchell sync active. Last checked ${formatDateTime(new Date().toISOString())}.`,
-            );
-            setMitchellSyncError(null);
-          }
-          return;
-        }
-
-        await syncJobsFromMitchell(snapshot);
-        lastSourceModifiedAt = snapshot.lastModifiedAt;
-
-        if (mounted) {
-          const now = new Date().toISOString();
-          setLastMitchellSyncAt(now);
-          setMitchellSyncError(null);
-          setMitchellSyncMessage(
-            `Mitchell sync active. ${snapshot.jobs.length} jobs checked from ${snapshot.sourcePath}.`,
-          );
-        }
-      } catch (error) {
-        if (mounted) {
-          setMitchellSyncError(
-            error instanceof Error
-              ? error.message
-              : 'Mitchell sync failed.',
-          );
-        }
-      } finally {
-        syncing = false;
-        if (mounted) {
-          setIsMitchellSyncing(false);
-        }
-      }
-    };
-
-    runMitchellSyncRef.current = runMitchellSync;
-
-    void runMitchellSync(true);
-    const timer = window.setInterval(() => {
-      void runMitchellSync(false);
-    }, MITCHELL_SYNC_INTERVAL_MS);
-
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
   }, []);
 
   const activeJobs = useMemo(
@@ -391,8 +315,33 @@ function JobsTab({
     await updateJobDetails(jobId, input);
   };
 
-  const handleManualMitchellSync = async () => {
-    await runMitchellSyncRef.current(true);
+  const handleConvertEmsToRo = async () => {
+    setIsEmsImporting(true);
+    setEmsImportError(null);
+    setEmsImportMessage('Choose one EMS file. The app will convert only that file family into an RO.');
+
+    try {
+      const selection = await appBridge.selectEmsRepairOrder();
+      if (selection.canceled) {
+        setEmsImportMessage('EMS import canceled. No RO was created.');
+        return;
+      }
+
+      const result = await convertEmsRepairOrderToJob(
+        selection.repairOrder,
+        selection.selectedPath,
+      );
+
+      setEmsImportMessage(
+        `Converted ${selection.source.toUpperCase()} ${selection.familyId} into RO ${result.roNumber} for ${result.customerName || result.vehicle || 'selected EMS file'}. ${result.lineCount} estimate lines and ${result.partCount} parts candidates imported.`,
+      );
+    } catch (error) {
+      setEmsImportError(
+        error instanceof Error ? error.message : 'Could not convert the selected EMS file.',
+      );
+    } finally {
+      setIsEmsImporting(false);
+    }
   };
 
   const openAddJobModal = () => {
@@ -509,36 +458,33 @@ function JobsTab({
               style={{
                 borderRadius: compact ? 14 : 18,
                 padding: compact ? '10px 12px' : '12px 16px',
-                background: mitchellSyncError
+                background: emsImportError
                   ? 'rgba(127,29,29,0.32)'
-                  : 'rgba(22,163,74,0.14)',
-                border: mitchellSyncError
+                  : 'rgba(37,99,235,0.14)',
+                border: emsImportError
                   ? '1px solid rgba(248,113,113,0.34)'
-                  : '1px solid rgba(74,222,128,0.24)',
-                color: mitchellSyncError ? '#fecaca' : '#dcfce7',
+                  : '1px solid rgba(96,165,250,0.28)',
+                color: emsImportError ? '#fecaca' : '#dbeafe',
                 fontSize: compact ? 12 : 13,
                 fontWeight: 800,
                 lineHeight: 1.5,
               }}
             >
-              {mitchellSyncError
-                ? `Mitchell sync error: ${mitchellSyncError}`
-                : mitchellSyncMessage ?? 'Mitchell sync is starting...'}
-              {lastMitchellSyncAt && !mitchellSyncError
-                ? ` Last synced ${formatDateTime(lastMitchellSyncAt)}.`
-                : ''}
+              {emsImportError
+                ? `EMS import error: ${emsImportError}`
+                : emsImportMessage}
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 type="button"
                 onClick={() => {
-                  void handleManualMitchellSync();
+                  void handleConvertEmsToRo();
                 }}
-                disabled={isMitchellSyncing}
+                disabled={isEmsImporting}
                 style={{
                   border: '1px solid rgba(96,165,250,0.45)',
-                  background: isMitchellSyncing
+                  background: isEmsImporting
                     ? 'rgba(51,65,85,0.92)'
                     : 'linear-gradient(180deg, rgba(37,99,235,0.92), rgba(29,78,216,0.92))',
                   color: '#eff6ff',
@@ -546,12 +492,12 @@ function JobsTab({
                   fontSize: mobile ? 13 : 14,
                   padding: mobile ? '10px 14px' : '10px 16px',
                   borderRadius: 12,
-                  cursor: isMitchellSyncing ? 'not-allowed' : 'pointer',
-                  opacity: isMitchellSyncing ? 0.75 : 1,
+                  cursor: isEmsImporting ? 'not-allowed' : 'pointer',
+                  opacity: isEmsImporting ? 0.75 : 1,
                   width: mobile ? '100%' : 'auto',
                 }}
               >
-                {isMitchellSyncing ? 'Syncing Repair Center...' : 'Sync Repair Center Now'}
+                {isEmsImporting ? 'Converting EMS...' : 'Convert EMS File to RO'}
               </button>
             </div>
           </div>

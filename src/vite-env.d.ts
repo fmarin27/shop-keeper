@@ -4,6 +4,7 @@ import type {
   AppMode,
   DisplayMode,
   Job,
+  EmsImportSelectionResult,
   LocalAppSettings,
   MaterialsManagerSnapshot,
   MitchellJobsSnapshot,
@@ -43,6 +44,7 @@ declare global {
       requestedBy: AppMode;
     }) => Promise<SendMaterialEmailResult>;
     getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
+    selectEmsRepairOrder: () => Promise<EmsImportSelectionResult>;
     saveJobPhotoToRoFolder: (payload: {
       roNumber: string;
       customerName: string;

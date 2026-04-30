@@ -8,6 +8,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
@@ -22,6 +23,8 @@ import { appBridge } from '../platform/appBridge';
 import type {
   AppMode,
   CreateJobInput,
+  EmsNormalizedLineItem,
+  EmsNormalizedRepairOrder,
   Job,
   JobNote,
   JobPhoto,
@@ -210,6 +213,221 @@ export async function createJob(input: CreateJobInput) {
       done: false,
     });
   }
+}
+
+function slug(value: unknown) {
+  const clean = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return clean || 'unknown';
+}
+
+function toNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function text(value: unknown) {
+  if (value === null || value === undefined) return '';
+
+  const clean = String(value).trim();
+  return clean === 'true' || clean === 'false' ? '' : clean;
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    const clean = text(value);
+    if (clean) return clean;
+  }
+
+  return '';
+}
+
+function buildVehicleLabel(vehicle: EmsNormalizedRepairOrder['vehicle']) {
+  return [vehicle?.year, vehicle?.make, vehicle?.model]
+    .map(text)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getLinePartNumber(line: EmsNormalizedLineItem) {
+  const raw = line.raw_fields ?? {};
+  const number = firstText(
+    line.part_number,
+    raw.OEM_PARTNO,
+    raw.ALT_PARTNO,
+    raw.ALT_PARTM,
+  );
+
+  return number.toUpperCase() === 'NONE' ? '' : number;
+}
+
+function getLineDescription(line: EmsNormalizedLineItem) {
+  return firstText(line.description, line.raw_fields?.LINE_DESC);
+}
+
+function mapEstimateLines(lines: EmsNormalizedRepairOrder['line_items']) {
+  return (Array.isArray(lines) ? lines : []).map((line, index) => {
+    const lineNumber = firstText(line.line_number, index + 1);
+    const partNumber = getLinePartNumber(line);
+
+    return {
+      id: `ems-line-${slug(lineNumber)}-${index + 1}`,
+      lineNumber,
+      sourceFile: text(line.source_file || 'lin'),
+      operationCode: text(line.operation_code),
+      operationCategory: text(line.operation_category),
+      partType: text(line.part_type),
+      partNumber,
+      description: getLineDescription(line),
+      quantity: toNumber(line.quantity),
+      laborType: text(line.labor_type),
+      laborHours: toNumber(line.labor_hours),
+      laborRate: toNumber(line.labor_rate),
+      laborAmount: toNumber(line.labor_amount),
+      paintHours: toNumber(line.paint_hours),
+      paintAmount: toNumber(line.paint_amount),
+      partPrice: toNumber(line.part_price),
+      totalAmount: toNumber(line.total_amount),
+    };
+  });
+}
+
+function isPartCandidate(line: ReturnType<typeof mapEstimateLines>[number]) {
+  const description = text(line.description).toLowerCase();
+  const partNumber = text(line.partNumber);
+  const partType = text(line.partType);
+
+  if (!line.description && !partNumber) return false;
+  if (description.includes('markup')) return false;
+  if (description.includes('tow bill')) return false;
+  if (description.includes('scan')) return false;
+
+  return Boolean(partNumber) || line.partPrice > 0 || /^pa/i.test(partType);
+}
+
+function seedPartsFromEstimate(
+  estimateLines: ReturnType<typeof mapEstimateLines>,
+  existingParts: JobPartRequest[] | undefined,
+) {
+  if (Array.isArray(existingParts) && existingParts.length) {
+    return existingParts;
+  }
+
+  return estimateLines
+    .filter(isPartCandidate)
+    .map((line) => ({
+      id: `ems-part-${slug(line.id)}`,
+      name: line.partNumber
+        ? `${line.description} (${line.partNumber})`
+        : line.description,
+      quantity: String(line.quantity || 1),
+      requestedBy: 'manager' as const,
+      status: 'requested' as const,
+      note: `Seeded from EMS line ${line.lineNumber}. Verify order status.`,
+      createdAt: new Date().toISOString(),
+    }));
+}
+
+export async function convertEmsRepairOrderToJob(
+  normalized: EmsNormalizedRepairOrder,
+  sourceFile: string,
+) {
+  const sourceSystem = text(normalized.source_system || 'EMS').toUpperCase();
+  const externalEstimateId = firstText(
+    normalized.external_estimate_id,
+    normalized.ro_number,
+    sourceFile,
+  );
+  const jobId = `ems-${slug(sourceSystem)}-${slug(externalEstimateId)}`;
+  const ref = doc(db, 'jobs', jobId);
+  const existingSnapshot = await getDoc(ref);
+  const existing = existingSnapshot.exists()
+    ? (existingSnapshot.data() as Partial<Job>)
+    : null;
+  const customer = normalized.customer ?? {};
+  const vehicle = normalized.vehicle ?? {};
+  const claim = normalized.claim ?? {};
+  const totals = normalized.totals ?? {};
+  const estimateLines = mapEstimateLines(normalized.line_items);
+  const seededParts = seedPartsFromEstimate(estimateLines, existing?.partsRequests);
+  const customerPhone = text(customer.phone);
+  const nowIso = new Date().toISOString();
+
+  const payload = {
+    sourceSystem,
+    externalEstimateId,
+    sourceEstimateId: externalEstimateId,
+    roNumber: firstText(normalized.ro_number, externalEstimateId),
+    customerName: firstText(
+      customer.full_name,
+      [customer.first_name, customer.last_name].map(text).filter(Boolean).join(' '),
+    ),
+    phoneNumber: existing?.phoneNumber ?? customerPhone,
+    customerPhone,
+    customerEmail: text(customer.email),
+    vehicle: buildVehicleLabel(vehicle),
+    vehicleYear: text(vehicle.year),
+    vehicleMake: text(vehicle.make),
+    vehicleModel: text(vehicle.model),
+    vehicleVin: text(vehicle.vin),
+    vehicleColor: text(vehicle.color),
+    paintCode: existing?.paintCode ?? text(vehicle.paint_code || vehicle.color),
+    insuranceCompany: text(claim.insurance_company),
+    claimNumber: text(claim.claim_number),
+    policyNumber: text(claim.policy_number),
+    amount: toNumber(totals.grand_total),
+    amountStatus: existing?.amountStatus ?? 'notFinal',
+    status: existing?.status ?? 'notStarted',
+    done: existing?.done ?? false,
+    promiseDate: existing?.promiseDate ?? '',
+    partsWaiting:
+      existing?.partsWaiting ??
+      seededParts.some((part) => part.status !== 'received'),
+    partsRequests: seededParts.map(toFirestorePartRequest),
+    textNotes: existing?.textNotes ?? [],
+    photos: existing?.photos ?? [],
+    ...(typeof existing?.sortOrder === 'number'
+      ? { sortOrder: existing.sortOrder }
+      : { sortOrder: Date.now() * -1 }),
+    estimateTotals: {
+      bodyLaborHours: toNumber(totals.body_labor_hours),
+      refinishLaborHours: toNumber(totals.refinish_labor_hours),
+      mechanicalLaborHours: toNumber(totals.mechanical_labor_hours),
+      paintMaterials: toNumber(totals.paint_materials),
+      partsTotal: toNumber(totals.parts_total),
+      grandTotal: toNumber(totals.grand_total),
+    },
+    estimateLines,
+    emsLineItemCount: estimateLines.length,
+    emsSourceFile: sourceFile,
+    lastEmsSyncAt: nowIso,
+    ...(!existing ? { createdAt: serverTimestamp() } : {}),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(ref, payload, { merge: true });
+
+  if (appBridge.isDesktop()) {
+    await appBridge.ensureRoFolderForJob({
+      roNumber: payload.roNumber,
+      customerName: payload.customerName,
+      done: payload.done,
+    });
+  }
+
+  return {
+    jobId,
+    roNumber: payload.roNumber,
+    customerName: payload.customerName,
+    vehicle: payload.vehicle,
+    amount: payload.amount,
+    lineCount: estimateLines.length,
+    partCount: seededParts.length,
+  };
 }
 
 export async function reorderActiveJobs(

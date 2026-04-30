@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import type {
   AppMode,
   DisplayMode,
+  EmsImportSelectionResult,
   Job,
   LocalAppSettings,
   MaterialsManagerSnapshot,
@@ -83,6 +84,7 @@ type AppBridge = {
     requestedBy: AppMode;
   }) => Promise<SendMaterialEmailResult>;
   getMitchellJobsSnapshot: () => Promise<MitchellJobsSnapshot>;
+  selectEmsRepairOrder: () => Promise<EmsImportSelectionResult>;
   saveJobPhotoToRoFolder: (payload: {
     roNumber: string;
     customerName: string;
@@ -571,6 +573,15 @@ export const appBridge = {
     }
 
     throw new Error('Mitchell job sync is only available in the desktop app.');
+  },
+
+  async selectEmsRepairOrder() {
+    const desktopBridge = getDesktopBridge();
+    if (desktopBridge) {
+      return desktopBridge.selectEmsRepairOrder();
+    }
+
+    throw new Error('EMS import is only available in the desktop app.');
   },
 
   async saveJobPhotoToRoFolder(payload: {

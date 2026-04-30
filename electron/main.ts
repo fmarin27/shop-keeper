@@ -696,9 +696,19 @@ function moveFolderIfNeeded(sourcePath: string, destinationPath: string) {
     sourceEntries.forEach((entry) => {
       const from = path.join(sourcePath, entry.name);
       const to = path.join(destinationPath, entry.name);
+
+      if (fs.existsSync(to)) {
+        return;
+      }
+
       fs.renameSync(from, to);
     });
-    fs.rmdirSync(sourcePath);
+
+    const remainingEntries = fs.readdirSync(sourcePath);
+    if (!remainingEntries.length) {
+      fs.rmdirSync(sourcePath);
+    }
+
     return destinationPath;
   }
 
@@ -713,11 +723,7 @@ function resolveRoFolderPath(
 ) {
   const trimmedRo = roNumber.trim();
   if (!trimmedRo) {
-    throw new Error('RO number is required to save the photo.');
-  }
-
-  if (!fs.existsSync(UAB_ROOT_PATH)) {
-    throw new Error(`UAB folder not found at ${UAB_ROOT_PATH}.`);
+    throw new Error('RO number is required.');
   }
 
   ensureRoRoots();

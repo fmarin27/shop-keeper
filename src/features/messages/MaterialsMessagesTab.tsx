@@ -29,6 +29,7 @@ import { appBridge } from '../../services/platform/appBridge';
 
 type MaterialsMessagesTabProps = {
   appMode: MessageAudienceMode;
+  view?: 'materials' | 'messages' | 'combined';
   compact?: boolean;
   mobile?: boolean;
   focusedMaterialId?: string | null;
@@ -38,6 +39,7 @@ type MaterialsMessagesTabProps = {
 
 function MaterialsMessagesTab({
   appMode,
+  view = 'combined',
   compact = false,
   mobile = false,
   focusedMaterialId = null,
@@ -48,23 +50,40 @@ function MaterialsMessagesTab({
   const [messages, setMessages] = useState<GeneralMessage[]>([]);
   const [loadingMaterials, setLoadingMaterials] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(true);
+  const showMaterials = view !== 'messages';
+  const showMessages = view !== 'materials';
 
   useEffect(() => {
-    const unsubMaterials = subscribeToMaterials(appMode, (items) => {
-      setMaterials(items);
-      setLoadingMaterials(false);
-    });
+    let unsubMaterials = () => undefined;
+    let unsubMessages = () => undefined;
 
-    const unsubMessages = subscribeToGeneralMessages(appMode, (items) => {
-      setMessages(items);
+    if (showMaterials) {
+      setLoadingMaterials(true);
+      unsubMaterials = subscribeToMaterials(appMode, (items) => {
+        setMaterials(items);
+        setLoadingMaterials(false);
+      });
+    } else {
+      setMaterials([]);
+      setLoadingMaterials(false);
+    }
+
+    if (showMessages) {
+      setLoadingMessages(true);
+      unsubMessages = subscribeToGeneralMessages(appMode, (items) => {
+        setMessages(items);
+        setLoadingMessages(false);
+      });
+    } else {
+      setMessages([]);
       setLoadingMessages(false);
-    });
+    }
 
     return () => {
       unsubMaterials();
       unsubMessages();
     };
-  }, [appMode]);
+  }, [appMode, showMaterials, showMessages]);
 
   const unreadMaterialsCount = useMemo(
     () => materials.filter((item) => item.unread).length,
@@ -76,7 +95,6 @@ function MaterialsMessagesTab({
     [messages],
   );
 
-  const totalUnreadCount = unreadMaterialsCount + unreadMessagesCount;
   const visibleMaterials = useMemo(() => materials, [materials]);
 
   const visibleMessages = useMemo(() => messages, [messages]);
@@ -181,6 +199,13 @@ function MaterialsMessagesTab({
   };
 
   if (loadingMaterials || loadingMessages) {
+    const loadingLabel =
+      view === 'materials'
+        ? 'Loading materials...'
+        : view === 'messages'
+        ? 'Loading messages...'
+        : 'Loading materials and messages...';
+
     return (
       <div
         style={{
@@ -193,119 +218,145 @@ function MaterialsMessagesTab({
           fontWeight: 700,
         }}
       >
-        Loading materials and messages...
+        {loadingLabel}
       </div>
     );
   }
 
   return (
     <div style={{ display: 'grid', gap: compact ? 10 : 24 }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-          padding: compact ? '10px 12px' : '14px 16px',
-          borderRadius: compact ? 14 : 18,
-          background:
-            totalUnreadCount > 0
-              ? 'rgba(37,99,235,0.18)'
-              : 'rgba(15,23,42,0.42)',
-          border:
-            totalUnreadCount > 0
-              ? '1px solid rgba(96,165,250,0.32)'
-              : '1px solid rgba(148,163,184,0.12)',
-          boxShadow:
-            totalUnreadCount > 0
-              ? '0 0 22px rgba(96,165,250,0.16)'
-              : 'none',
-        }}
-      >
-        <div>
-          <div
-            style={{
-              color: '#f8fafc',
-              fontWeight: 900,
-              fontSize: compact ? 14 : 18,
-              lineHeight: 1.1,
-            }}
-          >
-            {compact ? 'Unread Activity' : 'Materials & Messages'}
-          </div>
-          <div
-            style={{
-              color: '#94a3b8',
-              fontSize: compact ? 11 : 13,
-              marginTop: 4,
-            }}
-          >
-            {compact
-              ? 'Compact view keeps the same activity, just in a tighter layout.'
-              : 'Live shop communication, because yelling across the building is apparently not a proper workflow.'}
-          </div>
-        </div>
+      {view === 'combined' ? (
+        <CombinedUnreadSummary
+          compact={compact}
+          unreadMaterialsCount={unreadMaterialsCount}
+          unreadMessagesCount={unreadMessagesCount}
+        />
+      ) : null}
 
+      {showMaterials ? (
+        <MaterialsNeededSection
+          materials={visibleMaterials}
+          appMode={appMode}
+          compact={compact}
+          mobile={mobile}
+          unreadCount={unreadMaterialsCount}
+          focusedMaterialId={focusedMaterialId}
+          onFocusedMaterialHandled={onFocusHandled}
+          onAddMaterial={handleAddMaterial}
+          onSetMaterialStatus={handleSetMaterialStatus}
+          onMarkMaterialRead={handleMarkMaterialRead}
+          onArchiveMaterial={handleArchiveMaterial}
+          onDeleteMaterial={handleDeleteMaterial}
+        />
+      ) : null}
+
+      {showMessages ? (
+        <GeneralMessagesSection
+          messages={visibleMessages}
+          appMode={appMode}
+          compact={compact}
+          mobile={mobile}
+          unreadCount={unreadMessagesCount}
+          focusedMessageId={focusedMessageId}
+          onFocusedMessageHandled={onFocusHandled}
+          onAddTextMessage={handleAddTextMessage}
+          onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
+          onMarkMessageRead={handleMarkMessageRead}
+          onArchiveMessage={handleArchiveMessage}
+          onSetMessageUnreadState={handleSetMessageUnreadState}
+          onDeleteMessage={handleDeleteMessage}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CombinedUnreadSummary({
+  compact,
+  unreadMaterialsCount,
+  unreadMessagesCount,
+}: {
+  compact: boolean;
+  unreadMaterialsCount: number;
+  unreadMessagesCount: number;
+}) {
+  const totalUnreadCount = unreadMaterialsCount + unreadMessagesCount;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+        flexWrap: 'wrap',
+        padding: compact ? '10px 12px' : '14px 16px',
+        borderRadius: compact ? 14 : 18,
+        background:
+          totalUnreadCount > 0
+            ? 'rgba(37,99,235,0.18)'
+            : 'rgba(15,23,42,0.42)',
+        border:
+          totalUnreadCount > 0
+            ? '1px solid rgba(96,165,250,0.32)'
+            : '1px solid rgba(148,163,184,0.12)',
+        boxShadow:
+          totalUnreadCount > 0
+            ? '0 0 22px rgba(96,165,250,0.16)'
+            : 'none',
+      }}
+    >
+      <div>
         <div
           style={{
-            display: 'flex',
-            gap: 8,
-            flexWrap: 'wrap',
-            alignItems: 'center',
+            color: '#f8fafc',
+            fontWeight: 900,
+            fontSize: compact ? 14 : 18,
+            lineHeight: 1.1,
           }}
         >
-          <UnreadPill
-            compact={compact}
-            active={unreadMaterialsCount > 0}
-            label="Materials"
-            count={unreadMaterialsCount}
-          />
-          <UnreadPill
-            compact={compact}
-            active={unreadMessagesCount > 0}
-            label="Messages"
-            count={unreadMessagesCount}
-          />
-          <UnreadPill
-            compact={compact}
-            active={totalUnreadCount > 0}
-            label="Total"
-            count={totalUnreadCount}
-          />
+          {compact ? 'Unread Activity' : 'Materials & Messages'}
+        </div>
+        <div
+          style={{
+            color: '#94a3b8',
+            fontSize: compact ? 11 : 13,
+            marginTop: 4,
+          }}
+        >
+          {compact
+            ? 'Compact view keeps the same activity, just in a tighter layout.'
+            : 'Live shop communication, because yelling across the building is apparently not a proper workflow.'}
         </div>
       </div>
 
-      <MaterialsNeededSection
-        materials={visibleMaterials}
-        appMode={appMode}
-        compact={compact}
-        mobile={mobile}
-        unreadCount={unreadMaterialsCount}
-        focusedMaterialId={focusedMaterialId}
-        onFocusedMaterialHandled={onFocusHandled}
-        onAddMaterial={handleAddMaterial}
-        onSetMaterialStatus={handleSetMaterialStatus}
-        onMarkMaterialRead={handleMarkMaterialRead}
-        onArchiveMaterial={handleArchiveMaterial}
-        onDeleteMaterial={handleDeleteMaterial}
-      />
-
-      <GeneralMessagesSection
-        messages={visibleMessages}
-        appMode={appMode}
-        compact={compact}
-        mobile={mobile}
-        unreadCount={unreadMessagesCount}
-        focusedMessageId={focusedMessageId}
-        onFocusedMessageHandled={onFocusHandled}
-        onAddTextMessage={handleAddTextMessage}
-        onAddAudioMessage={(file) => addAudioGeneralMessage(file, appMode)}
-        onMarkMessageRead={handleMarkMessageRead}
-        onArchiveMessage={handleArchiveMessage}
-        onSetMessageUnreadState={handleSetMessageUnreadState}
-        onDeleteMessage={handleDeleteMessage}
-      />
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        <UnreadPill
+          compact={compact}
+          active={unreadMaterialsCount > 0}
+          label="Materials"
+          count={unreadMaterialsCount}
+        />
+        <UnreadPill
+          compact={compact}
+          active={unreadMessagesCount > 0}
+          label="Messages"
+          count={unreadMessagesCount}
+        />
+        <UnreadPill
+          compact={compact}
+          active={totalUnreadCount > 0}
+          label="Total"
+          count={totalUnreadCount}
+        />
+      </div>
     </div>
   );
 }

@@ -96,11 +96,15 @@ function AppTopBar({
     [jobs],
   );
 
-  const materialsMessagesUnreadCount = useMemo(() => {
-    const materialsUnread = materials.filter((item) => item.unread).length;
-    const messagesUnread = messages.filter((item) => item.unread).length;
-    return materialsUnread + messagesUnread;
-  }, [materials, messages]);
+  const materialsUnreadCount = useMemo(
+    () => materials.filter((item) => item.unread).length,
+    [materials],
+  );
+
+  const messagesUnreadCount = useMemo(
+    () => messages.filter((item) => item.unread).length,
+    [messages],
+  );
 
   const partsUnreadCount = useMemo(
     () =>
@@ -193,8 +197,8 @@ function AppTopBar({
           (job.partsRequests ?? []).some((part) => part.status !== 'received')),
     ).length;
 
-    return jobsUnreadCount + materialsMessagesUnreadCount + partsWaitingCount;
-  }, [jobs, jobsUnreadCount, materialsMessagesUnreadCount]);
+    return jobsUnreadCount + materialsUnreadCount + messagesUnreadCount + partsWaitingCount;
+  }, [jobs, jobsUnreadCount, materialsUnreadCount, messagesUnreadCount]);
 
   useEffect(() => {
     void syncUnreadWidgetCount(widgetUnreadCount);
@@ -289,7 +293,8 @@ function AppTopBar({
           showMaterialsManager={showMaterialsManager}
           jobsUnreadCount={jobsUnreadCount}
           partsUnreadCount={partsUnreadCount}
-          materialsMessagesUnreadCount={materialsMessagesUnreadCount}
+          materialsUnreadCount={materialsUnreadCount}
+          messagesUnreadCount={messagesUnreadCount}
           leadsCount={leads.filter((lead) => lead.status !== 'won' && lead.status !== 'lost').length}
         />
 

@@ -100,20 +100,27 @@ function ManagerPage({
           <LeadsTab compact={isCompact} mobile={isMobile} />
         ) : selectedTab === 'materialsManager' && !isMobile ? (
           <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
-        ) : (
+        ) : selectedTab === 'messages' ? (
           <MaterialsMessagesTab
             appMode="manager"
+            view="messages"
             compact={isCompact}
             mobile={isMobile}
-            focusedMaterialId={
-              overlayFocusTarget?.tab === 'materialsMessages' &&
-              overlayFocusTarget.itemType === 'material'
+            focusedMessageId={
+              overlayFocusTarget?.tab === 'messages'
                 ? overlayFocusTarget.itemId
                 : null
             }
-            focusedMessageId={
-              overlayFocusTarget?.tab === 'materialsMessages' &&
-              overlayFocusTarget.itemType === 'message'
+            onFocusHandled={onOverlayFocusHandled}
+          />
+        ) : (
+          <MaterialsMessagesTab
+            appMode="manager"
+            view="materials"
+            compact={isCompact}
+            mobile={isMobile}
+            focusedMaterialId={
+              overlayFocusTarget?.tab === 'materials'
                 ? overlayFocusTarget.itemId
                 : null
             }

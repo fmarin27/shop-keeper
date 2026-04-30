@@ -305,20 +305,15 @@ function App() {
     await handleDisplayModeChange('normal');
   };
 
-  const openMaterialsMessagesView = async (
-    itemType?: 'material' | 'message',
-    itemId?: string,
-  ) => {
-    setOverlayFocusTarget(
-      itemType && itemId
-        ? {
-            tab: 'materialsMessages',
-            itemType,
-            itemId,
-          }
-        : null,
-    );
-    setSelectedTab('materialsMessages');
+  const openMaterialsView = async (itemId?: string) => {
+    setOverlayFocusTarget(itemId ? { tab: 'materials', itemId } : null);
+    setSelectedTab('materials');
+    await handleDisplayModeChange('normal');
+  };
+
+  const openMessagesView = async (itemId?: string) => {
+    setOverlayFocusTarget(itemId ? { tab: 'messages', itemId } : null);
+    setSelectedTab('messages');
     await handleDisplayModeChange('normal');
   };
 
@@ -356,10 +351,10 @@ function App() {
         appMode={appMode}
         onExpand={() => handleDisplayModeChange('normal')}
         onOpenJobs={() => openJobsView()}
-        onOpenMaterialsMessages={() => openMaterialsMessagesView()}
+        onOpenMaterialsMessages={() => openMessagesView()}
         onOpenJob={(jobId) => openJobsView(jobId)}
-        onOpenMaterial={(itemId) => openMaterialsMessagesView('material', itemId)}
-        onOpenMessage={(itemId) => openMaterialsMessagesView('message', itemId)}
+        onOpenMaterial={(itemId) => openMaterialsView(itemId)}
+        onOpenMessage={(itemId) => openMessagesView(itemId)}
         onClose={() => appBridge.closeWindow()}
       />
     );
@@ -389,10 +384,10 @@ function App() {
       void openJobsView(jobId, done);
     },
     onOpenAttentionMaterial: (itemId: string) => {
-      void openMaterialsMessagesView('material', itemId);
+      void openMaterialsView(itemId);
     },
     onOpenAttentionMessage: (itemId: string) => {
-      void openMaterialsMessagesView('message', itemId);
+      void openMessagesView(itemId);
     },
     overlayFocusTarget,
     onOverlayFocusHandled: () => setOverlayFocusTarget(null),

@@ -7,7 +7,8 @@ export const TAB_LABELS = {
   commandCenter: 'RO Command Center',
   jobs: 'Jobs',
   parts: 'Parts/Sublet',
-  materialsMessages: 'Materials & Messages',
+  materials: 'Materials',
+  messages: 'Messages',
   leads: 'Leads',
   materialsManager: 'Materials Manager',
 } as const;

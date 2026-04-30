@@ -10,7 +10,8 @@ type TabBarProps = {
   showMaterialsManager?: boolean;
   jobsUnreadCount?: number;
   partsUnreadCount?: number;
-  materialsMessagesUnreadCount?: number;
+  materialsUnreadCount?: number;
+  messagesUnreadCount?: number;
   leadsCount?: number;
 };
 
@@ -51,7 +52,8 @@ function TabBar({
   showMaterialsManager = false,
   jobsUnreadCount = 0,
   partsUnreadCount = 0,
-  materialsMessagesUnreadCount = 0,
+  materialsUnreadCount = 0,
+  messagesUnreadCount = 0,
   leadsCount = 0,
 }: TabBarProps) {
   return (
@@ -97,12 +99,21 @@ function TabBar({
       />
 
       <TabButton
-        label="Materials & Messages"
-        active={selectedTab === 'materialsMessages'}
+        label="Materials"
+        active={selectedTab === 'materials'}
         compact={compact}
         mobile={mobile}
-        unreadCount={materialsMessagesUnreadCount}
-        onClick={() => onTabChange('materialsMessages')}
+        unreadCount={materialsUnreadCount}
+        onClick={() => onTabChange('materials')}
+      />
+
+      <TabButton
+        label="Messages"
+        active={selectedTab === 'messages'}
+        compact={compact}
+        mobile={mobile}
+        unreadCount={messagesUnreadCount}
+        onClick={() => onTabChange('messages')}
       />
 
       {showLeads ? (

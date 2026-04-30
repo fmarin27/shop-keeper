@@ -6,7 +6,8 @@ export type MainTab =
   | 'commandCenter'
   | 'jobs'
   | 'parts'
-  | 'materialsMessages'
+  | 'materials'
+  | 'messages'
   | 'leads'
   | 'materialsManager';
 
@@ -17,8 +18,11 @@ export type OverlayFocusTarget =
       done?: boolean;
     }
   | {
-      tab: 'materialsMessages';
-      itemType: 'material' | 'message';
+      tab: 'materials';
+      itemId: string;
+    }
+  | {
+      tab: 'messages';
       itemId: string;
     };
 

@@ -158,6 +158,11 @@ type UpdaterStatus =
       message: string;
     }
   | {
+      phase: 'installing';
+      version?: string;
+      message: string;
+    }
+  | {
       phase: 'not-available';
       version?: string;
       message: string;
@@ -170,6 +175,7 @@ type UpdaterStatus =
 let updaterStatus: UpdaterStatus = {
   phase: 'idle',
 };
+let updateInstallStarted = false;
 
 function getMainLogPath() {
   try {
@@ -1966,6 +1972,38 @@ function publishUpdaterStatus(nextStatus: UpdaterStatus) {
   mainWindow?.webContents.send('updater:status', updaterStatus);
 }
 
+function installDownloadedUpdate() {
+  if (updateInstallStarted) {
+    return {
+      ok: false,
+      message: 'Update install is already starting.',
+    };
+  }
+
+  if (updaterStatus.phase !== 'downloaded') {
+    return {
+      ok: false,
+      message: 'No downloaded update is ready to install.',
+    };
+  }
+
+  updateInstallStarted = true;
+  publishUpdaterStatus({
+    phase: 'installing',
+    version: updaterStatus.version,
+    message: `Installing update ${updaterStatus.version}...`,
+  });
+
+  setImmediate(() => {
+    autoUpdater.quitAndInstall(true, true);
+  });
+
+  return {
+    ok: true,
+    message: `Installing update ${updaterStatus.version}...`,
+  };
+}
+
 async function sendMaterialRequestEmail(payload: {
   materialId: string;
   itemName: string;
@@ -2172,7 +2210,9 @@ function setupAutoUpdates() {
   updateCheckStarted = true;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.disableWebInstaller = true;
+  autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.on('checking-for-update', () => {
     console.log('[updater] Checking for update...');
@@ -2244,7 +2284,7 @@ function setupAutoUpdates() {
         });
 
     if (result.response === 0) {
-      autoUpdater.quitAndInstall();
+      installDownloadedUpdate();
     }
   });
 
@@ -2424,20 +2464,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('updater:getStatus', () => updaterStatus);
 
   ipcMain.handle('updater:installNow', () => {
-    if (updaterStatus.phase !== 'downloaded') {
-      return {
-        ok: false,
-        message: 'No downloaded update is ready to install.',
-      };
-    }
-
-    setImmediate(() => {
-      autoUpdater.quitAndInstall();
-    });
-
-    return {
-      ok: true,
-    };
+    return installDownloadedUpdate();
   });
 
   ipcMain.handle(

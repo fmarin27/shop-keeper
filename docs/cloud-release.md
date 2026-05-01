@@ -38,6 +38,8 @@ Do not commit local signing files. They are intentionally ignored by Git.
 
 The desktop app updater reads `latest.yml` from the latest GitHub release. If `latest.yml`, the installer, or the blockmap are missing from a release, desktop auto-update will fail.
 
+Windows desktop releases are built as one-click, per-machine NSIS installers so they match the existing `C:\Program Files\Shop Keeper` install. App-driven updates run the downloaded installer silently; the manual setup file may still request Windows elevation.
+
 ## Google Play
 
 Google Play upload requires a Play Console service account with permission to release the app. The workflow is ready for that secret, but it will skip the Play upload until `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` exists.

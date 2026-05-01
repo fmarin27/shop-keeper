@@ -113,6 +113,9 @@ jobs:
           if ($latestText -notmatch [regex]::Escape("Shop-Keeper-Setup-$version.exe")) {
             throw "latest.yml does not point to Shop-Keeper-Setup-$version.exe"
           }
+          if ($latestText -notmatch "isAdminRightsRequired:\s+true") {
+            throw "latest.yml does not mark the per-machine installer as requiring admin rights"
+          }
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v4

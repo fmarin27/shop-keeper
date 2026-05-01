@@ -138,6 +138,11 @@ declare global {
         message: string;
       }
     | {
+        phase: 'installing';
+        version?: string;
+        message: string;
+      }
+    | {
         phase: 'not-available';
         version?: string;
         message: string;

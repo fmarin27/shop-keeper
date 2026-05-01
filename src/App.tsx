@@ -380,6 +380,8 @@ function App() {
         ? 'Restart to Update'
         : isMobile && updaterState.phase === 'available'
         ? 'Download Update'
+        : updaterState.phase === 'installing'
+        ? 'Installing...'
         : updaterState.phase === 'checking'
         ? 'Checking...'
         : updaterState.phase === 'available' || updaterState.phase === 'downloading'
@@ -387,7 +389,7 @@ function App() {
         : updaterState.phase === 'error'
         ? 'Check Again'
         : 'Check for Updates',
-    updateButtonDisabled: updaterState.phase === 'checking',
+    updateButtonDisabled: updaterState.phase === 'checking' || updaterState.phase === 'installing',
     onOpenAttentionJob: (jobId: string, done?: boolean) => {
       void openJobsView(jobId, done);
     },

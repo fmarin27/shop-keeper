@@ -1,6 +1,6 @@
 {
   "name": "shop-floor-app-skeleton",
-  "version": "3.0.13",
+  "version": "3.0.14",
   "private": true,
   "main": "dist-electron/main.js",
   "description": "Shop floor desktop app skeleton with Manager/Tech modes and Normal/Compact/Overlay views.",
@@ -13,6 +13,7 @@
     "mobile:sync": "npm run build:web && npx cap sync",
     "android:sync": "npm run build:web && npx cap sync android",
     "android:open": "npx cap open android",
+    "deploy:web": "npm run build:web && firebase deploy --only hosting",
     "ems:sync": "node scripts/sync-ems-to-firestore.mjs",
     "ems:sync:dry": "node scripts/sync-ems-to-firestore.mjs --dry-run",
     "dist": "npm run build && electron-builder",

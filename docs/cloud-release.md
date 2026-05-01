@@ -12,6 +12,8 @@ GitHub is the release source of truth for Shop Keeper. A version tag now builds 
   - `ShopKeeper-<version>-<versionCode>.aab`
   - `ShopKeeper-<version>-<versionCode>.apk`
 - Optional Google Play upload from a manual workflow run.
+- Firebase Hosting web app:
+  - `npm run deploy:web`
 
 ## Required GitHub Secrets
 
@@ -57,3 +59,13 @@ Manual Play upload:
 4. Choose the track, usually `internal` while we are still testing.
 
 The Android package name is `com.shopkeeper.app`.
+
+## Web App
+
+The web app deploys the Vite `dist` folder to Firebase Hosting in the existing `shop-keeper-58e37` Firebase project.
+
+Run:
+
+- `npm run deploy:web`
+
+Firebase Hosting serves `index.html` with no-cache headers and keeps hashed `/assets/**` files cached for a year.

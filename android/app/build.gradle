@@ -14,8 +14,8 @@ android {
         applicationId "com.shopkeeper.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 30013
-        versionName "3.0.13"
+        versionCode 30014
+        versionName "3.0.14"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

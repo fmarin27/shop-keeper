@@ -38,7 +38,7 @@ Do not commit local signing files. They are intentionally ignored by Git.
 
 The desktop app updater reads `latest.yml` from the latest GitHub release. If `latest.yml`, the installer, or the blockmap are missing from a release, desktop auto-update will fail.
 
-Windows desktop releases are built as one-click, per-machine NSIS installers so they match the existing `C:\Program Files\Shop Keeper` install. App-driven updates run the downloaded installer silently; the manual setup file may still request Windows elevation.
+Windows desktop releases are built as one-click, per-machine NSIS installers so they match the existing `C:\Program Files\Shop Keeper` install. App-driven updates run the downloaded installer silently; the manual setup file may still request Windows elevation. The custom NSIS include closes only the real `Shop Keeper.exe` app process before installing so updater/helper processes do not trigger the stale "cannot be closed" loop.
 
 ## Google Play
 

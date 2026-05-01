@@ -16,6 +16,7 @@ type CommandCenterTabProps = {
 };
 
 type ViewFilter = 'active' | 'closed' | 'all';
+type SummaryShortcut = 'active' | 'closed' | 'supplements' | 'appraiser';
 type SortDirection = 'asc' | 'desc';
 type CommandCenterSortKey =
   | 'ro'
@@ -134,6 +135,31 @@ function CommandCenterTab({
     }));
   };
 
+  const applySummaryShortcut = (shortcut: SummaryShortcut) => {
+    setSearch('');
+
+    if (shortcut === 'active') {
+      setViewFilter('active');
+      setStatusFilter('all');
+      return;
+    }
+
+    if (shortcut === 'closed') {
+      setViewFilter('closed');
+      setStatusFilter('all');
+      return;
+    }
+
+    if (shortcut === 'supplements') {
+      setViewFilter('all');
+      setStatusFilter('supplementNeeded');
+      return;
+    }
+
+    setViewFilter('all');
+    setStatusFilter('waitingOnAppraiser');
+  };
+
   useEffect(() => {
     if (!filteredJobs.length) {
       setSelectedJobId(null);
@@ -150,6 +176,7 @@ function CommandCenterTab({
   const closedCount = jobs.filter((job) => job.done).length;
   const supplementCount = jobs.filter((job) => job.status === 'supplementNeeded').length;
   const appraiserCount = jobs.filter((job) => job.status === 'waitingOnAppraiser').length;
+  const activeShortcut = getActiveSummaryShortcut(viewFilter, statusFilter, search);
 
   useEffect(() => {
     if (!selectedJob) {
@@ -336,10 +363,34 @@ function CommandCenterTab({
               minWidth: mobile ? undefined : 560,
             }}
           >
-            <SummaryCard label="Active ROs" value={String(activeCount)} tone="blue" />
-            <SummaryCard label="Closed ROs" value={String(closedCount)} tone="slate" />
-            <SummaryCard label="Supplements" value={String(supplementCount)} tone="amber" />
-            <SummaryCard label="Appraiser Wait" value={String(appraiserCount)} tone="green" />
+            <SummaryCard
+              label="Active ROs"
+              value={String(activeCount)}
+              tone="blue"
+              active={activeShortcut === 'active'}
+              onClick={() => applySummaryShortcut('active')}
+            />
+            <SummaryCard
+              label="Closed ROs"
+              value={String(closedCount)}
+              tone="slate"
+              active={activeShortcut === 'closed'}
+              onClick={() => applySummaryShortcut('closed')}
+            />
+            <SummaryCard
+              label="Supplements"
+              value={String(supplementCount)}
+              tone="amber"
+              active={activeShortcut === 'supplements'}
+              onClick={() => applySummaryShortcut('supplements')}
+            />
+            <SummaryCard
+              label="Appraiser Wait"
+              value={String(appraiserCount)}
+              tone="green"
+              active={activeShortcut === 'appraiser'}
+              onClick={() => applySummaryShortcut('appraiser')}
+            />
           </div>
         </div>
 
@@ -768,10 +819,14 @@ function SummaryCard({
   label,
   value,
   tone,
+  active,
+  onClick,
 }: {
   label: string;
   value: string;
   tone: 'blue' | 'slate' | 'amber' | 'green';
+  active: boolean;
+  onClick: () => void;
 }) {
   const tones = {
     blue: {
@@ -793,17 +848,31 @@ function SummaryCard({
   }[tone];
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={`Show ${label.toLowerCase()}`}
       style={{
+        appearance: 'none',
+        width: '100%',
+        textAlign: 'left',
+        font: 'inherit',
         borderRadius: 16,
         padding: '12px 14px',
         background: tones.background,
         border: `1px solid ${tones.border}`,
+        outline: active ? '2px solid rgba(255,255,255,0.82)' : 'none',
+        outlineOffset: active ? 2 : 0,
+        boxShadow: active
+          ? '0 0 0 3px rgba(147,197,253,0.18)'
+          : 'none',
+        cursor: 'pointer',
       }}
     >
       <div style={{ fontSize: 12, fontWeight: 700, color: '#d7e3f3', marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 900, color: '#ffffff' }}>{value}</div>
-    </div>
+    </button>
   );
 }
 
@@ -1332,6 +1401,34 @@ function formatDateTime(value: string) {
 
 function formatHours(value: number) {
   return (Math.round((value || 0) * 10) / 10).toFixed(1);
+}
+
+function getActiveSummaryShortcut(
+  viewFilter: ViewFilter,
+  statusFilter: 'all' | Job['status'],
+  search: string,
+): SummaryShortcut | null {
+  if (search.trim()) {
+    return null;
+  }
+
+  if (viewFilter === 'active' && statusFilter === 'all') {
+    return 'active';
+  }
+
+  if (viewFilter === 'closed' && statusFilter === 'all') {
+    return 'closed';
+  }
+
+  if (viewFilter === 'all' && statusFilter === 'supplementNeeded') {
+    return 'supplements';
+  }
+
+  if (viewFilter === 'all' && statusFilter === 'waitingOnAppraiser') {
+    return 'appraiser';
+  }
+
+  return null;
 }
 
 function getJobLaborLines(job: Job): CommandCenterLaborLine[] {

@@ -1,6 +1,6 @@
 {
   "name": "shop-floor-app-skeleton",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "private": true,
   "main": "dist-electron/main.js",
   "description": "Shop floor desktop app skeleton with Manager/Tech modes and Normal/Compact/Overlay views.",
@@ -54,6 +54,7 @@
     "directories": {
       "output": "release"
     },
+    "artifactName": "Shop-Keeper-Setup-${version}.${ext}",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",

@@ -148,9 +148,7 @@ function MaterialsNeededSection({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={labelPillStyle(compact)}>Materials</span>
-          <h2 style={titleStyle(compact)}>
-            {compact ? 'Materials Needed' : 'Materials Needed'}
-          </h2>
+          <h2 style={titleStyle(compact)}>Material Requests</h2>
           {unreadCount > 0 ? (
             <span style={unreadPillStyle(compact)}>{unreadCount} unread</span>
           ) : null}
@@ -277,7 +275,9 @@ function MaterialsNeededSection({
                 />
               ))
             ) : (
-              <div style={emptyStateStyle(compact)}>No active material requests.</div>
+              <div style={emptyStateStyle(compact)}>
+                No live material requests yet. Material catalog and invoice data are in Materials Manager.
+              </div>
             )}
           </div>
 
@@ -454,7 +454,7 @@ function MaterialCard({
       >
         <div style={{ fontSize: compact ? 10 : 12, color: '#b8c7da' }}>
           {formatDateTime(item.createdAt)}
-          {item.unread ? ' • Unread' : ''}
+          {item.unread ? ' | Unread' : ''}
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{actions}</div>

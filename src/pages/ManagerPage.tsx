@@ -70,7 +70,6 @@ function ManagerPage({
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
         showCommandCenter={!isMobile}
-        showMaterialsManager={!isMobile}
       />
 
       <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
@@ -98,6 +97,24 @@ function ManagerPage({
           />
         ) : selectedTab === 'leads' ? (
           <LeadsTab compact={isCompact} mobile={isMobile} />
+        ) : selectedTab === 'materials' ? (
+          <div style={{ display: 'grid', gap: isCompact ? 10 : 24 }}>
+            {!isMobile ? (
+              <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
+            ) : null}
+            <MaterialsMessagesTab
+              appMode="manager"
+              view="materials"
+              compact={isCompact}
+              mobile={isMobile}
+              focusedMaterialId={
+                overlayFocusTarget?.tab === 'materials'
+                  ? overlayFocusTarget.itemId
+                  : null
+              }
+              onFocusHandled={onOverlayFocusHandled}
+            />
+          </div>
         ) : selectedTab === 'materialsManager' && !isMobile ? (
           <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
         ) : selectedTab === 'messages' ? (
@@ -114,17 +131,14 @@ function ManagerPage({
             onFocusHandled={onOverlayFocusHandled}
           />
         ) : (
-          <MaterialsMessagesTab
-            appMode="manager"
-            view="materials"
+          <JobsTab
+            showAddJob
             compact={isCompact}
             mobile={isMobile}
-            focusedMaterialId={
-              overlayFocusTarget?.tab === 'materials'
-                ? overlayFocusTarget.itemId
-                : null
-            }
-            onFocusHandled={onOverlayFocusHandled}
+            appMode="manager"
+            focusedJobId={overlayFocusTarget?.tab === 'jobs' ? overlayFocusTarget.itemId : null}
+            focusedJobDone={overlayFocusTarget?.tab === 'jobs' ? !!overlayFocusTarget.done : false}
+            onFocusedJobHandled={onOverlayFocusHandled}
           />
         )}
       </main>

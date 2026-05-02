@@ -644,10 +644,9 @@ function getMaterialsManagerLaunchPythonPath(install: MaterialsManagerInstall) {
 async function launchMaterialsManagerApp() {
   const install = resolveMaterialsManagerInstall();
 
-  if (install.entryPath && fs.existsSync(install.entryPath)) {
-    const pythonPath = getMaterialsManagerLaunchPythonPath(install);
-    const child = spawn(pythonPath, [install.entryPath], {
-      cwd: install.rootPath,
+  if (install.exePath && fs.existsSync(install.exePath)) {
+    const child = spawn(install.exePath, [], {
+      cwd: path.dirname(install.exePath),
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
@@ -657,9 +656,10 @@ async function launchMaterialsManagerApp() {
     return;
   }
 
-  if (install.exePath && fs.existsSync(install.exePath)) {
-    const child = spawn(install.exePath, [], {
-      cwd: path.dirname(install.exePath),
+  if (install.entryPath && fs.existsSync(install.entryPath)) {
+    const pythonPath = getMaterialsManagerLaunchPythonPath(install);
+    const child = spawn(pythonPath, [install.entryPath], {
+      cwd: install.rootPath,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,

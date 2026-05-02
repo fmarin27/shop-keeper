@@ -418,7 +418,15 @@ function MaterialsManagerTab({
         </div>
       </div>
 
-      {unlocked ? (
+      {unlocked && isLoadingSnapshot && !snapshot ? (
+        <EmptyState message="Loading embedded Materials Manager database..." />
+      ) : null}
+
+      {unlocked && !isLoadingSnapshot && !snapshot ? (
+        <EmptyState message="No embedded Materials Manager data is loaded yet. Use Refresh Embedded Data to try again." />
+      ) : null}
+
+      {unlocked && snapshot ? (
         <>
           <div
             style={{

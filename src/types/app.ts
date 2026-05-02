@@ -84,6 +84,13 @@ export type JobPartInvoicePhoto = {
   timestampIncluded: boolean;
 };
 
+export type JobPartInvoiceDetailsInput = {
+  invoiceNumber: string;
+  invoiceVendor: string;
+  invoiceListPrice: string | number;
+  invoiceNetPrice: string | number;
+};
+
 export type JobPartRequest = {
   id: string;
   name: string;
@@ -93,6 +100,9 @@ export type JobPartRequest = {
   status: JobPartStatus;
   note?: string;
   invoiceNumber?: string;
+  invoiceVendor?: string;
+  invoiceListPrice?: number;
+  invoiceNetPrice?: number;
   invoicePhoto?: JobPartInvoicePhoto;
   createdAt: string;
   receivedAt?: string;

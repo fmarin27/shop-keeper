@@ -36,6 +36,7 @@ import type {
   JobLaborCompletion,
   JobNote,
   JobPhoto,
+  JobPartInvoiceDetailsInput,
   JobPartRequest,
   JobStatus,
   UpdateJobDetailsInput,
@@ -69,6 +70,13 @@ function toFirestorePartRequest(part: JobPartRequest) {
     status: part.status,
     note: part.note ?? '',
     invoiceNumber: part.invoiceNumber ?? '',
+    invoiceVendor: part.invoiceVendor ?? '',
+    ...(typeof part.invoiceListPrice === 'number'
+      ? { invoiceListPrice: part.invoiceListPrice }
+      : {}),
+    ...(typeof part.invoiceNetPrice === 'number'
+      ? { invoiceNetPrice: part.invoiceNetPrice }
+      : {}),
     ...(part.invoicePhoto ? { invoicePhoto: part.invoicePhoto } : {}),
     createdAt: part.createdAt,
     ...(part.receivedAt ? { receivedAt: part.receivedAt } : {}),
@@ -81,20 +89,105 @@ function assertPartCanBeReceived(part: JobPartRequest | undefined) {
     throw new Error('Part request was not found.');
   }
 
-  if (!part.invoiceNumber?.trim()) {
-    throw new Error('Save the invoice number before marking this part received.');
+  if (!hasCompleteInvoiceDetails(part)) {
+    throw new Error('Save invoice #, vendor, list price, and net price before marking this part received.');
   }
 }
 
-function assertPartCanBePaid(part: JobPartRequest | undefined, invoiceNumber?: string) {
+function assertPartCanBePaid(
+  part: JobPartRequest | undefined,
+  invoiceDetails?: string | JobPartInvoiceDetailsInput,
+) {
   if (!part) {
     throw new Error('Part or sublet request was not found.');
   }
 
-  const invoice = invoiceNumber !== undefined ? invoiceNumber : part.invoiceNumber;
-  if (!invoice?.trim()) {
-    throw new Error('Save the invoice number before marking this item paid.');
+  const merged = mergeInvoiceDetails(part, invoiceDetails);
+  if (!hasCompleteInvoiceDetails(merged)) {
+    throw new Error('Save invoice #, vendor, list price, and net price before marking this item paid.');
   }
+}
+
+function hasCompleteInvoiceDetails(part: Pick<
+  JobPartRequest,
+  'invoiceNumber' | 'invoiceVendor' | 'invoiceListPrice' | 'invoiceNetPrice'
+>) {
+  return Boolean(
+    part.invoiceNumber?.trim() &&
+      part.invoiceVendor?.trim() &&
+      isValidInvoicePrice(part.invoiceListPrice) &&
+      isValidInvoicePrice(part.invoiceNetPrice),
+  );
+}
+
+function isValidInvoicePrice(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function parseInvoicePrice(value: string | number, label: string) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${label} must be a valid non-negative number.`);
+    }
+
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.replace(/[$,]/g, '');
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a valid non-negative number.`);
+  }
+
+  return parsed;
+}
+
+function mergeInvoiceDetails(
+  part: JobPartRequest,
+  invoiceDetails?: string | JobPartInvoiceDetailsInput,
+) {
+  if (typeof invoiceDetails === 'string') {
+    return {
+      invoiceNumber: invoiceDetails.trim(),
+      invoiceVendor: part.invoiceVendor ?? '',
+      invoiceListPrice: part.invoiceListPrice,
+      invoiceNetPrice: part.invoiceNetPrice,
+    };
+  }
+
+  if (invoiceDetails) {
+    return {
+      invoiceNumber: invoiceDetails.invoiceNumber.trim(),
+      invoiceVendor: invoiceDetails.invoiceVendor.trim(),
+      invoiceListPrice: parseInvoicePrice(invoiceDetails.invoiceListPrice, 'List price'),
+      invoiceNetPrice: parseInvoicePrice(invoiceDetails.invoiceNetPrice, 'Net price'),
+    };
+  }
+
+  return {
+    invoiceNumber: part.invoiceNumber ?? '',
+    invoiceVendor: part.invoiceVendor ?? '',
+    invoiceListPrice: part.invoiceListPrice,
+    invoiceNetPrice: part.invoiceNetPrice,
+  };
+}
+
+function applyInvoiceDetails(
+  part: JobPartRequest,
+  invoiceDetails: ReturnType<typeof mergeInvoiceDetails>,
+) {
+  return {
+    ...part,
+    invoiceNumber: invoiceDetails.invoiceNumber,
+    invoiceVendor: invoiceDetails.invoiceVendor,
+    invoiceListPrice: invoiceDetails.invoiceListPrice,
+    invoiceNetPrice: invoiceDetails.invoiceNetPrice,
+  };
 }
 
 function toFirestoreLaborCompletion(completion: JobLaborCompletion) {
@@ -1669,21 +1762,25 @@ export async function saveJobPartNote(
 export async function saveJobPartInvoice(
   job: Job,
   partId: string,
-  invoiceNumber: string,
+  invoiceDetails: string | JobPartInvoiceDetailsInput,
 ) {
-  const trimmed = invoiceNumber.trim();
   const currentPart = (job.partsRequests ?? []).find((part) => part.id === partId);
+  if (!currentPart) {
+    throw new Error('Part or sublet request was not found.');
+  }
 
-  if (!trimmed && currentPart && (currentPart.status === 'received' || currentPart.paidAt)) {
-    throw new Error('Invoice number is required once an item is received or paid.');
+  const nextInvoiceDetails = mergeInvoiceDetails(currentPart, invoiceDetails);
+
+  if (
+    (currentPart.status === 'received' || currentPart.paidAt) &&
+    !hasCompleteInvoiceDetails(nextInvoiceDetails)
+  ) {
+    throw new Error('Invoice #, vendor, list price, and net price are required once an item is received or paid.');
   }
 
   const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
     part.id === partId
-      ? {
-          ...part,
-          invoiceNumber: trimmed,
-        }
+      ? applyInvoiceDetails(part, nextInvoiceDetails)
       : part,
   );
 
@@ -1696,19 +1793,16 @@ export async function saveJobPartInvoice(
 export async function markJobPartPaid(
   job: Job,
   partId: string,
-  invoiceNumber?: string,
+  invoiceDetails?: string | JobPartInvoiceDetailsInput,
 ) {
   const currentPart = (job.partsRequests ?? []).find((part) => part.id === partId);
-  assertPartCanBePaid(currentPart, invoiceNumber);
+  assertPartCanBePaid(currentPart, invoiceDetails);
+  const nextInvoiceDetails = mergeInvoiceDetails(currentPart, invoiceDetails);
 
   const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
     part.id === partId
       ? {
-          ...part,
-          invoiceNumber:
-            invoiceNumber !== undefined
-              ? invoiceNumber.trim()
-              : part.invoiceNumber ?? '',
+          ...applyInvoiceDetails(part, nextInvoiceDetails),
           paidAt: new Date().toISOString(),
         }
       : part,

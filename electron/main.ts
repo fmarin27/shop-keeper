@@ -376,6 +376,9 @@ type RoFolderJobRecord = {
     status: string;
     note?: string;
     invoiceNumber?: string;
+    invoiceVendor?: string;
+    invoiceListPrice?: number;
+    invoiceNetPrice?: number;
     invoicePhoto?: {
       id: string;
       url: string;
@@ -1869,6 +1872,14 @@ function safeTimestampSegment(value: string) {
   return safeDate.toISOString().replace(/[:.]/g, '-');
 }
 
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function getUrlExtension(url: string, fallback: string) {
   try {
     const parsed = new URL(url);
@@ -1957,6 +1968,15 @@ function buildJobNotesText(job: RoFolderJobRecord) {
       lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.kind ?? 'part'} | ${part.status} | ${part.requestedBy}`);
       if (part.invoiceNumber?.trim()) {
         lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
+      }
+      if (part.invoiceVendor?.trim()) {
+        lines.push(`Vendor: ${part.invoiceVendor.trim()}`);
+      }
+      if (typeof part.invoiceListPrice === 'number') {
+        lines.push(`List Price: ${formatMoney(part.invoiceListPrice)}`);
+      }
+      if (typeof part.invoiceNetPrice === 'number') {
+        lines.push(`Net Price: ${formatMoney(part.invoiceNetPrice)}`);
       }
       if (part.invoicePhoto?.url) {
         lines.push(`Invoice Photo: ${part.invoicePhoto.url}`);

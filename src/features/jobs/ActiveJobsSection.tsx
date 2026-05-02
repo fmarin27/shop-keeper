@@ -12,6 +12,7 @@ import type {
   JobEmsUpdateInfo,
   JobNote,
   JobPhoto,
+  JobPartInvoiceDetailsInput,
   JobPartRequest,
   JobStatus,
   UpdateJobDetailsInput,
@@ -69,8 +70,16 @@ type ActiveJobsSectionProps = {
   onSetPartReorderNeeded: (jobId: string, partId: string) => void;
   onMarkPartReceived: (jobId: string, partId: string) => void;
   onSavePartNote: (jobId: string, partId: string, note: string) => void;
-  onSavePartInvoice: (jobId: string, partId: string, invoiceNumber: string) => void;
-  onMarkPartPaid: (jobId: string, partId: string, invoiceNumber: string) => void;
+  onSavePartInvoice: (
+    jobId: string,
+    partId: string,
+    invoiceDetails: JobPartInvoiceDetailsInput,
+  ) => void;
+  onMarkPartPaid: (
+    jobId: string,
+    partId: string,
+    invoiceDetails: JobPartInvoiceDetailsInput,
+  ) => void;
   onDeletePart: (jobId: string, partId: string) => Promise<void> | void;
   onClearLegacyPartsWaiting: (jobId: string) => void;
   onSetPriorityPosition: (jobId: string, position: number) => Promise<void> | void;
@@ -134,7 +143,9 @@ function ActiveJobsSection({
     Record<string, { name: string; quantity: string; note: string }>
   >({});
   const [partNoteDrafts, setPartNoteDrafts] = useState<Record<string, string>>({});
-  const [partInvoiceDrafts, setPartInvoiceDrafts] = useState<Record<string, string>>({});
+  const [partInvoiceDrafts, setPartInvoiceDrafts] = useState<
+    Record<string, JobPartInvoiceDetailsInput>
+  >({});
   const [jobDetailDrafts, setJobDetailDrafts] = useState<
     Record<
       string,
@@ -1302,10 +1313,16 @@ function ActiveJobsSection({
                         [partId]: value,
                       }))
                     }
-                    onPartInvoiceDraftChange={(partId, value) =>
+                    onPartInvoiceDraftChange={(partId, patch) =>
                       setPartInvoiceDrafts((current) => ({
                         ...current,
-                        [partId]: value,
+                        [partId]: {
+                          ...getPartInvoiceDraft(
+                            job.partsRequests.find((part) => part.id === partId),
+                            current[partId],
+                          ),
+                          ...patch,
+                        },
                       }))
                     }
                     onRequestPart={() => {
@@ -1350,10 +1367,8 @@ function ActiveJobsSection({
                       }
                     }}
                     onSavePartInvoice={async (partId) => {
-                      const nextInvoice =
-                        partInvoiceDrafts[partId] ??
-                        job.partsRequests.find((part) => part.id === partId)?.invoiceNumber ??
-                        '';
+                      const targetPart = job.partsRequests.find((part) => part.id === partId);
+                      const nextInvoice = getPartInvoiceDraft(targetPart, partInvoiceDrafts[partId]);
                       try {
                         setSavingPartNoteId(partId);
                         await onSavePartInvoice(job.id, partId, nextInvoice);
@@ -1362,10 +1377,8 @@ function ActiveJobsSection({
                       }
                     }}
                     onMarkPartPaid={async (partId) => {
-                      const nextInvoice =
-                        partInvoiceDrafts[partId] ??
-                        job.partsRequests.find((part) => part.id === partId)?.invoiceNumber ??
-                        '';
+                      const targetPart = job.partsRequests.find((part) => part.id === partId);
+                      const nextInvoice = getPartInvoiceDraft(targetPart, partInvoiceDrafts[partId]);
                       try {
                         setSavingPartNoteId(partId);
                         await onMarkPartPaid(job.id, partId, nextInvoice);
@@ -2274,6 +2287,67 @@ function EstimateCell({
   );
 }
 
+function getPartInvoiceDraft(
+  part: JobPartRequest | undefined,
+  draft?: JobPartInvoiceDetailsInput,
+): JobPartInvoiceDetailsInput {
+  if (draft) {
+    return draft;
+  }
+
+  return {
+    invoiceNumber: part?.invoiceNumber ?? '',
+    invoiceVendor: part?.invoiceVendor ?? '',
+    invoiceListPrice:
+      typeof part?.invoiceListPrice === 'number'
+        ? String(part.invoiceListPrice)
+        : '',
+    invoiceNetPrice:
+      typeof part?.invoiceNetPrice === 'number'
+        ? String(part.invoiceNetPrice)
+        : '',
+  };
+}
+
+function hasCompleteInvoiceDetails(part: JobPartRequest) {
+  return Boolean(
+    part.invoiceNumber?.trim() &&
+      part.invoiceVendor?.trim() &&
+      typeof part.invoiceListPrice === 'number' &&
+      Number.isFinite(part.invoiceListPrice) &&
+      part.invoiceListPrice >= 0 &&
+      typeof part.invoiceNetPrice === 'number' &&
+      Number.isFinite(part.invoiceNetPrice) &&
+      part.invoiceNetPrice >= 0,
+  );
+}
+
+function hasInvoiceDraftChanged(
+  part: JobPartRequest,
+  draft: JobPartInvoiceDetailsInput,
+) {
+  return (
+    draft.invoiceNumber.trim() !== (part.invoiceNumber ?? '').trim() ||
+    draft.invoiceVendor.trim() !== (part.invoiceVendor ?? '').trim() ||
+    normalizeMoneyDraft(draft.invoiceListPrice) !== normalizeMoneyDraft(part.invoiceListPrice) ||
+    normalizeMoneyDraft(draft.invoiceNetPrice) !== normalizeMoneyDraft(part.invoiceNetPrice)
+  );
+}
+
+function normalizeMoneyDraft(value: string | number | undefined) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : '';
+  }
+
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const parsed = Number(trimmed.replace(/[$,]/g, ''));
+  return Number.isFinite(parsed) ? String(parsed) : String(value ?? '').trim();
+}
+
 function PartsPanel({
   job,
   appMode,
@@ -2308,10 +2382,13 @@ function PartsPanel({
   mobile: boolean;
   draft: { name: string; quantity: string; note: string };
   noteDrafts: Record<string, string>;
-  invoiceDrafts: Record<string, string>;
+  invoiceDrafts: Record<string, JobPartInvoiceDetailsInput>;
   onDraftChange: (draft: { name: string; quantity: string; note: string }) => void;
   onPartNoteDraftChange: (partId: string, value: string) => void;
-  onPartInvoiceDraftChange: (partId: string, value: string) => void;
+  onPartInvoiceDraftChange: (
+    partId: string,
+    patch: Partial<JobPartInvoiceDetailsInput>,
+  ) => void;
   onRequestPart: () => void;
   onTrackEstimatePart: (line: EmsEstimateLine) => void;
   onSetPartOrdered: (partId: string) => void;
@@ -2549,11 +2626,10 @@ function PartsPanel({
         <div style={{ display: 'grid', gap: 10 }}>
           {parts.map((part) => {
             const noteDraft = noteDrafts[part.id] ?? part.note ?? '';
-            const invoiceDraft = invoiceDrafts[part.id] ?? part.invoiceNumber ?? '';
+            const invoiceDraft = getPartInvoiceDraft(part, invoiceDrafts[part.id]);
             const isSublet = isSubletPart(part);
-            const savedInvoiceNumber = part.invoiceNumber?.trim() ?? '';
-            const invoiceDraftChanged = invoiceDraft.trim() !== savedInvoiceNumber;
-            const canUseSavedInvoice = Boolean(savedInvoiceNumber) && !invoiceDraftChanged;
+            const invoiceDraftChanged = hasInvoiceDraftChanged(part, invoiceDraft);
+            const canUseSavedInvoice = hasCompleteInvoiceDetails(part) && !invoiceDraftChanged;
             const invoiceRefKey = `${job.id}-${part.id}`;
             const invoicePhotoPhase =
               invoicePhotoActionState?.jobId === job.id &&
@@ -2639,20 +2715,58 @@ function PartsPanel({
                   style={{
                     display: 'grid',
                     gap: 10,
-                    gridTemplateColumns: compact ? '1fr' : 'minmax(180px, 1fr) auto auto auto',
+                    gridTemplateColumns: compact
+                      ? '1fr'
+                      : 'minmax(150px, 1fr) minmax(140px, 1fr) 110px 110px auto auto auto',
                     alignItems: 'center',
                   }}
                 >
                   <input
-                    value={invoiceDraft}
+                    value={invoiceDraft.invoiceNumber}
                     onChange={(event) =>
-                      onPartInvoiceDraftChange(part.id, event.target.value)
+                      onPartInvoiceDraftChange(part.id, {
+                        invoiceNumber: event.target.value,
+                      })
                     }
                     placeholder="Invoice #"
                     style={inputStyle(compact)}
                   />
+                  <input
+                    value={invoiceDraft.invoiceVendor}
+                    onChange={(event) =>
+                      onPartInvoiceDraftChange(part.id, {
+                        invoiceVendor: event.target.value,
+                      })
+                    }
+                    placeholder="Vendor"
+                    style={inputStyle(compact)}
+                  />
+                  <input
+                    value={String(invoiceDraft.invoiceListPrice)}
+                    onChange={(event) =>
+                      onPartInvoiceDraftChange(part.id, {
+                        invoiceListPrice: event.target.value,
+                      })
+                    }
+                    inputMode="decimal"
+                    placeholder="List $"
+                    style={inputStyle(compact)}
+                  />
+                  <input
+                    value={String(invoiceDraft.invoiceNetPrice)}
+                    onChange={(event) =>
+                      onPartInvoiceDraftChange(part.id, {
+                        invoiceNetPrice: event.target.value,
+                      })
+                    }
+                    inputMode="decimal"
+                    placeholder="Net $"
+                    style={inputStyle(compact)}
+                  />
                   <ActionButton compact={compact} onClick={() => onSavePartInvoice(part.id)}>
-                    {savedInvoiceNumber && !invoiceDraftChanged ? 'Invoice Saved' : 'Save Invoice'}
+                    {hasCompleteInvoiceDetails(part) && !invoiceDraftChanged
+                      ? 'Invoice Saved'
+                      : 'Save Invoice'}
                   </ActionButton>
                   <ActionButton
                     compact={compact}
@@ -2753,7 +2867,7 @@ function PartsPanel({
                     </ActionButton>
                   ) : null}
                   {!canUseSavedInvoice && !part.paidAt ? (
-                    <span>Save invoice # before receiving or paying.</span>
+                    <span>Save invoice #, vendor, list price, and net price before receiving or paying.</span>
                   ) : null}
                 </div>
 

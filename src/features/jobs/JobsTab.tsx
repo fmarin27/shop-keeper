@@ -8,6 +8,7 @@ import type {
   EmsImportCandidatesSnapshot,
   Job,
   JobEmsUpdateInfo,
+  JobPartInvoiceDetailsInput,
   JobPartStatus,
   JobStatus,
   UpdateJobDetailsInput,
@@ -410,23 +411,23 @@ function JobsTab({
   const handleSavePartInvoice = async (
     jobId: string,
     partId: string,
-    invoiceNumber: string,
+    invoiceDetails: JobPartInvoiceDetailsInput,
   ) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
 
-    await saveJobPartInvoice(job, partId, invoiceNumber);
+    await saveJobPartInvoice(job, partId, invoiceDetails);
   };
 
   const handleMarkPartPaid = async (
     jobId: string,
     partId: string,
-    invoiceNumber: string,
+    invoiceDetails: JobPartInvoiceDetailsInput,
   ) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
 
-    await markJobPartPaid(job, partId, invoiceNumber);
+    await markJobPartPaid(job, partId, invoiceDetails);
   };
 
   const handleDeletePart = async (jobId: string, partId: string) => {

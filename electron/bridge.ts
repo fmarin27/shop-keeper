@@ -27,6 +27,9 @@ type JobPartRequest = {
   status: string;
   note?: string;
   invoiceNumber?: string;
+  invoiceVendor?: string;
+  invoiceListPrice?: number;
+  invoiceNetPrice?: number;
   invoicePhoto?: JobPhoto;
   createdAt: string;
   receivedAt?: string;
@@ -288,6 +291,15 @@ function buildJobNotesText(job: BridgeJob) {
       if (part.invoiceNumber?.trim()) {
         lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
       }
+      if (part.invoiceVendor?.trim()) {
+        lines.push(`Vendor: ${part.invoiceVendor.trim()}`);
+      }
+      if (typeof part.invoiceListPrice === 'number') {
+        lines.push(`List Price: ${formatMoney(part.invoiceListPrice)}`);
+      }
+      if (typeof part.invoiceNetPrice === 'number') {
+        lines.push(`Net Price: ${formatMoney(part.invoiceNetPrice)}`);
+      }
       if (part.invoicePhoto?.url) {
         lines.push(`Invoice Photo: ${part.invoicePhoto.url}`);
       }
@@ -327,6 +339,14 @@ function safeTimestampSegment(value: string) {
   const parsed = new Date(value);
   const safeDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
   return safeDate.toISOString().replace(/[:.]/g, '-');
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function writeTextNotes(folderPath: string, job: BridgeJob) {

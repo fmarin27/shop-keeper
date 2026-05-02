@@ -184,7 +184,7 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
         quantity: String(line.quantity || 1),
         note: buildEstimatePartNote(line),
         requestedBy: appMode,
-        status: appMode === 'manager' ? 'ordered' : 'requested',
+        status: 'requested',
       });
     } finally {
       setSavingEstimateLineId(null);
@@ -380,7 +380,7 @@ function EstimatePartsPanel({
         <div>
           <h2 style={titleStyle(compact)}>EMS Estimate Parts</h2>
           <p style={subtitleStyle(compact)}>
-            Parts found on synced EMS estimates. They are read-only here until you choose to track/order one.
+            Parts found on synced EMS estimates. Add one to live requests before you order or receive it.
           </p>
         </div>
         <div style={estimateCountBadgeStyle(compact)}>
@@ -496,7 +496,7 @@ function EstimatePartRow({
           onClick={() => onTrackPart(row)}
           style={trackButtonStyle(saving, compact)}
         >
-          {saving ? 'Adding...' : 'Track/Order'}
+          {saving ? 'Adding...' : 'Add to Requests'}
         </button>
       </div>
     </>

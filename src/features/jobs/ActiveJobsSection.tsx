@@ -1233,7 +1233,7 @@ function ActiveJobsSection({
 
                       onRequestPart(job.id, {
                         ...draft,
-                        status: appMode === 'manager' ? 'ordered' : 'requested',
+                        status: 'requested',
                       });
                       setPartDrafts((current) => ({
                         ...current,
@@ -1245,7 +1245,7 @@ function ActiveJobsSection({
                         name: getEstimatePartRequestName(line),
                         quantity: String(line.quantity || 1),
                         note: buildEstimatePartRequestNote(line),
-                        status: appMode === 'manager' ? 'ordered' : 'requested',
+                        status: 'requested',
                       })
                     }
                     onSetPartOrdered={(partId) => onSetPartOrdered(job.id, partId)}
@@ -2298,7 +2298,7 @@ function PartsPanel({
                 Estimate Parts
               </div>
               <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
-                Read-only EMS parts from the estimate. Use Live Requests below only when you actually need to order or track one.
+                Read-only EMS parts from the estimate. Add one to Live Requests before you order or receive it.
               </div>
             </div>
             <span
@@ -2349,7 +2349,7 @@ function PartsPanel({
                   Qty {line.quantity || 1} | {formatEstimatePartAmount(line)}
                 </div>
                 <ActionButton compact={compact} onClick={() => onTrackEstimatePart(line)}>
-                  {appMode === 'manager' ? 'Order This' : 'Request This'}
+                  Add to Requests
                 </ActionButton>
               </div>
             ))}
@@ -2399,7 +2399,7 @@ function PartsPanel({
           style={inputStyle(compact)}
         />
         <ActionButton compact={compact} onClick={onRequestPart}>
-          {appMode === 'tech' ? 'Request Part' : 'Add Ordered Part'}
+          Add Part Request
         </ActionButton>
       </div>
 

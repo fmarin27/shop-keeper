@@ -25,6 +25,14 @@ on:
           - alpha
           - beta
           - production
+      play_status:
+        description: "Google Play release status. Use draft while the Play Console app is still a draft."
+        required: false
+        default: draft
+        type: choice
+        options:
+          - draft
+          - completed
 
 permissions:
   contents: write
@@ -255,6 +263,6 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.shopkeeper.app
           releaseFiles: android-release/ShopKeeper-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.version_code }}.aab
-          track: ${{ inputs.play_track }}
-          status: completed
+          tracks: ${{ inputs.play_track }}
+          status: ${{ inputs.play_status }}
           releaseName: Shop Keeper ${{ needs.prepare.outputs.version }}

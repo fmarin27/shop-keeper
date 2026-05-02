@@ -57,6 +57,7 @@ Manual Play upload:
 2. Run `Cloud Release`.
 3. Set `publish_play` to `true`.
 4. Choose the track, usually `internal` while we are still testing.
+5. Choose the release status. Use `draft` while the Play Console app itself is still a draft; use `completed` after the app has been fully published once.
 
 The Android package name is `com.shopkeeper.app`.
 

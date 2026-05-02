@@ -27,6 +27,7 @@ type JobPartRequest = {
   status: string;
   note?: string;
   invoiceNumber?: string;
+  invoicePhoto?: JobPhoto;
   createdAt: string;
   receivedAt?: string;
   paidAt?: string;
@@ -287,6 +288,9 @@ function buildJobNotesText(job: BridgeJob) {
       if (part.invoiceNumber?.trim()) {
         lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
       }
+      if (part.invoicePhoto?.url) {
+        lines.push(`Invoice Photo: ${part.invoicePhoto.url}`);
+      }
       if (part.note?.trim()) {
         lines.push(`Note: ${part.note.trim()}`);
       }
@@ -320,7 +324,9 @@ function buildJobNotesText(job: BridgeJob) {
 }
 
 function safeTimestampSegment(value: string) {
-  return new Date(value).toISOString().replace(/[:.]/g, '-');
+  const parsed = new Date(value);
+  const safeDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return safeDate.toISOString().replace(/[:.]/g, '-');
 }
 
 function writeTextNotes(folderPath: string, job: BridgeJob) {
@@ -392,6 +398,25 @@ async function syncPhotos(folderPath: string, job: BridgeJob) {
   }
 }
 
+async function syncPartInvoicePhotos(folderPath: string, job: BridgeJob) {
+  const invoiceFolderPath = path.join(folderPath, 'Invoices');
+  fs.mkdirSync(invoiceFolderPath, { recursive: true });
+
+  for (const part of job.partsRequests) {
+    const photo = part.invoicePhoto;
+    if (!photo?.url) {
+      continue;
+    }
+
+    const extension = getUrlExtension(photo.url, 'jpg');
+    const partName = (sanitizeFolderSegment(part.name) || 'part').slice(0, 60);
+    const invoiceNumber = (sanitizeFolderSegment(part.invoiceNumber ?? '') || part.id).slice(0, 40);
+    const fileName = `invoice-${partName}-${invoiceNumber}-${safeTimestampSegment(photo.createdAt)}.${extension}`;
+    const filePath = path.join(invoiceFolderPath, fileName);
+    await downloadFile(photo.url, filePath);
+  }
+}
+
 function writeJobRecord(folderPath: string, job: BridgeJob) {
   const jobJsonPath = path.join(folderPath, 'shop-keeper-job.json');
   const notesPath = path.join(folderPath, 'shop-keeper-notes.txt');
@@ -440,6 +465,7 @@ async function syncJob(job: BridgeJob) {
   writeTextNotes(folderPath, job);
   await syncAudioNotes(folderPath, job);
   await syncPhotos(folderPath, job);
+  await syncPartInvoicePhotos(folderPath, job);
 
   syncedJobSignatures.set(job.id, signature);
   writeLog('INFO', `Synced RO ${job.roNumber} (${job.customerName}) to ${folderPath}`);

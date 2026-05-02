@@ -74,6 +74,16 @@ export type JobPhoto = {
 export type JobPartStatus = 'requested' | 'ordered' | 'reorderNeeded' | 'received';
 export type JobPartKind = 'part' | 'sublet';
 
+export type JobPartInvoicePhoto = {
+  id: string;
+  url: string;
+  createdAt: string;
+  fileSize: number;
+  width: number;
+  height: number;
+  timestampIncluded: boolean;
+};
+
 export type JobPartRequest = {
   id: string;
   name: string;
@@ -83,6 +93,7 @@ export type JobPartRequest = {
   status: JobPartStatus;
   note?: string;
   invoiceNumber?: string;
+  invoicePhoto?: JobPartInvoicePhoto;
   createdAt: string;
   receivedAt?: string;
   paidAt?: string;

@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, MutableRefObject, ReactNode } from 'react';
+import { processJobImage } from '../../services/media/imageProcessor';
+import {
+  canUseNativeMobileCamera,
+  getNativeMobilePhoto,
+} from '../../services/media/mobileCamera';
 import type {
   AppMode,
   EmsEstimateLine,
@@ -8,6 +13,7 @@ import type {
   JobPartStatus,
 } from '../../types/app';
 import {
+  addInvoicePhotoToJobPart,
   markJobPartPaid,
   markJobPartReceived,
   requestPartForJob,
@@ -59,6 +65,13 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   const [sort, setSort] = useState<PartsSort>({ key: 'job', direction: 'asc' });
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
   const [savingEstimateLineId, setSavingEstimateLineId] = useState<string | null>(null);
+  const [invoicePhotoActionState, setInvoicePhotoActionState] = useState<{
+    jobId: string;
+    partId: string;
+    phase: 'processing' | 'uploading';
+  } | null>(null);
+  const invoicePhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const invoiceGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     const unsubscribe = subscribeToJobs((items) => {
@@ -171,6 +184,73 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
       await saveJobPartNote(job, part.id, note);
     } finally {
       setSavingPartId(null);
+    }
+  };
+
+  const addInvoicePhoto = async (
+    job: Job,
+    part: JobPartRequest,
+    file: File | null,
+  ) => {
+    if (!file) return;
+
+    const refKey = `${job.id}-${part.id}`;
+
+    try {
+      setSavingPartId(part.id);
+      setInvoicePhotoActionState({ jobId: job.id, partId: part.id, phase: 'processing' });
+      const processed = await processJobImage(file, {
+        addTimestamp: false,
+        maxDimension: mobile ? 1200 : 1600,
+        quality: mobile ? 0.72 : 0.78,
+        targetMaxBytes: mobile ? 520 * 1024 : 700 * 1024,
+        minDimension: mobile ? 720 : 900,
+      });
+
+      setInvoicePhotoActionState({ jobId: job.id, partId: part.id, phase: 'uploading' });
+      await addInvoicePhotoToJobPart(job, part.id, {
+        file: processed.blob,
+        width: processed.width,
+        height: processed.height,
+        fileSize: processed.fileSize,
+        timestampIncluded: processed.timestampIncluded,
+      });
+    } catch (error) {
+      console.error('Failed to add invoice photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not upload invoice photo.',
+      );
+    } finally {
+      setInvoicePhotoActionState(null);
+      setSavingPartId(null);
+      const photoInput = invoicePhotoInputRefs.current[refKey];
+      const galleryInput = invoiceGalleryInputRefs.current[refKey];
+      if (photoInput) {
+        photoInput.value = '';
+      }
+      if (galleryInput) {
+        galleryInput.value = '';
+      }
+    }
+  };
+
+  const addNativeInvoicePhoto = async (
+    job: Job,
+    part: JobPartRequest,
+    source: 'camera' | 'gallery',
+  ) => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      await addInvoicePhoto(job, part, file);
+    } catch (error) {
+      console.error('Failed to pick mobile invoice photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
     }
   };
 
@@ -337,6 +417,11 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
                     setSavingPartId(null);
                   }
                 }}
+                invoicePhotoActionState={invoicePhotoActionState}
+                photoInputRefs={invoicePhotoInputRefs}
+                galleryInputRefs={invoiceGalleryInputRefs}
+                onInvoicePhotoSelected={addInvoicePhoto}
+                onNativeInvoicePhotoSelected={addNativeInvoicePhoto}
               />
             ))}
           </div>
@@ -515,6 +600,11 @@ function PartRow({
   onSaveNote,
   onSaveInvoice,
   onMarkPaid,
+  invoicePhotoActionState,
+  photoInputRefs,
+  galleryInputRefs,
+  onInvoicePhotoSelected,
+  onNativeInvoicePhotoSelected,
 }: {
   appMode: AppMode;
   job: Job;
@@ -527,6 +617,23 @@ function PartRow({
   onSaveNote: (job: Job, part: JobPartRequest, note: string) => Promise<void>;
   onSaveInvoice: (job: Job, part: JobPartRequest, invoiceNumber: string) => Promise<void>;
   onMarkPaid: (job: Job, part: JobPartRequest, invoiceNumber: string) => Promise<void>;
+  invoicePhotoActionState: {
+    jobId: string;
+    partId: string;
+    phase: 'processing' | 'uploading';
+  } | null;
+  photoInputRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
+  galleryInputRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
+  onInvoicePhotoSelected: (
+    job: Job,
+    part: JobPartRequest,
+    file: File | null,
+  ) => Promise<void>;
+  onNativeInvoicePhotoSelected: (
+    job: Job,
+    part: JobPartRequest,
+    source: 'camera' | 'gallery',
+  ) => Promise<void>;
 }) {
   const disabled = saving;
   const isSublet = (part.kind ?? 'part') === 'sublet';
@@ -536,6 +643,16 @@ function PartRow({
     job.claimNumber ? `Claim ${job.claimNumber}` : '',
     job.insuranceCompany ?? '',
   ].filter(Boolean).join(' | ');
+  const savedInvoiceNumber = part.invoiceNumber?.trim() ?? '';
+  const invoiceDraftChanged = invoiceDraft.trim() !== savedInvoiceNumber;
+  const canUseSavedInvoice = Boolean(savedInvoiceNumber) && !invoiceDraftChanged;
+  const invoiceRefKey = `${job.id}-${part.id}`;
+  const invoicePhotoPhase =
+    invoicePhotoActionState?.jobId === job.id &&
+    invoicePhotoActionState.partId === part.id
+      ? invoicePhotoActionState.phase
+      : null;
+  const isSavingInvoicePhoto = Boolean(invoicePhotoPhase);
 
   useEffect(() => {
     setInvoiceDraft(part.invoiceNumber ?? '');
@@ -574,35 +691,141 @@ function PartRow({
             {part.paidAt ? 'Paid' : 'Unpaid'}
           </div>
         ) : (
-          <select
-            value={part.status}
-            disabled={disabled}
-            onChange={(event) => void onUpdateStatus(job, part, event.target.value as JobPartStatus)}
-            style={selectStyle(compact)}
-          >
-            <option value="requested">Requested</option>
-            <option value="ordered">Ordered</option>
-            <option value="reorderNeeded">Reorder Needed</option>
-            <option value="received">Received</option>
-          </select>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={statusBadgeStyle(part.status, compact)}>
+              {formatPartStatus(part.status)}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {part.status === 'requested' ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => void onUpdateStatus(job, part, 'ordered')}
+                  style={smallActionButtonStyle(compact)}
+                >
+                  Mark Ordered
+                </button>
+              ) : null}
+              {part.status !== 'reorderNeeded' && part.status !== 'received' ? (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => void onUpdateStatus(job, part, 'reorderNeeded')}
+                  style={smallActionButtonStyle(compact)}
+                >
+                  Part Came Wrong
+                </button>
+              ) : null}
+              {part.status !== 'received' ? (
+                <button
+                  type="button"
+                  disabled={disabled || !canUseSavedInvoice}
+                  onClick={() => void onUpdateStatus(job, part, 'received')}
+                  style={smallActionButtonStyle(compact, true)}
+                >
+                  Mark Received
+                </button>
+              ) : null}
+            </div>
+            {!canUseSavedInvoice && part.status !== 'received' ? (
+              <div style={mutedStyle(compact)}>Save invoice # before receiving.</div>
+            ) : null}
+          </div>
         )}
       </div>
 
       <div style={cellStyle(compact, mobile)}>
-        <input
-          value={invoiceDraft}
-          disabled={disabled}
-          placeholder="Invoice #"
-          onChange={(event) => setInvoiceDraft(event.target.value)}
-          onBlur={(event) => void onSaveInvoice(job, part, event.target.value)}
-          style={inputStyle(compact)}
-        />
+        <div style={{ display: 'grid', gap: 8 }}>
+          <input
+            value={invoiceDraft}
+            disabled={disabled}
+            placeholder="Invoice #"
+            onChange={(event) => setInvoiceDraft(event.target.value)}
+            style={inputStyle(compact)}
+          />
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => void onSaveInvoice(job, part, invoiceDraft)}
+              style={smallActionButtonStyle(compact)}
+            >
+              {savedInvoiceNumber && !invoiceDraftChanged ? 'Saved' : 'Save Invoice'}
+            </button>
+            <button
+              type="button"
+              disabled={disabled || isSavingInvoicePhoto}
+              onClick={() =>
+                mobile && canUseNativeMobileCamera()
+                  ? void onNativeInvoicePhotoSelected(job, part, 'camera')
+                  : photoInputRefs.current[invoiceRefKey]?.click()
+              }
+              style={smallActionButtonStyle(compact)}
+            >
+              {invoicePhotoPhase === 'processing'
+                ? 'Reading...'
+                : invoicePhotoPhase === 'uploading'
+                  ? 'Saving...'
+                  : part.invoicePhoto
+                    ? 'Replace Photo'
+                    : 'Invoice Photo'}
+            </button>
+            {mobile ? (
+              <button
+                type="button"
+                disabled={disabled || isSavingInvoicePhoto}
+                onClick={() =>
+                  canUseNativeMobileCamera()
+                    ? void onNativeInvoicePhotoSelected(job, part, 'gallery')
+                    : galleryInputRefs.current[invoiceRefKey]?.click()
+                }
+                style={smallActionButtonStyle(compact)}
+              >
+                Gallery
+              </button>
+            ) : null}
+          </div>
+          <input
+            ref={(element) => {
+              photoInputRefs.current[invoiceRefKey] = element;
+            }}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={(event) =>
+              void onInvoicePhotoSelected(
+                job,
+                part,
+                event.target.files?.[0] ?? null,
+              )
+            }
+          />
+          <input
+            ref={(element) => {
+              galleryInputRefs.current[invoiceRefKey] = element;
+            }}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(event) =>
+              void onInvoicePhotoSelected(
+                job,
+                part,
+                event.target.files?.[0] ?? null,
+              )
+            }
+          />
+          <div style={mutedStyle(compact)}>
+            {part.invoicePhoto ? 'Invoice photo saved' : 'No invoice photo'}
+          </div>
+        </div>
       </div>
 
       <div style={cellStyle(compact, mobile)}>
         <button
           type="button"
-          disabled={disabled || Boolean(part.paidAt)}
+          disabled={disabled || Boolean(part.paidAt) || !canUseSavedInvoice}
           onClick={() => void onMarkPaid(job, part, invoiceDraft)}
           style={paidButtonStyle(Boolean(part.paidAt), compact)}
         >
@@ -935,6 +1158,58 @@ function selectStyle(compact: boolean): CSSProperties {
   };
 }
 
+function statusBadgeStyle(status: JobPartStatus, compact: boolean): CSSProperties {
+  const colors: Record<JobPartStatus, { bg: string; border: string; color: string }> = {
+    requested: {
+      bg: 'rgba(180,83,9,0.22)',
+      border: '1px solid rgba(251,191,36,0.28)',
+      color: '#fde68a',
+    },
+    ordered: {
+      bg: 'rgba(37,99,235,0.22)',
+      border: '1px solid rgba(96,165,250,0.34)',
+      color: '#dbeafe',
+    },
+    reorderNeeded: {
+      bg: 'rgba(127,29,29,0.28)',
+      border: '1px solid rgba(248,113,113,0.32)',
+      color: '#fecaca',
+    },
+    received: {
+      bg: 'rgba(22,163,74,0.22)',
+      border: '1px solid rgba(74,222,128,0.28)',
+      color: '#dcfce7',
+    },
+  };
+  const tone = colors[status];
+
+  return {
+    justifySelf: 'start',
+    borderRadius: 999,
+    border: tone.border,
+    background: tone.bg,
+    color: tone.color,
+    padding: compact ? '5px 8px' : '6px 10px',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 900,
+  };
+}
+
+function smallActionButtonStyle(compact: boolean, primary = false): CSSProperties {
+  return {
+    borderRadius: compact ? 9 : 10,
+    border: primary
+      ? '1px solid rgba(96,165,250,0.42)'
+      : '1px solid rgba(148,163,184,0.32)',
+    background: primary ? '#1d4ed8' : 'rgba(51,65,85,0.92)',
+    color: '#f8fafc',
+    padding: compact ? '6px 8px' : '7px 9px',
+    fontSize: compact ? 11 : 12,
+    fontWeight: 900,
+    cursor: 'pointer',
+  };
+}
+
 function inputStyle(compact: boolean): CSSProperties {
   return {
     width: '100%',
@@ -1014,6 +1289,21 @@ function formatDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function formatPartStatus(status: JobPartStatus) {
+  switch (status) {
+    case 'requested':
+      return 'Requested';
+    case 'ordered':
+      return 'Ordered';
+    case 'reorderNeeded':
+      return 'Reorder Needed';
+    case 'received':
+      return 'Received';
+    default:
+      return status;
+  }
 }
 
 export default PartsTab;

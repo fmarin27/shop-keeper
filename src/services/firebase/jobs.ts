@@ -17,6 +17,7 @@ import {
   deleteStorageFile,
   getJobAudioExtension,
   uploadJobAudioNote,
+  uploadJobPartInvoicePhoto,
   uploadJobPhoto,
 } from './storage';
 import { appBridge } from '../platform/appBridge';
@@ -68,10 +69,32 @@ function toFirestorePartRequest(part: JobPartRequest) {
     status: part.status,
     note: part.note ?? '',
     invoiceNumber: part.invoiceNumber ?? '',
+    ...(part.invoicePhoto ? { invoicePhoto: part.invoicePhoto } : {}),
     createdAt: part.createdAt,
     ...(part.receivedAt ? { receivedAt: part.receivedAt } : {}),
     ...(part.paidAt ? { paidAt: part.paidAt } : {}),
   };
+}
+
+function assertPartCanBeReceived(part: JobPartRequest | undefined) {
+  if (!part) {
+    throw new Error('Part request was not found.');
+  }
+
+  if (!part.invoiceNumber?.trim()) {
+    throw new Error('Save the invoice number before marking this part received.');
+  }
+}
+
+function assertPartCanBePaid(part: JobPartRequest | undefined, invoiceNumber?: string) {
+  if (!part) {
+    throw new Error('Part or sublet request was not found.');
+  }
+
+  const invoice = invoiceNumber !== undefined ? invoiceNumber : part.invoiceNumber;
+  if (!invoice?.trim()) {
+    throw new Error('Save the invoice number before marking this item paid.');
+  }
 }
 
 function toFirestoreLaborCompletion(completion: JobLaborCompletion) {
@@ -1546,6 +1569,12 @@ export async function updateJobPartStatus(
   partId: string,
   status: JobPartRequest['status'],
 ) {
+  const currentPart = (job.partsRequests ?? []).find((part) => part.id === partId);
+
+  if (status === 'received') {
+    assertPartCanBeReceived(currentPart);
+  }
+
   const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
     part.id === partId
       ? {
@@ -1565,6 +1594,54 @@ export async function updateJobPartStatus(
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
   }));
+}
+
+export async function addInvoicePhotoToJobPart(
+  job: Job,
+  partId: string,
+  input: {
+    file: Blob;
+    width: number;
+    height: number;
+    fileSize: number;
+    timestampIncluded: boolean;
+  },
+) {
+  const targetPart = (job.partsRequests ?? []).find((part) => part.id === partId);
+  if (!targetPart) {
+    throw new Error('Part or sublet request was not found.');
+  }
+
+  const url = await uploadJobPartInvoicePhoto(job.id, partId, input.file);
+  const invoicePhoto = {
+    id: `invoice-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    url,
+    createdAt: new Date().toISOString(),
+    fileSize: input.fileSize,
+    width: input.width,
+    height: input.height,
+    timestampIncluded: input.timestampIncluded,
+  };
+
+  const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
+    part.id === partId
+      ? {
+          ...part,
+          invoicePhoto,
+        }
+      : part,
+  );
+
+  await updateDoc(jobDoc(job.id), withActiveShopFields({
+    partsRequests: nextPartsRequests.map(toFirestorePartRequest),
+    updatedAt: serverTimestamp(),
+  }));
+
+  if (targetPart.invoicePhoto?.url) {
+    void deleteStorageFile(targetPart.invoicePhoto.url).catch((error) => {
+      console.warn('Failed to remove replaced invoice photo:', error);
+    });
+  }
 }
 
 export async function saveJobPartNote(
@@ -1595,6 +1672,12 @@ export async function saveJobPartInvoice(
   invoiceNumber: string,
 ) {
   const trimmed = invoiceNumber.trim();
+  const currentPart = (job.partsRequests ?? []).find((part) => part.id === partId);
+
+  if (!trimmed && currentPart && (currentPart.status === 'received' || currentPart.paidAt)) {
+    throw new Error('Invoice number is required once an item is received or paid.');
+  }
+
   const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
     part.id === partId
       ? {
@@ -1615,6 +1698,9 @@ export async function markJobPartPaid(
   partId: string,
   invoiceNumber?: string,
 ) {
+  const currentPart = (job.partsRequests ?? []).find((part) => part.id === partId);
+  assertPartCanBePaid(currentPart, invoiceNumber);
+
   const nextPartsRequests = (job.partsRequests ?? []).map((part) =>
     part.id === partId
       ? {
@@ -1635,6 +1721,7 @@ export async function markJobPartPaid(
 }
 
 export async function deleteJobPart(job: Job, partId: string) {
+  const targetPart = (job.partsRequests ?? []).find((part) => part.id === partId);
   const nextPartsRequests = (job.partsRequests ?? []).filter((part) => part.id !== partId);
   const stillWaiting = hasOpenParts(nextPartsRequests);
 
@@ -1643,4 +1730,10 @@ export async function deleteJobPart(job: Job, partId: string) {
     partsRequests: nextPartsRequests.map(toFirestorePartRequest),
     updatedAt: serverTimestamp(),
   }));
+
+  if (targetPart?.invoicePhoto?.url) {
+    void deleteStorageFile(targetPart.invoicePhoto.url).catch((error) => {
+      console.warn('Failed to remove deleted part invoice photo:', error);
+    });
+  }
 }

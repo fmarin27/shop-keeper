@@ -42,6 +42,17 @@ type ActiveJobsSectionProps = {
       timestampIncluded: boolean;
     },
   ) => Promise<void> | void;
+  onAddPartInvoicePhoto: (
+    jobId: string,
+    partId: string,
+    processed: {
+      file: Blob;
+      width: number;
+      height: number;
+      fileSize: number;
+      timestampIncluded: boolean;
+    },
+  ) => Promise<void> | void;
   onMarkNotesRead: (jobId: string) => void;
   onDeleteNote: (jobId: string, noteId: string) => Promise<void> | void;
   onDeletePhoto: (jobId: string, photoId: string) => Promise<void> | void;
@@ -100,6 +111,7 @@ function ActiveJobsSection({
   onAddTextNote,
   onAddAudioNote,
   onAddPhoto,
+  onAddPartInvoicePhoto,
   onMarkNotesRead,
   onDeleteNote,
   onDeletePhoto,
@@ -144,6 +156,11 @@ function ActiveJobsSection({
     jobId: string;
     phase: 'processing' | 'uploading';
   } | null>(null);
+  const [partInvoicePhotoActionState, setPartInvoicePhotoActionState] = useState<{
+    jobId: string;
+    partId: string;
+    phase: 'processing' | 'uploading';
+  } | null>(null);
   const [reorderingJobId, setReorderingJobId] = useState<string | null>(null);
   const [photoTimestampEnabled, setPhotoTimestampEnabled] = useState<Record<string, boolean>>({});
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null);
@@ -157,6 +174,8 @@ function ActiveJobsSection({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const photoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const galleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const invoicePhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const invoiceGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
@@ -437,6 +456,70 @@ function ActiveJobsSection({
       await handlePhotoFileSelected(jobId, file);
     } catch (error) {
       console.error('Failed to pick mobile photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
+    }
+  };
+
+  const handlePartInvoicePhotoFileSelected = async (
+    jobId: string,
+    partId: string,
+    file: File | null,
+  ) => {
+    if (!file) return;
+
+    const refKey = `${jobId}-${partId}`;
+
+    try {
+      setPartInvoicePhotoActionState({ jobId, partId, phase: 'processing' });
+      const processed = await processJobImage(file, {
+        addTimestamp: false,
+        maxDimension: mobile ? 1200 : 1600,
+        quality: mobile ? 0.72 : 0.78,
+        targetMaxBytes: mobile ? 520 * 1024 : 700 * 1024,
+        minDimension: mobile ? 720 : 900,
+      });
+      setPartInvoicePhotoActionState({ jobId, partId, phase: 'uploading' });
+      await onAddPartInvoicePhoto(jobId, partId, {
+        file: processed.blob,
+        width: processed.width,
+        height: processed.height,
+        fileSize: processed.fileSize,
+        timestampIncluded: processed.timestampIncluded,
+      });
+    } catch (error) {
+      console.error('Failed to add invoice photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not upload invoice photo.',
+      );
+    } finally {
+      setPartInvoicePhotoActionState(null);
+      const photoInput = invoicePhotoInputRefs.current[refKey];
+      const galleryInput = invoiceGalleryInputRefs.current[refKey];
+      if (photoInput) {
+        photoInput.value = '';
+      }
+      if (galleryInput) {
+        galleryInput.value = '';
+      }
+    }
+  };
+
+  const handlePartInvoiceNativeMobilePhoto = async (
+    jobId: string,
+    partId: string,
+    source: 'camera' | 'gallery',
+  ) => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      await handlePartInvoicePhotoFileSelected(jobId, partId, file);
+    } catch (error) {
+      console.error('Failed to pick mobile invoice photo:', error);
       alert(
         error instanceof Error
           ? error.message
@@ -1203,6 +1286,7 @@ function ActiveJobsSection({
                     job={job}
                     appMode={appMode}
                     compact={narrowLayout}
+                    mobile={mobile}
                     draft={partDrafts[job.id] ?? { name: '', quantity: '', note: '' }}
                     noteDrafts={partNoteDrafts}
                     invoiceDrafts={partInvoiceDrafts}
@@ -1291,6 +1375,11 @@ function ActiveJobsSection({
                     }}
                     onDeletePart={(partId) => void onDeletePart(job.id, partId)}
                     savingPartNoteId={savingPartNoteId}
+                    invoicePhotoActionState={partInvoicePhotoActionState}
+                    photoInputRefs={invoicePhotoInputRefs}
+                    galleryInputRefs={invoiceGalleryInputRefs}
+                    onInvoicePhotoFileSelected={handlePartInvoicePhotoFileSelected}
+                    onInvoiceNativeMobilePhoto={handlePartInvoiceNativeMobilePhoto}
                     onClearLegacyPartsWaiting={() => onClearLegacyPartsWaiting(job.id)}
                   />
 
@@ -2189,6 +2278,7 @@ function PartsPanel({
   job,
   appMode,
   compact,
+  mobile,
   draft,
   noteDrafts,
   invoiceDrafts,
@@ -2205,11 +2295,17 @@ function PartsPanel({
   onMarkPartPaid,
   onDeletePart,
   savingPartNoteId,
+  invoicePhotoActionState,
+  photoInputRefs,
+  galleryInputRefs,
+  onInvoicePhotoFileSelected,
+  onInvoiceNativeMobilePhoto,
   onClearLegacyPartsWaiting,
 }: {
   job: Job;
   appMode: AppMode;
   compact: boolean;
+  mobile: boolean;
   draft: { name: string; quantity: string; note: string };
   noteDrafts: Record<string, string>;
   invoiceDrafts: Record<string, string>;
@@ -2226,6 +2322,23 @@ function PartsPanel({
   onMarkPartPaid: (partId: string) => Promise<void> | void;
   onDeletePart: (partId: string) => Promise<void> | void;
   savingPartNoteId: string | null;
+  invoicePhotoActionState: {
+    jobId: string;
+    partId: string;
+    phase: 'processing' | 'uploading';
+  } | null;
+  photoInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
+  galleryInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
+  onInvoicePhotoFileSelected: (
+    jobId: string,
+    partId: string,
+    file: File | null,
+  ) => Promise<void> | void;
+  onInvoiceNativeMobilePhoto: (
+    jobId: string,
+    partId: string,
+    source: 'camera' | 'gallery',
+  ) => Promise<void> | void;
   onClearLegacyPartsWaiting: () => void;
 }) {
   const parts = job.partsRequests ?? [];
@@ -2438,6 +2551,16 @@ function PartsPanel({
             const noteDraft = noteDrafts[part.id] ?? part.note ?? '';
             const invoiceDraft = invoiceDrafts[part.id] ?? part.invoiceNumber ?? '';
             const isSublet = isSubletPart(part);
+            const savedInvoiceNumber = part.invoiceNumber?.trim() ?? '';
+            const invoiceDraftChanged = invoiceDraft.trim() !== savedInvoiceNumber;
+            const canUseSavedInvoice = Boolean(savedInvoiceNumber) && !invoiceDraftChanged;
+            const invoiceRefKey = `${job.id}-${part.id}`;
+            const invoicePhotoPhase =
+              invoicePhotoActionState?.jobId === job.id &&
+              invoicePhotoActionState.partId === part.id
+                ? invoicePhotoActionState.phase
+                : null;
+            const isSavingInvoicePhoto = Boolean(invoicePhotoPhase);
             return (
               <div
                 key={part.id}
@@ -2512,36 +2635,127 @@ function PartsPanel({
                   style={textAreaStyle(compact)}
                 />
 
-                {isSublet ? (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gap: 10,
-                      gridTemplateColumns: compact ? '1fr' : 'minmax(180px, 1fr) auto auto',
-                      alignItems: 'center',
-                    }}
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 10,
+                    gridTemplateColumns: compact ? '1fr' : 'minmax(180px, 1fr) auto auto auto',
+                    alignItems: 'center',
+                  }}
+                >
+                  <input
+                    value={invoiceDraft}
+                    onChange={(event) =>
+                      onPartInvoiceDraftChange(part.id, event.target.value)
+                    }
+                    placeholder="Invoice #"
+                    style={inputStyle(compact)}
+                  />
+                  <ActionButton compact={compact} onClick={() => onSavePartInvoice(part.id)}>
+                    {savedInvoiceNumber && !invoiceDraftChanged ? 'Invoice Saved' : 'Save Invoice'}
+                  </ActionButton>
+                  <ActionButton
+                    compact={compact}
+                    onClick={() =>
+                      mobile && canUseNativeMobileCamera()
+                        ? void onInvoiceNativeMobilePhoto(job.id, part.id, 'camera')
+                        : photoInputRefs.current[invoiceRefKey]?.click()
+                    }
+                    disabled={isSavingInvoicePhoto}
                   >
-                    <input
-                      value={invoiceDraft}
-                      onChange={(event) =>
-                        onPartInvoiceDraftChange(part.id, event.target.value)
-                      }
-                      placeholder="Invoice #"
-                      style={inputStyle(compact)}
-                    />
-                    <ActionButton compact={compact} onClick={() => onSavePartInvoice(part.id)}>
-                      Save Invoice
-                    </ActionButton>
+                    {invoicePhotoPhase === 'processing'
+                      ? 'Reading Photo...'
+                      : invoicePhotoPhase === 'uploading'
+                        ? 'Saving Photo...'
+                        : part.invoicePhoto
+                          ? 'Replace Invoice Photo'
+                          : 'Take Invoice Photo'}
+                  </ActionButton>
+                  <ActionButton
+                    compact={compact}
+                    primary={!part.paidAt}
+                    disabled={Boolean(part.paidAt) || !canUseSavedInvoice}
+                    onClick={() => onMarkPartPaid(part.id)}
+                  >
+                    {part.paidAt ? 'Paid' : 'Mark Paid'}
+                  </ActionButton>
+                </div>
+
+                <input
+                  ref={(element) => {
+                    photoInputRefs.current[invoiceRefKey] = element;
+                  }}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={(event) =>
+                    void onInvoicePhotoFileSelected(
+                      job.id,
+                      part.id,
+                      event.target.files?.[0] ?? null,
+                    )
+                  }
+                />
+                <input
+                  ref={(element) => {
+                    galleryInputRefs.current[invoiceRefKey] = element;
+                  }}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(event) =>
+                    void onInvoicePhotoFileSelected(
+                      job.id,
+                      part.id,
+                      event.target.files?.[0] ?? null,
+                    )
+                  }
+                />
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    color: '#b8c7da',
+                    fontSize: compact ? 10 : 12,
+                    fontWeight: 750,
+                  }}
+                >
+                  {part.invoicePhoto ? (
+                    <>
+                      <span>Invoice photo saved to this claim.</span>
+                      <ActionButton
+                        compact={compact}
+                        onClick={() =>
+                          window.open(part.invoicePhoto?.url, '_blank', 'noopener,noreferrer')
+                        }
+                      >
+                        View Invoice Photo
+                      </ActionButton>
+                    </>
+                  ) : (
+                    <span>No invoice photo yet.</span>
+                  )}
+                  {mobile ? (
                     <ActionButton
                       compact={compact}
-                      primary={!part.paidAt}
-                      disabled={Boolean(part.paidAt)}
-                      onClick={() => onMarkPartPaid(part.id)}
+                      disabled={isSavingInvoicePhoto}
+                      onClick={() =>
+                        canUseNativeMobileCamera()
+                          ? void onInvoiceNativeMobilePhoto(job.id, part.id, 'gallery')
+                          : galleryInputRefs.current[invoiceRefKey]?.click()
+                      }
                     >
-                      {part.paidAt ? 'Paid' : 'Mark Paid'}
+                      Choose Invoice Photo
                     </ActionButton>
-                  </div>
-                ) : null}
+                  ) : null}
+                  {!canUseSavedInvoice && !part.paidAt ? (
+                    <span>Save invoice # before receiving or paying.</span>
+                  ) : null}
+                </div>
 
                 <div
                   style={{
@@ -2591,6 +2805,7 @@ function PartsPanel({
                       <ActionButton
                         compact={compact}
                         primary
+                        disabled={!canUseSavedInvoice}
                         onClick={() => onMarkPartReceived(part.id)}
                       >
                         Mark Received

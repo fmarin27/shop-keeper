@@ -14,6 +14,7 @@ import type {
 } from '../../types/app';
 import {
   addAudioNoteToJob,
+  addInvoicePhotoToJobPart,
   addPhotoToJob,
   clearLegacyPartsWaiting,
   deleteJob,
@@ -328,6 +329,23 @@ function JobsTab({
     if (!job) return;
 
     await addPhotoToJob(job, processed);
+  };
+
+  const handleAddPartInvoicePhoto = async (
+    jobId: string,
+    partId: string,
+    processed: {
+      file: Blob;
+      width: number;
+      height: number;
+      fileSize: number;
+      timestampIncluded: boolean;
+    },
+  ) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+
+    await addInvoicePhotoToJobPart(job, partId, processed);
   };
 
   const handleMarkNotesRead = async (jobId: string) => {
@@ -673,6 +691,7 @@ function JobsTab({
           onAddTextNote={handleAddTextNote}
           onAddAudioNote={handleAddAudioNote}
           onAddPhoto={handleAddPhoto}
+          onAddPartInvoicePhoto={handleAddPartInvoicePhoto}
           onMarkNotesRead={handleMarkNotesRead}
           onDeleteNote={handleDeleteNote}
           onDeletePhoto={handleDeletePhoto}

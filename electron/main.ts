@@ -376,6 +376,15 @@ type RoFolderJobRecord = {
     status: string;
     note?: string;
     invoiceNumber?: string;
+    invoicePhoto?: {
+      id: string;
+      url: string;
+      createdAt: string;
+      fileSize: number;
+      width: number;
+      height: number;
+      timestampIncluded: boolean;
+    };
     createdAt: string;
     receivedAt?: string;
     paidAt?: string;
@@ -1854,6 +1863,64 @@ function ensureRoFolderForJob(payload: {
   };
 }
 
+function safeTimestampSegment(value: string) {
+  const parsed = new Date(value);
+  const safeDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return safeDate.toISOString().replace(/[:.]/g, '-');
+}
+
+function getUrlExtension(url: string, fallback: string) {
+  try {
+    const parsed = new URL(url);
+    const extension = path
+      .extname(decodeURIComponent(parsed.pathname))
+      .replace('.', '')
+      .trim()
+      .toLowerCase();
+    return extension || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function downloadFile(url: string, destinationPath: string) {
+  if (fs.existsSync(destinationPath)) {
+    return;
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Download failed with status ${response.status}.`);
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  fs.writeFileSync(destinationPath, bytes);
+}
+
+async function syncPartInvoicePhotos(folderPath: string, job: RoFolderJobRecord) {
+  const invoiceFolderPath = path.join(folderPath, 'Invoices');
+  fs.mkdirSync(invoiceFolderPath, { recursive: true });
+
+  for (const part of job.partsRequests) {
+    const photo = part.invoicePhoto;
+    if (!photo?.url) {
+      continue;
+    }
+
+    const extension = getUrlExtension(photo.url, 'jpg');
+    const partName = (sanitizeFolderSegment(part.name) || 'part').slice(0, 60);
+    const invoiceNumber = (sanitizeFolderSegment(part.invoiceNumber ?? '') || part.id).slice(0, 40);
+    const fileName = `invoice-${partName}-${invoiceNumber}-${safeTimestampSegment(photo.createdAt)}.${extension}`;
+    const filePath = path.join(invoiceFolderPath, fileName);
+
+    try {
+      await downloadFile(photo.url, filePath);
+    } catch (error) {
+      console.error('[jobs] Failed to sync part invoice photo:', error);
+    }
+  }
+}
+
 function buildJobNotesText(job: RoFolderJobRecord) {
   const lines: string[] = [
     `RO: ${job.roNumber}`,
@@ -1891,6 +1958,9 @@ function buildJobNotesText(job: RoFolderJobRecord) {
       if (part.invoiceNumber?.trim()) {
         lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
       }
+      if (part.invoicePhoto?.url) {
+        lines.push(`Invoice Photo: ${part.invoicePhoto.url}`);
+      }
       if (part.note?.trim()) {
         lines.push(`Note: ${part.note.trim()}`);
       }
@@ -1921,12 +1991,13 @@ function buildJobNotesText(job: RoFolderJobRecord) {
   return lines.join('\r\n');
 }
 
-function saveJobRecordToRoFolder(payload: { job: RoFolderJobRecord }) {
+async function saveJobRecordToRoFolder(payload: { job: RoFolderJobRecord }) {
   const { job } = payload;
   const folderPath = resolveRoFolderPath(job.roNumber, job.customerName, job.done);
   const summaryPath = path.join(folderPath, 'shop-keeper-summary.txt');
 
   fs.writeFileSync(summaryPath, buildJobNotesText(job), 'utf8');
+  await syncPartInvoicePhotos(folderPath, job);
 
   return {
     folderPath,

@@ -889,6 +889,9 @@ function PartCard({
 }) {
   const isSublet = isSubletPart(part);
   const [invoiceDraft, setInvoiceDraft] = useState(part.invoiceNumber ?? '');
+  const savedInvoiceNumber = part.invoiceNumber?.trim() ?? '';
+  const invoiceDraftChanged = invoiceDraft.trim() !== savedInvoiceNumber;
+  const canUseSavedInvoice = Boolean(savedInvoiceNumber) && !invoiceDraftChanged;
 
   useEffect(() => {
     setInvoiceDraft(part.invoiceNumber ?? '');
@@ -938,30 +941,34 @@ function PartCard({
         style={textAreaStyle()}
       />
 
-      {isSublet ? (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) auto auto',
-            gap: 8,
-            alignItems: 'center',
-          }}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+          gap: 8,
+          alignItems: 'center',
+        }}
+      >
+        <input
+          value={invoiceDraft}
+          onChange={(event) => setInvoiceDraft(event.target.value)}
+          placeholder="Invoice #"
+          style={inputStyle()}
+        />
+        <ActionButton onClick={() => onSaveInvoice(invoiceDraft)}>
+          {savedInvoiceNumber && !invoiceDraftChanged ? 'Invoice Saved' : 'Save Invoice'}
+        </ActionButton>
+        <ActionButton
+          onClick={() => onMarkPaid(invoiceDraft)}
+          disabled={Boolean(part.paidAt) || !canUseSavedInvoice}
         >
-          <input
-            value={invoiceDraft}
-            onChange={(event) => setInvoiceDraft(event.target.value)}
-            placeholder="Invoice #"
-            style={inputStyle()}
-          />
-          <ActionButton onClick={() => onSaveInvoice(invoiceDraft)}>
-            Save Invoice
-          </ActionButton>
-          <ActionButton
-            onClick={() => onMarkPaid(invoiceDraft)}
-            disabled={Boolean(part.paidAt)}
-          >
-            {part.paidAt ? 'Paid' : 'Mark Paid'}
-          </ActionButton>
+          {part.paidAt ? 'Paid' : 'Mark Paid'}
+        </ActionButton>
+      </div>
+
+      {!canUseSavedInvoice && !part.paidAt ? (
+        <div style={{ color: '#94a3b8', fontSize: 12, fontWeight: 700 }}>
+          Save invoice # before receiving or paying.
         </div>
       ) : null}
 
@@ -979,7 +986,9 @@ function PartCard({
           <ActionButton onClick={onSetReorderNeeded}>Part Came Wrong</ActionButton>
         ) : null}
         {!isSublet && part.status !== 'received' ? (
-          <ActionButton onClick={onMarkReceived}>Mark Received</ActionButton>
+          <ActionButton disabled={!canUseSavedInvoice} onClick={onMarkReceived}>
+            Mark Received
+          </ActionButton>
         ) : null}
       </div>
     </div>

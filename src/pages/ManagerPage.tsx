@@ -7,6 +7,7 @@ import PartsTab from '../features/parts/PartsTab';
 import CommandCenterTab from '../features/commandCenter/CommandCenterTab';
 import MaterialsManagerTab from '../features/materialsManager/MaterialsManagerTab';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { appBridge } from '../services/platform/appBridge';
 
 type ManagerPageProps = {
   selectedTab: MainTab;
@@ -41,6 +42,7 @@ function ManagerPage({
 }: ManagerPageProps) {
   const isMobile = useIsMobile();
   const isCompact = displayMode === 'compact';
+  const isDesktopApp = appBridge.isDesktop();
 
   return (
     <div
@@ -70,6 +72,7 @@ function ManagerPage({
         onOpenAttentionMaterial={onOpenAttentionMaterial}
         onOpenAttentionMessage={onOpenAttentionMessage}
         showCommandCenter={!isMobile}
+        showMaterialsManager={isDesktopApp}
       />
 
       <main style={{ padding: isMobile ? 10 : isCompact ? 14 : 24 }}>
@@ -99,7 +102,7 @@ function ManagerPage({
           <LeadsTab compact={isCompact} mobile={isMobile} />
         ) : selectedTab === 'materials' ? (
           <div style={{ display: 'grid', gap: isCompact ? 10 : 24 }}>
-            {!isMobile ? (
+            {isDesktopApp ? (
               <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
             ) : null}
             <MaterialsMessagesTab
@@ -115,7 +118,7 @@ function ManagerPage({
               onFocusHandled={onOverlayFocusHandled}
             />
           </div>
-        ) : selectedTab === 'materialsManager' && !isMobile ? (
+        ) : selectedTab === 'materialsManager' && isDesktopApp ? (
           <MaterialsManagerTab compact={isCompact} mobile={isMobile} />
         ) : selectedTab === 'messages' ? (
           <MaterialsMessagesTab

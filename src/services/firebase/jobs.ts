@@ -18,6 +18,7 @@ import {
   getJobAudioExtension,
   uploadJobAudioNote,
   uploadJobPartInvoicePhoto,
+  uploadJobPartRequestPhoto,
   uploadJobPhoto,
 } from './storage';
 import { appBridge } from '../platform/appBridge';
@@ -66,9 +67,17 @@ function toFirestorePartRequest(part: JobPartRequest) {
     name: part.name,
     quantity: part.quantity,
     kind: part.kind ?? 'part',
+    source: part.source ?? 'manual',
+    estimateLineId: part.estimateLineId ?? '',
+    estimateLineNumber: part.estimateLineNumber ?? '',
+    partNumber: part.partNumber ?? '',
+    ...(typeof part.estimateAmount === 'number'
+      ? { estimateAmount: part.estimateAmount }
+      : {}),
     requestedBy: part.requestedBy,
     status: part.status,
     note: part.note ?? '',
+    ...(part.requestPhoto ? { requestPhoto: part.requestPhoto } : {}),
     invoiceNumber: part.invoiceNumber ?? '',
     invoiceVendor: part.invoiceVendor ?? '',
     ...(typeof part.invoiceListPrice === 'number'
@@ -221,12 +230,18 @@ export function subscribeToJobs(callback: (jobs: Job[]) => void) {
           ? (data.estimateLines as Job['estimateLines'])
           : [];
         const sourceSystem = data.sourceSystem ?? '';
-        const partsRequests = sanitizeEmsSeededParts(
+        const normalizedPartRequests = sanitizeEmsSeededParts(
           Array.isArray(data.partsRequests)
             ? (data.partsRequests as JobPartRequest[])
             : [],
           estimateLines,
         );
+        const partsRequests = sourceSystem && estimateLines.length
+          ? seedPartsFromEstimate(
+              estimateLines as ReturnType<typeof mapEstimateLines>,
+              normalizedPartRequests,
+            )
+          : normalizedPartRequests;
 
         return {
           index,
@@ -576,7 +591,7 @@ function seededPartIdentityFromPart(part: JobPartRequest) {
   return seededPartIdentity(
     part.kind ?? 'part',
     part.name,
-    extractSeededPartNumber(part.name),
+    part.partNumber || extractSeededPartNumber(part.name),
   );
 }
 
@@ -636,20 +651,88 @@ function dedupeEmsSeededParts(parts: JobPartRequest[]) {
 }
 
 function seedPartsFromEstimate(
-  _estimateLines: ReturnType<typeof mapEstimateLines>,
+  estimateLines: ReturnType<typeof mapEstimateLines>,
   existingParts: JobPartRequest[] | undefined,
 ) {
   const previousParts = Array.isArray(existingParts) ? existingParts : [];
+  const manualParts = previousParts
+    .filter((part) => !isEmsSeededPart(part))
+    .map((part) => ({
+      ...part,
+      source: part.source ?? (part.requestedBy === 'tech' ? 'tech-request' : 'manual'),
+    }));
+  const previousSeededByIdentity = new Map(
+    previousParts
+      .filter(isEmsSeededPart)
+      .map((part) => [seededPartIdentityFromPart(part), part]),
+  );
 
-  // EMS estimate lines are reference data. Only manually requested parts/sublets
-  // should enter the live ordering workflow.
-  return previousParts.filter((part) => !isEmsSeededPart(part));
+  const seededParts = estimateLines.flatMap((line) => {
+    const kind = isPartCandidate(line)
+      ? 'part'
+      : isSubletCandidate(line)
+        ? 'sublet'
+        : null;
+
+    if (!kind) return [];
+
+    const identity = seededPartIdentityFromLine(line, kind);
+    const existing = previousSeededByIdentity.get(identity);
+    const candidate: JobPartRequest = {
+      id: `ems-part-${identity}`,
+      name: seededPartName(line),
+      quantity: String(line.quantity || 1),
+      kind,
+      source: 'estimate',
+      estimateLineId: line.id,
+      estimateLineNumber: line.lineNumber,
+      partNumber: line.partNumber,
+      estimateAmount: getEstimateLineBillableAmount(line),
+      requestedBy: 'manager',
+      status: 'requested',
+      note:
+        kind === 'sublet'
+          ? `Seeded from EMS line ${line.lineNumber || '-'}. Verify invoice/payment.`
+          : `Seeded from EMS line ${line.lineNumber || '-'}.`,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    };
+
+    return [mergeSeededEstimatePart(existing, candidate)];
+  });
+
+  return dedupeEmsSeededParts([...manualParts, ...seededParts]);
+}
+
+function mergeSeededEstimatePart(
+  existing: JobPartRequest | undefined,
+  candidate: JobPartRequest,
+) {
+  if (!existing) return candidate;
+
+  return {
+    ...candidate,
+    status: existing.status ?? candidate.status,
+    note: existing.note ?? candidate.note,
+    requestPhoto: existing.requestPhoto,
+    invoiceNumber: existing.invoiceNumber,
+    invoiceVendor: existing.invoiceVendor,
+    invoiceListPrice: existing.invoiceListPrice,
+    invoiceNetPrice: existing.invoiceNetPrice,
+    invoicePhoto: existing.invoicePhoto,
+    receivedAt: existing.receivedAt,
+    paidAt: existing.paidAt,
+    createdAt: existing.createdAt ?? candidate.createdAt,
+  };
 }
 
 function isEmsSeededPart(part: JobPartRequest) {
+  const note = text(part.note).toLowerCase();
+
   return (
+    part.source === 'estimate' ||
     part.id.startsWith('ems-part-') ||
-    text(part.note).toLowerCase().startsWith('seeded from ems line')
+    note.startsWith('seeded from ems line') ||
+    note.startsWith('tracked from ems line')
   );
 }
 
@@ -665,17 +748,34 @@ function sanitizeEmsSeededParts(
   parts: JobPartRequest[],
   _estimateLines: Job['estimateLines'],
 ) {
-  if (!parts.some(isEmsSeededPart)) {
-    return parts;
-  }
-
-  return parts.filter((part) => !isEmsSeededPart(part));
+  return dedupeEmsSeededParts(
+    parts.map((part) => ({
+      ...part,
+      source: part.source ?? (
+        isEmsSeededPart(part)
+          ? 'estimate'
+          : part.requestedBy === 'tech'
+            ? 'tech-request'
+            : 'manual'
+      ),
+    })),
+  );
 }
 
 function hasOpenParts(parts: JobPartRequest[]) {
   return parts.some(
     (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
   );
+}
+
+function getEstimateLineBillableAmount(line: ReturnType<typeof mapEstimateLines>[number]) {
+  const amount =
+    toNumber(line.totalAmount) ||
+    toNumber(line.partPrice) ||
+    toNumber(line.laborAmount) ||
+    toNumber(line.paintAmount);
+
+  return amount > 0 ? amount : 0;
 }
 
 export async function convertEmsRepairOrderToJob(
@@ -1617,6 +1717,13 @@ export async function requestPartForJob(
     note?: string;
     requestedBy: AppMode;
     status?: Exclude<JobPartRequest['status'], 'received'>;
+    requestPhoto?: {
+      file: Blob;
+      width: number;
+      height: number;
+      fileSize: number;
+      timestampIncluded: boolean;
+    };
   },
 ) {
   const name = input.name.trim();
@@ -1625,15 +1732,33 @@ export async function requestPartForJob(
 
   if (!name || !quantity) return;
 
+  const partId = `part-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const requestPhotoUrl = input.requestPhoto
+    ? await uploadJobPartRequestPhoto(job.id, partId, input.requestPhoto.file)
+    : '';
+  const requestPhoto = input.requestPhoto && requestPhotoUrl
+    ? {
+        id: `request-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        url: requestPhotoUrl,
+        createdAt: new Date().toISOString(),
+        fileSize: input.requestPhoto.fileSize,
+        width: input.requestPhoto.width,
+        height: input.requestPhoto.height,
+        timestampIncluded: input.requestPhoto.timestampIncluded,
+      }
+    : undefined;
+
   const nextPartsRequests: JobPartRequest[] = [
     {
-      id: `part-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: partId,
       name,
       quantity,
       kind: 'part',
+      source: input.requestedBy === 'tech' ? 'tech-request' : 'manual',
       requestedBy: input.requestedBy,
       status: input.status ?? 'requested',
       note,
+      ...(requestPhoto ? { requestPhoto } : {}),
       createdAt: new Date().toISOString(),
     },
     ...(job.partsRequests ?? []),
@@ -1828,6 +1953,12 @@ export async function deleteJobPart(job: Job, partId: string) {
   if (targetPart?.invoicePhoto?.url) {
     void deleteStorageFile(targetPart.invoicePhoto.url).catch((error) => {
       console.warn('Failed to remove deleted part invoice photo:', error);
+    });
+  }
+
+  if (targetPart?.requestPhoto?.url) {
+    void deleteStorageFile(targetPart.requestPhoto.url).catch((error) => {
+      console.warn('Failed to remove deleted part request photo:', error);
     });
   }
 }

@@ -372,7 +372,19 @@ function JobsTab({
 
   const handleRequestPart = async (
     jobId: string,
-    input: { name: string; quantity: string; note?: string },
+    input: {
+      name: string;
+      quantity: string;
+      note?: string;
+      status?: Exclude<JobPartStatus, 'received'>;
+      requestPhoto?: {
+        file: Blob;
+        width: number;
+        height: number;
+        fileSize: number;
+        timestampIncluded: boolean;
+      };
+    },
   ) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;

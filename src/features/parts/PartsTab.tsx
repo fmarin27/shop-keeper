@@ -7,7 +7,6 @@ import {
 } from '../../services/media/mobileCamera';
 import type {
   AppMode,
-  EmsEstimateLine,
   Job,
   JobPartInvoiceDetailsInput,
   JobPartRequest,
@@ -36,17 +35,19 @@ type PartBoardRow = {
   part: JobPartRequest;
 };
 
-type EstimatePartBoardRow = {
-  job: Job;
-  line: EmsEstimateLine;
-};
-
 type FilterMode = 'open' | 'requested' | 'ordered' | 'reorderNeeded' | 'received' | 'unpaid' | 'all';
 type SortDirection = 'asc' | 'desc';
 type PartsSortKey = 'job' | 'item' | 'quantity' | 'status' | 'invoice' | 'paid' | 'note';
 type PartsSort = {
   key: PartsSortKey;
   direction: SortDirection;
+};
+type TechPartRequestDraft = {
+  jobId: string;
+  name: string;
+  quantity: string;
+  note: string;
+  photoFile: File | null;
 };
 
 const FILTERS: Array<{ value: FilterMode; label: string }> = [
@@ -65,7 +66,17 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   const [filter, setFilter] = useState<FilterMode>('open');
   const [sort, setSort] = useState<PartsSort>({ key: 'job', direction: 'asc' });
   const [savingPartId, setSavingPartId] = useState<string | null>(null);
-  const [savingEstimateLineId, setSavingEstimateLineId] = useState<string | null>(null);
+  const [savingTechRequest, setSavingTechRequest] = useState(false);
+  const [techRequestDraft, setTechRequestDraft] = useState<TechPartRequestDraft>({
+    jobId: '',
+    name: '',
+    quantity: '',
+    note: '',
+    photoFile: null,
+  });
+  const [techRequestPhotoPhase, setTechRequestPhotoPhase] = useState<
+    'processing' | 'uploading' | null
+  >(null);
   const [invoicePhotoActionState, setInvoicePhotoActionState] = useState<{
     jobId: string;
     partId: string;
@@ -73,6 +84,7 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   } | null>(null);
   const invoicePhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const invoiceGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const techRequestPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToJobs((items) => {
@@ -86,22 +98,25 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
   const allParts = useMemo(
     () =>
       jobs.flatMap((job) =>
-        (job.partsRequests ?? []).map((part) => ({
-          job,
-          part,
-        })),
+        (job.partsRequests ?? [])
+          .filter(isPartsBoardPart)
+          .map((part) => ({
+            job,
+            part,
+          })),
       ),
     [jobs],
   );
 
-  const estimateParts = useMemo(
+  const techRequestRows = useMemo(
     () =>
       jobs
         .filter((job) => !job.done)
         .flatMap((job) =>
-          (job.estimateLines ?? [])
-            .filter(isOrderableEstimatePart)
-            .map((line) => ({ job, line })),
+          (job.partsRequests ?? [])
+            .filter(isTechRequestPart)
+            .filter(isPartBoardItemOpen)
+            .map((part) => ({ job, part })),
         ),
     [jobs],
   );
@@ -145,10 +160,9 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
       received,
       reorderNeeded,
       unpaid,
-      estimate: estimateParts.length,
       total: allParts.length,
     };
-  }, [allParts, estimateParts.length]);
+  }, [allParts]);
 
   const legacyWaitingJobs = useMemo(
     () =>
@@ -255,20 +269,101 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
     }
   };
 
-  const trackEstimatePart = async ({ job, line }: EstimatePartBoardRow) => {
-    const saveKey = `${job.id}-${line.id}`;
-    setSavingEstimateLineId(saveKey);
+  const updateTechRequestDraft = (patch: Partial<TechPartRequestDraft>) => {
+    setTechRequestDraft((current) => ({
+      ...current,
+      ...patch,
+    }));
+  };
+
+  const chooseTechRequestPhoto = async (source: 'camera' | 'gallery') => {
+    if (mobile && canUseNativeMobileCamera()) {
+      try {
+        const file = await getNativeMobilePhoto(source);
+        updateTechRequestDraft({ photoFile: file });
+      } catch (error) {
+        console.error('Failed to pick tech part request photo:', error);
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Could not open the phone camera or gallery.',
+        );
+      }
+      return;
+    }
+
+    techRequestPhotoInputRef.current?.click();
+  };
+
+  const submitTechPartRequest = async () => {
+    if (savingTechRequest) return;
+
+    const job = jobs.find((entry) => entry.id === techRequestDraft.jobId);
+    if (!job) {
+      alert('Choose the job for this part request.');
+      return;
+    }
+
+    const name = techRequestDraft.name.trim();
+    const quantity = techRequestDraft.quantity.trim();
+
+    if (!name || !quantity) {
+      alert('Part name and quantity are required.');
+      return;
+    }
 
     try {
+      setSavingTechRequest(true);
+      let requestPhoto:
+        | {
+            file: Blob;
+            width: number;
+            height: number;
+            fileSize: number;
+            timestampIncluded: boolean;
+          }
+        | undefined;
+
+      if (techRequestDraft.photoFile) {
+        setTechRequestPhotoPhase('processing');
+        const processed = await processJobImage(techRequestDraft.photoFile, {
+          addTimestamp: false,
+          maxDimension: mobile ? 1200 : 1600,
+          quality: mobile ? 0.72 : 0.78,
+          targetMaxBytes: mobile ? 520 * 1024 : 700 * 1024,
+          minDimension: mobile ? 720 : 900,
+        });
+        requestPhoto = {
+          file: processed.blob,
+          width: processed.width,
+          height: processed.height,
+          fileSize: processed.fileSize,
+          timestampIncluded: processed.timestampIncluded,
+        };
+        setTechRequestPhotoPhase('uploading');
+      }
+
       await requestPartForJob(job, {
-        name: getEstimatePartName(line),
-        quantity: String(line.quantity || 1),
-        note: buildEstimatePartNote(line),
-        requestedBy: appMode,
+        name,
+        quantity,
+        note: techRequestDraft.note,
+        requestedBy: 'tech',
         status: 'requested',
+        requestPhoto,
       });
+      setTechRequestDraft({
+        jobId: '',
+        name: '',
+        quantity: '',
+        note: '',
+        photoFile: null,
+      });
+      if (techRequestPhotoInputRef.current) {
+        techRequestPhotoInputRef.current.value = '';
+      }
     } finally {
-      setSavingEstimateLineId(null);
+      setTechRequestPhotoPhase(null);
+      setSavingTechRequest(false);
     }
   };
 
@@ -311,23 +406,37 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
             <Metric label="Ordered" value={stats.ordered} compact={compact} tone="amber" />
             <Metric label="Received" value={stats.received} compact={compact} tone="green" />
             <Metric label="Reorder" value={stats.reorderNeeded} compact={compact} tone="red" />
-            <Metric label="Estimate" value={stats.estimate} compact={compact} tone="blue" />
+            <Metric label="Listed" value={stats.total} compact={compact} tone="blue" />
           </div>
         </div>
       </div>
 
-      {estimateParts.length ? (
-        <EstimatePartsPanel
-          rows={estimateParts}
+      {appMode === 'tech' ? (
+        <TechPartRequestsPanel
+          jobs={jobs.filter((job) => !job.done)}
+          requests={techRequestRows}
+          draft={techRequestDraft}
           compact={compact}
           mobile={mobile}
-          savingEstimateLineId={savingEstimateLineId}
+          saving={savingTechRequest}
+          photoPhase={techRequestPhotoPhase}
+          onDraftChange={updateTechRequestDraft}
+          onChoosePhoto={chooseTechRequestPhoto}
+          onSubmit={() => void submitTechPartRequest()}
           onOpenJob={onOpenJob}
-          onTrackPart={(row) => void trackEstimatePart(row)}
         />
       ) : null}
 
-      <div style={panelStyle(compact)}>
+      {appMode === 'tech' ? (
+        <TechReplacementPartsPanel
+          rows={visibleParts}
+          compact={compact}
+          mobile={mobile}
+          onOpenJob={onOpenJob}
+        />
+      ) : (
+        <div style={panelStyle(compact)}>
+
         <div
           style={{
             display: 'flex',
@@ -428,28 +537,52 @@ function PartsTab({ appMode, compact = false, mobile = false, onOpenJob }: Parts
           </div>
         ) : (
           <div style={emptyStateStyle(compact)}>
-            No parts match this view.
+            No replacement parts or sublets match this view.
           </div>
         )}
       </div>
+      )}
+
+      <input
+        ref={techRequestPhotoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: 'none' }}
+        onChange={(event) =>
+          updateTechRequestDraft({
+            photoFile: event.target.files?.[0] ?? null,
+          })
+        }
+      />
     </section>
   );
 }
 
-function EstimatePartsPanel({
-  rows,
+function TechPartRequestsPanel({
+  jobs,
+  requests,
+  draft,
   compact,
   mobile,
-  savingEstimateLineId,
+  saving,
+  photoPhase,
+  onDraftChange,
+  onChoosePhoto,
+  onSubmit,
   onOpenJob,
-  onTrackPart,
 }: {
-  rows: EstimatePartBoardRow[];
+  jobs: Job[];
+  requests: PartBoardRow[];
+  draft: TechPartRequestDraft;
   compact: boolean;
   mobile: boolean;
-  savingEstimateLineId: string | null;
+  saving: boolean;
+  photoPhase: 'processing' | 'uploading' | null;
+  onDraftChange: (patch: Partial<TechPartRequestDraft>) => void;
+  onChoosePhoto: (source: 'camera' | 'gallery') => void;
+  onSubmit: () => void;
   onOpenJob?: (jobId: string) => void;
-  onTrackPart: (row: EstimatePartBoardRow) => void;
 }) {
   return (
     <div style={panelStyle(compact)}>
@@ -464,128 +597,202 @@ function EstimatePartsPanel({
         }}
       >
         <div>
-          <h2 style={titleStyle(compact)}>EMS Estimate Parts</h2>
+          <h2 style={titleStyle(compact)}>Tech Part Requests</h2>
           <p style={subtitleStyle(compact)}>
-            Parts found on synced EMS estimates. Add one to live requests before you order or receive it.
+            Quick requests for parts that are not clear from the estimate.
           </p>
         </div>
         <div style={estimateCountBadgeStyle(compact)}>
-          {rows.length} estimate part{rows.length === 1 ? '' : 's'}
+          {requests.length} open request{requests.length === 1 ? '' : 's'}
         </div>
       </div>
 
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: mobile
-            ? '1fr'
-            : 'minmax(190px, 1fr) minmax(240px, 1.3fr) 90px minmax(130px, 0.8fr) minmax(120px, 0.7fr) minmax(130px, 0.7fr)',
           gap: compact ? 8 : 10,
-          alignItems: 'stretch',
+          gridTemplateColumns: mobile ? '1fr' : 'minmax(170px, 0.9fr) minmax(180px, 1fr) 90px minmax(190px, 1fr) auto',
+          alignItems: 'center',
+          marginBottom: compact ? 10 : 14,
         }}
       >
-        {!mobile ? (
-          <>
-            <HeaderCell compact={compact}>Job</HeaderCell>
-            <HeaderCell compact={compact}>Estimate Part</HeaderCell>
-            <HeaderCell compact={compact}>Qty</HeaderCell>
-            <HeaderCell compact={compact}>Part #</HeaderCell>
-            <HeaderCell compact={compact}>Amount</HeaderCell>
-            <HeaderCell compact={compact}>Action</HeaderCell>
-          </>
-        ) : null}
-
-        {rows.map((row) => {
-          const saveKey = `${row.job.id}-${row.line.id}`;
-          const saving = savingEstimateLineId === saveKey;
-
-          return (
-            <EstimatePartRow
-              key={saveKey}
-              row={row}
-              compact={compact}
-              mobile={mobile}
-              saving={saving}
-              onOpenJob={onOpenJob}
-              onTrackPart={onTrackPart}
-            />
-          );
-        })}
+        <select
+          value={draft.jobId}
+          disabled={saving}
+          onChange={(event) => onDraftChange({ jobId: event.target.value })}
+          style={inputStyle(compact)}
+        >
+          <option value="">Choose job</option>
+          {jobs.map((job) => (
+            <option key={job.id} value={job.id}>
+              {job.roNumber ? `RO ${job.roNumber} - ` : ''}{job.vehicle || job.customerName || 'Untitled job'}
+            </option>
+          ))}
+        </select>
+        <input
+          value={draft.name}
+          disabled={saving}
+          placeholder="Part needed"
+          onChange={(event) => onDraftChange({ name: event.target.value })}
+          style={inputStyle(compact)}
+        />
+        <input
+          value={draft.quantity}
+          disabled={saving}
+          placeholder="Qty"
+          onChange={(event) => onDraftChange({ quantity: event.target.value })}
+          style={inputStyle(compact)}
+        />
+        <input
+          value={draft.note}
+          disabled={saving}
+          placeholder="Note"
+          onChange={(event) => onDraftChange({ note: event.target.value })}
+          style={inputStyle(compact)}
+        />
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onSubmit}
+          style={trackButtonStyle(saving, compact)}
+        >
+          {saving ? 'Sending...' : 'Send Request'}
+        </button>
       </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          type="button"
+          disabled={saving || Boolean(photoPhase)}
+          onClick={() => onChoosePhoto('camera')}
+          style={smallActionButtonStyle(compact)}
+        >
+          {photoPhase === 'processing'
+            ? 'Reading Photo...'
+            : photoPhase === 'uploading'
+              ? 'Saving Photo...'
+              : draft.photoFile
+                ? 'Replace Photo'
+                : 'Take Part Photo'}
+        </button>
+        {mobile ? (
+          <button
+            type="button"
+            disabled={saving || Boolean(photoPhase)}
+            onClick={() => onChoosePhoto('gallery')}
+            style={smallActionButtonStyle(compact)}
+          >
+            Gallery
+          </button>
+        ) : null}
+        <span style={mutedStyle(compact)}>
+          {draft.photoFile ? draft.photoFile.name : 'No request photo attached'}
+        </span>
+      </div>
+
+      {requests.length ? (
+        <div style={{ display: 'grid', gap: compact ? 8 : 10, marginTop: compact ? 10 : 14 }}>
+          {requests.map(({ job, part }) => (
+            <div key={`${job.id}-${part.id}`} style={techRequestCardStyle(compact)}>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => onOpenJob?.(job.id)}
+                  disabled={!onOpenJob}
+                  style={jobButtonStyle(compact)}
+                >
+                  {job.vehicle || job.customerName || 'Untitled job'}
+                </button>
+                <div style={mutedStyle(compact)}>
+                  {job.roNumber ? `RO ${job.roNumber} | ` : ''}{job.customerName || 'No customer'}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: '#f8fafc', fontWeight: 900 }}>{part.name}</div>
+                <div style={mutedStyle(compact)}>
+                  Qty {part.quantity} | {formatPartStatus(part.status)}
+                </div>
+                {part.note ? <div style={mutedStyle(compact)}>{part.note}</div> : null}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {part.requestPhoto?.url ? (
+                  <button
+                    type="button"
+                    onClick={() => window.open(part.requestPhoto?.url, '_blank', 'noopener,noreferrer')}
+                    style={smallActionButtonStyle(compact)}
+                  >
+                    View Photo
+                  </button>
+                ) : (
+                  <span style={mutedStyle(compact)}>No photo</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function EstimatePartRow({
-  row,
+function TechReplacementPartsPanel({
+  rows,
   compact,
   mobile,
-  saving,
   onOpenJob,
-  onTrackPart,
 }: {
-  row: EstimatePartBoardRow;
+  rows: PartBoardRow[];
   compact: boolean;
   mobile: boolean;
-  saving: boolean;
   onOpenJob?: (jobId: string) => void;
-  onTrackPart: (row: EstimatePartBoardRow) => void;
 }) {
-  const { job, line } = row;
-  const jobMeta = [
-    job.roNumber ? `RO ${job.roNumber}` : '',
-    job.claimNumber ? `Claim ${job.claimNumber}` : '',
-    job.insuranceCompany ?? '',
-  ].filter(Boolean).join(' | ');
-
   return (
-    <>
-      <div style={cellStyle(compact, mobile)}>
-        <button
-          onClick={() => onOpenJob?.(job.id)}
-          style={jobButtonStyle(compact)}
-          disabled={!onOpenJob}
-        >
-          {job.vehicle || 'Untitled job'}
-        </button>
-        <div style={mutedStyle(compact)}>{job.customerName || 'No customer'}</div>
-        <div style={mutedStyle(compact)}>{jobMeta || 'No claim summary'}</div>
-      </div>
-
-      <div style={cellStyle(compact, mobile)}>
-        <div style={{ color: '#f8fafc', fontWeight: 900 }}>
-          {line.description || 'Estimate part'}
+    <div style={panelStyle(compact)}>
+      <h2 style={titleStyle(compact)}>Replacement Parts</h2>
+      <p style={subtitleStyle(compact)}>
+        Parts and sublets listed on active estimates.
+      </p>
+      {rows.length ? (
+        <div style={{ display: 'grid', gap: compact ? 8 : 10 }}>
+          {rows.map(({ job, part }) => (
+            <div key={`${job.id}-${part.id}`} style={techRequestCardStyle(compact)}>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => onOpenJob?.(job.id)}
+                  disabled={!onOpenJob}
+                  style={jobButtonStyle(compact)}
+                >
+                  {job.vehicle || job.customerName || 'Untitled job'}
+                </button>
+                <div style={mutedStyle(compact)}>
+                  {job.roNumber ? `RO ${job.roNumber} | ` : ''}{job.customerName || 'No customer'}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: '#f8fafc', fontWeight: 900 }}>{part.name}</div>
+                <div style={mutedStyle(compact)}>
+                  Qty {part.quantity}
+                  {part.partNumber ? ` | Part # ${part.partNumber}` : ''}
+                  {typeof part.estimateAmount === 'number'
+                    ? ` | ${formatMoney(part.estimateAmount)}`
+                    : ''}
+                </div>
+              </div>
+              <span style={statusBadgeStyle(part.status, compact)}>
+                {(part.kind ?? 'part') === 'sublet'
+                  ? part.paidAt ? 'Paid Sublet' : 'Sublet'
+                  : formatPartStatus(part.status)}
+              </span>
+            </div>
+          ))}
         </div>
-        <div style={mutedStyle(compact)}>
-          EMS line {line.lineNumber || '-'} | estimate only
+      ) : (
+        <div style={emptyStateStyle(compact)}>
+          No replacement parts from EMS estimates yet.
         </div>
-      </div>
-
-      <div style={cellStyle(compact, mobile)}>
-        <div style={{ fontWeight: 900 }}>{line.quantity || 1}</div>
-      </div>
-
-      <div style={cellStyle(compact, mobile)}>
-        <div style={{ fontWeight: 800 }}>{line.partNumber || '-'}</div>
-      </div>
-
-      <div style={cellStyle(compact, mobile)}>
-        <div style={{ fontWeight: 900, color: '#dbeafe' }}>
-          {formatMoney(getEstimatePartAmount(line))}
-        </div>
-      </div>
-
-      <div style={cellStyle(compact, mobile)}>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => onTrackPart(row)}
-          style={trackButtonStyle(saving, compact)}
-        >
-          {saving ? 'Adding...' : 'Add to Requests'}
-        </button>
-      </div>
-    </>
+      )}
+    </div>
   );
 }
 
@@ -979,6 +1186,14 @@ function isPartBoardItemOpen(part: JobPartRequest) {
   return part.status !== 'received' || !part.paidAt;
 }
 
+function isPartsBoardPart(part: JobPartRequest) {
+  return part.source === 'estimate' || part.id.startsWith('ems-part-');
+}
+
+function isTechRequestPart(part: JobPartRequest) {
+  return part.source === 'tech-request' || part.requestedBy === 'tech';
+}
+
 function sortPartRows(rows: PartBoardRow[], sort: PartsSort) {
   return [...rows].sort((left, right) => {
     const comparison = compareSortValues(
@@ -988,54 +1203,6 @@ function sortPartRows(rows: PartBoardRow[], sort: PartsSort) {
 
     return sort.direction === 'asc' ? comparison : comparison * -1;
   });
-}
-
-function isOrderableEstimatePart(line: EmsEstimateLine) {
-  if (isRefinishEstimateLine(line)) return false;
-
-  const partAmount = getEstimatePartAmount(line);
-  if (partAmount <= 0) return false;
-  if (line.isOrderablePart) return true;
-
-  const kind = String(line.lineKind ?? '').trim().toLowerCase();
-  if (kind) return kind === 'part';
-
-  return Boolean(line.partNumber);
-}
-
-function isRefinishEstimateLine(line: EmsEstimateLine) {
-  const label = [
-    line.operationLabel,
-    line.operationCategory,
-    line.laborType,
-  ]
-    .map((value) => String(value ?? '').toLowerCase())
-    .join(' ');
-
-  return label.includes('refinish') || label.includes('paint');
-}
-
-function getEstimatePartName(line: EmsEstimateLine) {
-  const description = String(line.description ?? '').trim();
-  const partNumber = String(line.partNumber ?? '').trim();
-
-  if (description && partNumber) return `${description} (${partNumber})`;
-  return description || partNumber || 'Estimate part';
-}
-
-function getEstimatePartAmount(line: EmsEstimateLine) {
-  const amount = Number(line.partPrice ?? 0);
-  return Number.isFinite(amount) && amount > 0 ? amount : 0;
-}
-
-function buildEstimatePartNote(line: EmsEstimateLine) {
-  const details = [
-    line.lineNumber ? `EMS line ${line.lineNumber}` : 'EMS estimate line',
-    line.partNumber ? `part # ${line.partNumber}` : '',
-    getEstimatePartAmount(line) ? `estimate ${formatMoney(getEstimatePartAmount(line))}` : '',
-  ].filter(Boolean);
-
-  return `Tracked from ${details.join(' | ')}.`;
 }
 
 function getPartSortValue(row: PartBoardRow, key: PartsSortKey) {
@@ -1243,6 +1410,19 @@ function cellStyle(compact: boolean, mobile: boolean): CSSProperties {
     color: '#e5e7eb',
     fontSize: compact ? 12 : 13,
     ...(mobile ? { minWidth: 0 } : null),
+  };
+}
+
+function techRequestCardStyle(compact: boolean): CSSProperties {
+  return {
+    borderRadius: compact ? 12 : 14,
+    padding: compact ? 10 : 12,
+    background: 'rgba(15,23,42,0.68)',
+    border: '1px solid rgba(148,163,184,0.2)',
+    display: 'grid',
+    gridTemplateColumns: compact ? '1fr' : 'minmax(170px, 0.9fr) minmax(220px, 1.4fr) auto',
+    gap: compact ? 8 : 12,
+    alignItems: 'center',
   };
 }
 

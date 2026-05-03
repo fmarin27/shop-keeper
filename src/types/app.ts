@@ -73,6 +73,7 @@ export type JobPhoto = {
 
 export type JobPartStatus = 'requested' | 'ordered' | 'reorderNeeded' | 'received';
 export type JobPartKind = 'part' | 'sublet';
+export type JobPartSource = 'estimate' | 'manual' | 'tech-request';
 
 export type JobPartInvoicePhoto = {
   id: string;
@@ -83,6 +84,8 @@ export type JobPartInvoicePhoto = {
   height: number;
   timestampIncluded: boolean;
 };
+
+export type JobPartRequestPhoto = JobPartInvoicePhoto;
 
 export type JobPartInvoiceDetailsInput = {
   invoiceNumber: string;
@@ -96,9 +99,15 @@ export type JobPartRequest = {
   name: string;
   quantity: string;
   kind?: JobPartKind;
+  source?: JobPartSource;
+  estimateLineId?: string;
+  estimateLineNumber?: string;
+  partNumber?: string;
+  estimateAmount?: number;
   requestedBy: AppMode;
   status: JobPartStatus;
   note?: string;
+  requestPhoto?: JobPartRequestPhoto;
   invoiceNumber?: string;
   invoiceVendor?: string;
   invoiceListPrice?: number;

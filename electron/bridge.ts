@@ -23,9 +23,15 @@ type JobPartRequest = {
   name: string;
   quantity: string;
   kind?: string;
+  source?: string;
+  estimateLineId?: string;
+  estimateLineNumber?: string;
+  partNumber?: string;
+  estimateAmount?: number;
   requestedBy: string;
   status: string;
   note?: string;
+  requestPhoto?: JobPhoto;
   invoiceNumber?: string;
   invoiceVendor?: string;
   invoiceListPrice?: number;
@@ -288,6 +294,18 @@ function buildJobNotesText(job: BridgeJob) {
   } else {
     job.partsRequests.forEach((part, index) => {
       lines.push(`[${index + 1}] ${part.name} x${part.quantity} | ${part.kind ?? 'part'} | ${part.status} | ${part.requestedBy}`);
+      if (part.source?.trim()) {
+        lines.push(`Source: ${part.source.trim()}`);
+      }
+      if (part.partNumber?.trim()) {
+        lines.push(`Part #: ${part.partNumber.trim()}`);
+      }
+      if (typeof part.estimateAmount === 'number') {
+        lines.push(`Estimate Amount: ${formatMoney(part.estimateAmount)}`);
+      }
+      if (part.requestPhoto?.url) {
+        lines.push(`Request Photo: ${part.requestPhoto.url}`);
+      }
       if (part.invoiceNumber?.trim()) {
         lines.push(`Invoice: ${part.invoiceNumber.trim()}`);
       }
@@ -420,20 +438,29 @@ async function syncPhotos(folderPath: string, job: BridgeJob) {
 
 async function syncPartInvoicePhotos(folderPath: string, job: BridgeJob) {
   const invoiceFolderPath = path.join(folderPath, 'Invoices');
+  const requestFolderPath = path.join(folderPath, 'Part Requests');
   fs.mkdirSync(invoiceFolderPath, { recursive: true });
+  fs.mkdirSync(requestFolderPath, { recursive: true });
 
   for (const part of job.partsRequests) {
-    const photo = part.invoicePhoto;
-    if (!photo?.url) {
-      continue;
+    const requestPhoto = part.requestPhoto;
+    if (requestPhoto?.url) {
+      const extension = getUrlExtension(requestPhoto.url, 'jpg');
+      const partName = (sanitizeFolderSegment(part.name) || 'part').slice(0, 60);
+      const fileName = `request-${partName}-${safeTimestampSegment(requestPhoto.createdAt)}.${extension}`;
+      const filePath = path.join(requestFolderPath, fileName);
+      await downloadFile(requestPhoto.url, filePath);
     }
 
-    const extension = getUrlExtension(photo.url, 'jpg');
-    const partName = (sanitizeFolderSegment(part.name) || 'part').slice(0, 60);
-    const invoiceNumber = (sanitizeFolderSegment(part.invoiceNumber ?? '') || part.id).slice(0, 40);
-    const fileName = `invoice-${partName}-${invoiceNumber}-${safeTimestampSegment(photo.createdAt)}.${extension}`;
-    const filePath = path.join(invoiceFolderPath, fileName);
-    await downloadFile(photo.url, filePath);
+    const photo = part.invoicePhoto;
+    if (photo?.url) {
+      const extension = getUrlExtension(photo.url, 'jpg');
+      const partName = (sanitizeFolderSegment(part.name) || 'part').slice(0, 60);
+      const invoiceNumber = (sanitizeFolderSegment(part.invoiceNumber ?? '') || part.id).slice(0, 40);
+      const fileName = `invoice-${partName}-${invoiceNumber}-${safeTimestampSegment(photo.createdAt)}.${extension}`;
+      const filePath = path.join(invoiceFolderPath, fileName);
+      await downloadFile(photo.url, filePath);
+    }
   }
 }
 

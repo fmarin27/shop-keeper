@@ -128,6 +128,34 @@ export async function uploadJobPartInvoicePhoto(
   );
 }
 
+export async function uploadJobPartRequestPhoto(
+  jobId: string,
+  partId: string,
+  file: Blob,
+) {
+  await ensureFirebaseSession();
+  const fileName = `request-${Date.now()}.jpg`;
+  const fileRef = ref(
+    storage,
+    scopedStoragePath(`jobs/${jobId}/parts/${partId}/request-photos/${fileName}`),
+  );
+
+  await retryWithTimeout(
+    () =>
+      uploadBytes(fileRef, file, {
+        contentType: 'image/jpeg',
+      }),
+    getStorageUploadTimeoutMs(),
+    'Part request photo upload timed out. Please try again.',
+  );
+
+  return retryWithTimeout(
+    () => getDownloadURL(fileRef),
+    getDownloadUrlTimeoutMs(),
+    'Part request photo upload finished, but getting the photo link took too long. Please try again.',
+  );
+}
+
 export async function uploadLeadPhoto(leadId: string, file: Blob) {
   await ensureFirebaseSession();
   const fileName = `photo-${Date.now()}.jpg`;

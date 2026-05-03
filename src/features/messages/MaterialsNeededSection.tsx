@@ -26,6 +26,7 @@ type MaterialsNeededSectionProps = {
 
 function MaterialsNeededSection({
   materials,
+  appMode,
   compact = false,
   mobile = false,
   unreadCount = 0,
@@ -37,9 +38,10 @@ function MaterialsNeededSection({
   onArchiveMaterial,
   onDeleteMaterial,
 }: MaterialsNeededSectionProps) {
+  const isTech = appMode === 'tech';
   const [sectionOpen, setSectionOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(isTech);
   const [itemName, setItemName] = useState('');
   const [quantity, setQuantity] = useState('');
   const [note, setNote] = useState('');
@@ -109,7 +111,8 @@ function MaterialsNeededSection({
     [materials],
   );
 
-  const showComposer = !compact || mobile;
+  const showComposer = isTech || !compact || mobile;
+  const showRequestForm = isTech || showForm;
 
   const submit = async () => {
     if (isSubmitting) return;
@@ -161,7 +164,7 @@ function MaterialsNeededSection({
 
       {sectionOpen ? (
         <div style={{ display: 'grid', gap: compact ? 10 : 16 }}>
-          {showComposer ? (
+          {showComposer && !isTech ? (
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 type="button"
@@ -173,7 +176,7 @@ function MaterialsNeededSection({
             </div>
           ) : null}
 
-          {showComposer && showForm ? (
+          {showComposer && showRequestForm ? (
             <div style={composerCardStyle()}>
               <input
                 value={itemName}
@@ -207,22 +210,24 @@ function MaterialsNeededSection({
                   disabled={isSubmitting}
                   style={actionButtonStyle(compact, true, isSubmitting)}
                 >
-                  {isSubmitting ? 'Saving...' : 'Save Request'}
+                  {isSubmitting ? 'Saving...' : isTech ? 'Send Material Request' : 'Save Request'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowForm(false);
-                    setItemName('');
-                    setQuantity('');
-                    setNote('');
-                    setSaveState(null);
-                  }}
-                  disabled={isSubmitting}
-                  style={actionButtonStyle(compact, false, isSubmitting)}
-                >
-                  Cancel
-                </button>
+                {!isTech ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForm(false);
+                      setItemName('');
+                      setQuantity('');
+                      setNote('');
+                      setSaveState(null);
+                    }}
+                    disabled={isSubmitting}
+                    style={actionButtonStyle(compact, false, isSubmitting)}
+                  >
+                    Cancel
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -239,38 +244,14 @@ function MaterialsNeededSection({
                   cardRef={focusedMaterialId === item.id ? focusedMaterialRef : null}
                   onOpen={() => onMarkMaterialRead(item.id)}
                   actions={
-                    <>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSetMaterialStatus(item.id, nextMaterialStatus(item.status));
-                        }}
-                        style={miniButtonStyle(compact)}
-                      >
-                        Change Status
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onArchiveMaterial(item.id, true);
-                        }}
-                        style={miniButtonStyle(compact)}
-                      >
-                        Archive
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onDeleteMaterial(item.id);
-                        }}
-                        style={dangerButtonStyle(compact)}
-                      >
-                        Delete
-                      </button>
-                    </>
+                    <MaterialActions
+                      compact={compact}
+                      manager={!isTech}
+                      item={item}
+                      onSetMaterialStatus={onSetMaterialStatus}
+                      onArchiveMaterial={onArchiveMaterial}
+                      onDeleteMaterial={onDeleteMaterial}
+                    />
                   }
                 />
               ))
@@ -281,6 +262,7 @@ function MaterialsNeededSection({
             )}
           </div>
 
+          {!isTech ? (
           <div style={historyCardStyle(compact)}>
             <button
               type="button"
@@ -363,9 +345,65 @@ function MaterialsNeededSection({
               )
             ) : null}
           </div>
+          ) : null}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function MaterialActions({
+  compact,
+  manager,
+  item,
+  onSetMaterialStatus,
+  onArchiveMaterial,
+  onDeleteMaterial,
+}: {
+  compact: boolean;
+  manager: boolean;
+  item: MaterialRequest;
+  onSetMaterialStatus: (id: string, status: MaterialStatus) => void;
+  onArchiveMaterial: (id: string, archived: boolean) => void;
+  onDeleteMaterial: (id: string) => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onSetMaterialStatus(item.id, nextMaterialStatus(item.status));
+        }}
+        style={miniButtonStyle(compact)}
+      >
+        Change Status
+      </button>
+      {manager ? (
+        <>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onArchiveMaterial(item.id, true);
+            }}
+            style={miniButtonStyle(compact)}
+          >
+            Archive
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteMaterial(item.id);
+            }}
+            style={dangerButtonStyle(compact)}
+          >
+            Delete
+          </button>
+        </>
+      ) : null}
+    </>
   );
 }
 

@@ -7,7 +7,6 @@ import {
 import type {
   AppMode,
   AmountStatus,
-  EmsEstimateLine,
   Job,
   JobEmsUpdateInfo,
   JobNote,
@@ -64,8 +63,15 @@ type ActiveJobsSectionProps = {
       quantity: string;
       note?: string;
       status?: Exclude<JobPartRequest['status'], 'received'>;
+      requestPhoto?: {
+        file: Blob;
+        width: number;
+        height: number;
+        fileSize: number;
+        timestampIncluded: boolean;
+      };
     },
-  ) => void;
+  ) => Promise<void> | void;
   onSetPartOrdered: (jobId: string, partId: string) => void;
   onSetPartReorderNeeded: (jobId: string, partId: string) => void;
   onMarkPartReceived: (jobId: string, partId: string) => void;
@@ -172,6 +178,13 @@ function ActiveJobsSection({
     partId: string;
     phase: 'processing' | 'uploading';
   } | null>(null);
+  const [partRequestPhotoActionState, setPartRequestPhotoActionState] = useState<{
+    jobId: string;
+    phase: 'processing' | 'uploading';
+  } | null>(null);
+  const [partRequestPhotoFiles, setPartRequestPhotoFiles] = useState<
+    Record<string, File | null>
+  >({});
   const [reorderingJobId, setReorderingJobId] = useState<string | null>(null);
   const [photoTimestampEnabled, setPhotoTimestampEnabled] = useState<Record<string, boolean>>({});
   const [selectedPhoto, setSelectedPhoto] = useState<JobPhoto | null>(null);
@@ -187,6 +200,8 @@ function ActiveJobsSection({
   const galleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const invoicePhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const invoiceGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const partRequestPhotoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const partRequestGalleryInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recordedChunksRef = useRef<Blob[]>([]);
   const focusedJobRef = useRef<HTMLDivElement | null>(null);
   const focusTimeoutRef = useRef<number | null>(null);
@@ -536,6 +551,94 @@ function ActiveJobsSection({
           ? error.message
           : 'Could not open the phone camera or gallery.',
       );
+    }
+  };
+
+  const handlePartRequestPhotoFileSelected = (
+    jobId: string,
+    file: File | null,
+  ) => {
+    setPartRequestPhotoFiles((current) => ({
+      ...current,
+      [jobId]: file,
+    }));
+  };
+
+  const handlePartRequestNativeMobilePhoto = async (
+    jobId: string,
+    source: 'camera' | 'gallery',
+  ) => {
+    try {
+      const file = await getNativeMobilePhoto(source);
+      handlePartRequestPhotoFileSelected(jobId, file);
+    } catch (error) {
+      console.error('Failed to pick mobile part request photo:', error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not open the phone camera or gallery.',
+      );
+    }
+  };
+
+  const handleSubmitTechPartRequest = async (
+    jobId: string,
+    draft: { name: string; quantity: string; note: string },
+  ) => {
+    let requestPhoto:
+      | {
+          file: Blob;
+          width: number;
+          height: number;
+          fileSize: number;
+          timestampIncluded: boolean;
+        }
+      | undefined;
+    const photoFile = partRequestPhotoFiles[jobId] ?? null;
+
+    try {
+      if (photoFile) {
+        setPartRequestPhotoActionState({ jobId, phase: 'processing' });
+        const processed = await processJobImage(photoFile, {
+          addTimestamp: false,
+          maxDimension: mobile ? 1200 : 1600,
+          quality: mobile ? 0.72 : 0.78,
+          targetMaxBytes: mobile ? 520 * 1024 : 700 * 1024,
+          minDimension: mobile ? 720 : 900,
+        });
+        requestPhoto = {
+          file: processed.blob,
+          width: processed.width,
+          height: processed.height,
+          fileSize: processed.fileSize,
+          timestampIncluded: processed.timestampIncluded,
+        };
+        setPartRequestPhotoActionState({ jobId, phase: 'uploading' });
+      }
+
+      await onRequestPart(jobId, {
+        ...draft,
+        status: 'requested',
+        requestPhoto,
+      });
+      setPartDrafts((current) => ({
+        ...current,
+        [jobId]: { name: '', quantity: '', note: '' },
+      }));
+      setPartRequestPhotoFiles((current) => ({
+        ...current,
+        [jobId]: null,
+      }));
+    } finally {
+      setPartRequestPhotoActionState(null);
+      const photoInput = partRequestPhotoInputRefs.current[jobId];
+      const galleryInput = partRequestGalleryInputRefs.current[jobId];
+      if (photoInput) {
+        photoInput.value = '';
+      }
+      if (galleryInput) {
+        galleryInput.value = '';
+      }
     }
   };
 
@@ -1332,23 +1435,8 @@ function ActiveJobsSection({
                         note: '',
                       };
 
-                      onRequestPart(job.id, {
-                        ...draft,
-                        status: 'requested',
-                      });
-                      setPartDrafts((current) => ({
-                        ...current,
-                        [job.id]: { name: '', quantity: '', note: '' },
-                      }));
+                      void handleSubmitTechPartRequest(job.id, draft);
                     }}
-                    onTrackEstimatePart={(line) =>
-                      onRequestPart(job.id, {
-                        name: getEstimatePartRequestName(line),
-                        quantity: String(line.quantity || 1),
-                        note: buildEstimatePartRequestNote(line),
-                        status: 'requested',
-                      })
-                    }
                     onSetPartOrdered={(partId) => onSetPartOrdered(job.id, partId)}
                     onSetPartReorderNeeded={(partId) =>
                       onSetPartReorderNeeded(job.id, partId)
@@ -1389,10 +1477,16 @@ function ActiveJobsSection({
                     onDeletePart={(partId) => void onDeletePart(job.id, partId)}
                     savingPartNoteId={savingPartNoteId}
                     invoicePhotoActionState={partInvoicePhotoActionState}
+                    requestPhotoFile={partRequestPhotoFiles[job.id] ?? null}
+                    requestPhotoActionState={partRequestPhotoActionState}
                     photoInputRefs={invoicePhotoInputRefs}
                     galleryInputRefs={invoiceGalleryInputRefs}
+                    requestPhotoInputRefs={partRequestPhotoInputRefs}
+                    requestGalleryInputRefs={partRequestGalleryInputRefs}
                     onInvoicePhotoFileSelected={handlePartInvoicePhotoFileSelected}
                     onInvoiceNativeMobilePhoto={handlePartInvoiceNativeMobilePhoto}
+                    onRequestPhotoFileSelected={handlePartRequestPhotoFileSelected}
+                    onRequestNativeMobilePhoto={handlePartRequestNativeMobilePhoto}
                     onClearLegacyPartsWaiting={() => onClearLegacyPartsWaiting(job.id)}
                   />
 
@@ -2360,7 +2454,6 @@ function PartsPanel({
   onPartNoteDraftChange,
   onPartInvoiceDraftChange,
   onRequestPart,
-  onTrackEstimatePart,
   onSetPartOrdered,
   onSetPartReorderNeeded,
   onMarkPartReceived,
@@ -2370,10 +2463,16 @@ function PartsPanel({
   onDeletePart,
   savingPartNoteId,
   invoicePhotoActionState,
+  requestPhotoFile,
+  requestPhotoActionState,
   photoInputRefs,
   galleryInputRefs,
+  requestPhotoInputRefs,
+  requestGalleryInputRefs,
   onInvoicePhotoFileSelected,
   onInvoiceNativeMobilePhoto,
+  onRequestPhotoFileSelected,
+  onRequestNativeMobilePhoto,
   onClearLegacyPartsWaiting,
 }: {
   job: Job;
@@ -2390,7 +2489,6 @@ function PartsPanel({
     patch: Partial<JobPartInvoiceDetailsInput>,
   ) => void;
   onRequestPart: () => void;
-  onTrackEstimatePart: (line: EmsEstimateLine) => void;
   onSetPartOrdered: (partId: string) => void;
   onSetPartReorderNeeded: (partId: string) => void;
   onMarkPartReceived: (partId: string) => void;
@@ -2404,8 +2502,15 @@ function PartsPanel({
     partId: string;
     phase: 'processing' | 'uploading';
   } | null;
+  requestPhotoFile: File | null;
+  requestPhotoActionState: {
+    jobId: string;
+    phase: 'processing' | 'uploading';
+  } | null;
   photoInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
   galleryInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
+  requestPhotoInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
+  requestGalleryInputRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
   onInvoicePhotoFileSelected: (
     jobId: string,
     partId: string,
@@ -2416,15 +2521,25 @@ function PartsPanel({
     partId: string,
     source: 'camera' | 'gallery',
   ) => Promise<void> | void;
+  onRequestPhotoFileSelected: (
+    jobId: string,
+    file: File | null,
+  ) => void;
+  onRequestNativeMobilePhoto: (
+    jobId: string,
+    source: 'camera' | 'gallery',
+  ) => Promise<void> | void;
   onClearLegacyPartsWaiting: () => void;
 }) {
   const parts = job.partsRequests ?? [];
-  const estimateParts = getEstimatePartLines(job);
   const pendingCount = parts.filter(
     (part) => (part.kind ?? 'part') === 'part' && part.status !== 'received',
   ).length;
   const unpaidSubletCount = parts.filter(isUnpaidSublet).length;
   const hasSublets = parts.some(isSubletPart);
+  const requestPhotoPhase =
+    requestPhotoActionState?.jobId === job.id ? requestPhotoActionState.phase : null;
+  const requestPhotoBusy = Boolean(requestPhotoPhase);
 
   return (
     <div
@@ -2457,141 +2572,129 @@ function PartsPanel({
         </div>
 
         <span style={partsSummaryBadgeStyle(compact, pendingCount > 0 || unpaidSubletCount > 0)}>
-          {estimateParts.length && !pendingCount && !unpaidSubletCount
-            ? `${estimateParts.length} estimate part${estimateParts.length === 1 ? '' : 's'}`
-            : formatPartsPanelSummary(pendingCount, unpaidSubletCount)}
+          {formatPartsPanelSummary(pendingCount, unpaidSubletCount)}
         </span>
       </div>
 
-      {estimateParts.length ? (
+      {appMode === 'tech' ? (
         <div
           style={{
             borderRadius: compact ? 12 : 14,
             padding: compact ? 10 : 12,
-            background: 'rgba(15,24,42,0.98)',
-            border: '2px solid rgba(96,165,250,0.26)',
+            background: 'rgba(8,15,28,0.82)',
+            border: '1px solid rgba(148,163,184,0.2)',
             display: 'grid',
             gap: 10,
           }}
         >
+          <div style={{ color: '#eff6ff', fontSize: compact ? 13 : 15, fontWeight: 900 }}>
+            Request a Part
+          </div>
           <div
             style={{
-              display: 'flex',
-              justifyContent: 'space-between',
+              display: 'grid',
               gap: 10,
-              alignItems: 'center',
-              flexWrap: 'wrap',
+              gridTemplateColumns: compact ? '1fr' : '1.2fr 0.55fr 1.1fr auto',
+              alignItems: 'start',
             }}
           >
-            <div>
-              <div style={{ color: '#eff6ff', fontSize: compact ? 13 : 15, fontWeight: 900 }}>
-                Estimate Parts
-              </div>
-              <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
-                Read-only EMS parts from the estimate. Add one to Live Requests before you order or receive it.
-              </div>
-            </div>
-            <span
-              style={{
-                borderRadius: 999,
-                padding: compact ? '5px 8px' : '6px 10px',
-                background: 'rgba(37,99,235,0.22)',
-                border: '1px solid rgba(147,197,253,0.36)',
-                color: '#dbeafe',
-                fontSize: compact ? 11 : 12,
-                fontWeight: 900,
-              }}
+            <input
+              value={draft.name}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  name: event.target.value,
+                })
+              }
+              placeholder="Part needed"
+              style={inputStyle(compact)}
+            />
+            <input
+              value={draft.quantity}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  quantity: event.target.value,
+                })
+              }
+              placeholder="Qty"
+              style={inputStyle(compact)}
+            />
+            <input
+              value={draft.note}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  note: event.target.value,
+                })
+              }
+              placeholder="Note"
+              style={inputStyle(compact)}
+            />
+            <ActionButton compact={compact} onClick={onRequestPart}>
+              Send Request
+            </ActionButton>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <ActionButton
+              compact={compact}
+              disabled={requestPhotoBusy}
+              onClick={() =>
+                mobile && canUseNativeMobileCamera()
+                  ? void onRequestNativeMobilePhoto(job.id, 'camera')
+                  : requestPhotoInputRefs.current[job.id]?.click()
+              }
             >
-              {estimateParts.length} part{estimateParts.length === 1 ? '' : 's'} on estimate
+              {requestPhotoPhase === 'processing'
+                ? 'Reading Photo...'
+                : requestPhotoPhase === 'uploading'
+                  ? 'Saving Photo...'
+                  : requestPhotoFile
+                    ? 'Replace Part Photo'
+                    : 'Take Part Photo'}
+            </ActionButton>
+            {mobile ? (
+              <ActionButton
+                compact={compact}
+                disabled={requestPhotoBusy}
+                onClick={() =>
+                  canUseNativeMobileCamera()
+                    ? void onRequestNativeMobilePhoto(job.id, 'gallery')
+                    : requestGalleryInputRefs.current[job.id]?.click()
+                }
+              >
+                Choose Photo
+              </ActionButton>
+            ) : null}
+            <span style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
+              {requestPhotoFile ? requestPhotoFile.name : 'No part photo attached'}
             </span>
           </div>
-
-          <div style={{ display: 'grid', gap: 8 }}>
-            {estimateParts.map((line) => (
-              <div
-                key={line.id}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) auto auto',
-                  gap: compact ? 6 : 10,
-                  padding: compact ? 9 : 10,
-                  borderRadius: compact ? 10 : 12,
-                  background: 'rgba(8,15,28,0.76)',
-                  border: '1px solid rgba(148,163,184,0.16)',
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ color: '#f8fafc', fontSize: compact ? 12 : 13, fontWeight: 900 }}>
-                    {line.description || 'Estimate part'}
-                  </div>
-                  <div style={{ color: '#9fb3cb', fontSize: compact ? 10 : 11, fontWeight: 800 }}>
-                    Line {line.lineNumber || '-'}{line.partNumber ? ` | Part # ${line.partNumber}` : ''}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    color: '#dbeafe',
-                    fontSize: compact ? 11 : 12,
-                    fontWeight: 900,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Qty {line.quantity || 1} | {formatEstimatePartAmount(line)}
-                </div>
-                <ActionButton compact={compact} onClick={() => onTrackEstimatePart(line)}>
-                  Add to Requests
-                </ActionButton>
-              </div>
-            ))}
-          </div>
+          <input
+            ref={(element) => {
+              requestPhotoInputRefs.current[job.id] = element;
+            }}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={(event) =>
+              onRequestPhotoFileSelected(job.id, event.target.files?.[0] ?? null)
+            }
+          />
+          <input
+            ref={(element) => {
+              requestGalleryInputRefs.current[job.id] = element;
+            }}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(event) =>
+              onRequestPhotoFileSelected(job.id, event.target.files?.[0] ?? null)
+            }
+          />
         </div>
       ) : null}
-
-      <div
-        style={{
-          display: 'grid',
-          gap: 10,
-          gridTemplateColumns: compact ? '1fr' : '1.2fr 0.7fr 1.1fr auto',
-          alignItems: 'start',
-        }}
-      >
-        <input
-          value={draft.name}
-          onChange={(event) =>
-            onDraftChange({
-              ...draft,
-              name: event.target.value,
-            })
-          }
-          placeholder="Live request part name"
-          style={inputStyle(compact)}
-        />
-        <input
-          value={draft.quantity}
-          onChange={(event) =>
-            onDraftChange({
-              ...draft,
-              quantity: event.target.value,
-            })
-          }
-          placeholder="Qty"
-          style={inputStyle(compact)}
-        />
-        <input
-          value={draft.note}
-          onChange={(event) =>
-            onDraftChange({
-              ...draft,
-              note: event.target.value,
-            })
-          }
-          placeholder="Part note"
-          style={inputStyle(compact)}
-        />
-        <ActionButton compact={compact} onClick={onRequestPart}>
-          Add Part Request
-        </ActionButton>
-      </div>
 
       {job.partsWaiting && parts.length === 0 ? (
         <div
@@ -2623,6 +2726,13 @@ function PartsPanel({
       ) : null}
 
       {parts.length ? (
+        appMode === 'tech' ? (
+          <TechJobPartsList
+            parts={parts}
+            compact={compact}
+            onDeletePart={onDeletePart}
+          />
+        ) : (
         <div style={{ display: 'grid', gap: 10 }}>
           {parts.map((part) => {
             const noteDraft = noteDrafts[part.id] ?? part.note ?? '';
@@ -2931,6 +3041,7 @@ function PartsPanel({
             );
           })}
         </div>
+        )
       ) : (
         <div
           style={{
@@ -2941,6 +3052,93 @@ function PartsPanel({
           No parts or sublets requested yet.
         </div>
       )}
+    </div>
+  );
+}
+
+function TechJobPartsList({
+  parts,
+  compact,
+  onDeletePart,
+}: {
+  parts: JobPartRequest[];
+  compact: boolean;
+  onDeletePart: (partId: string) => Promise<void> | void;
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {parts.map((part) => {
+        const isSublet = isSubletPart(part);
+        const isTechRequest = part.source === 'tech-request' || part.requestedBy === 'tech';
+
+        return (
+          <div
+            key={part.id}
+            style={{
+              borderRadius: compact ? 12 : 14,
+              padding: compact ? 10 : 12,
+              background: isTechRequest ? 'rgba(30,64,175,0.18)' : 'rgba(15,24,42,0.82)',
+              border: isTechRequest
+                ? '1px solid rgba(96,165,250,0.28)'
+                : '1px solid rgba(148,163,184,0.18)',
+              display: 'grid',
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 10,
+                alignItems: 'flex-start',
+                flexWrap: 'wrap',
+              }}
+            >
+              <div>
+                <div style={{ color: '#f8fafc', fontWeight: 900, fontSize: compact ? 13 : 15 }}>
+                  {part.name}
+                </div>
+                <div style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
+                  {isTechRequest ? 'Tech request' : isSublet ? 'Sublet' : 'Estimate part'}
+                  {part.quantity ? ` | Qty ${part.quantity}` : ''}
+                  {part.partNumber ? ` | Part # ${part.partNumber}` : ''}
+                </div>
+              </div>
+              <span style={isSublet ? subletPaymentBadgeStyle(Boolean(part.paidAt), compact) : partStatusBadgeStyle(part.status, compact)}>
+                {isSublet
+                  ? part.paidAt ? 'Paid Sublet' : 'Sublet'
+                  : formatPartStatus(part.status)}
+              </span>
+            </div>
+
+            {part.note ? (
+              <div style={{ color: '#cbd5e1', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
+                {part.note}
+              </div>
+            ) : null}
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {part.requestPhoto?.url ? (
+                <ActionButton
+                  compact={compact}
+                  onClick={() => window.open(part.requestPhoto?.url, '_blank', 'noopener,noreferrer')}
+                >
+                  View Request Photo
+                </ActionButton>
+              ) : isTechRequest ? (
+                <span style={{ color: '#b8c7da', fontSize: compact ? 11 : 12, fontWeight: 700 }}>
+                  No request photo
+                </span>
+              ) : null}
+              {isTechRequest ? (
+                <ActionButton compact={compact} danger onClick={() => onDeletePart(part.id)}>
+                  Delete Request
+                </ActionButton>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -3863,28 +4061,6 @@ function getEstimatePartAmount(line: EstimateLineForDisplay) {
 
 function getOrderablePartsTotal(lines: EstimateLineForDisplay[]) {
   return lines.reduce((total, line) => total + getEstimatePartAmount(line), 0);
-}
-
-function getEstimatePartLines(job: Job) {
-  return (job.estimateLines ?? []).filter(isOrderableEstimatePart);
-}
-
-function getEstimatePartRequestName(line: EmsEstimateLine) {
-  const description = String(line.description ?? '').trim();
-  const partNumber = String(line.partNumber ?? '').trim();
-
-  if (description && partNumber) return `${description} (${partNumber})`;
-  return description || partNumber || 'Estimate part';
-}
-
-function buildEstimatePartRequestNote(line: EmsEstimateLine) {
-  const details = [
-    line.lineNumber ? `EMS line ${line.lineNumber}` : 'EMS estimate line',
-    line.partNumber ? `part # ${line.partNumber}` : '',
-    getEstimatePartAmount(line) ? `estimate ${formatAmount(getEstimatePartAmount(line))}` : '',
-  ].filter(Boolean);
-
-  return `Tracked from ${details.join(' | ')}.`;
 }
 
 function formatEstimatePartAmount(line: EstimateLineForDisplay) {
